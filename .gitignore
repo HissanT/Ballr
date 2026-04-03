@@ -1,0 +1,6 @@
+dataset/
+runs/
+*.pt
+.claude/
+__pycache__/
+*.pyc
