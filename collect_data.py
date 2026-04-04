@@ -6,8 +6,8 @@ import time
 import cv2
 from ultralytics import YOLO
 
-SPORTS_BALL_CLASS_ID = 32  # COCO class — used for detection only
-AUTO_LABEL_CLASS_ID = 0    # remapped to class 0 in our single-class dataset
+SPORTS_BALL_CLASS_ID = 0
+AUTO_LABEL_CLASS_ID = 0
 
 
 def parse_source(arg: str):
@@ -49,7 +49,7 @@ def main() -> None:
         os.makedirs(os.path.join(args.output, "images", split), exist_ok=True)
         os.makedirs(os.path.join(args.output, "labels", split), exist_ok=True)
 
-    model  = YOLO("yolov8n.pt")
+    model  = YOLO("runs/train/ballr_v3/weights/best.pt")
     source = parse_source(args.source)
     cap    = cv2.VideoCapture(source)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  args.width)

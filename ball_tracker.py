@@ -7,9 +7,9 @@ import numpy as np
 from ultralytics import YOLO
 
 SPORTS_BALL_CLASS_ID = 0
-CONF_THRESHOLD = 0.5
+CONF_THRESHOLD = 0.45
 IOU_THRESHOLD = 0.35
-MODEL_PATH = "runs/train/ballr_v2/weights/best.pt"
+MODEL_PATH = "runs/train/ballr_v3/weights/best.pt"
 
 
 def build_gamma_lut(gamma: float = 1.2) -> np.ndarray:
@@ -74,6 +74,8 @@ def main() -> None:
 
     fps_history: deque = deque(maxlen=10)
     prev_time = time.time()
+    total_frames = 0
+    detected_frames = 0
 
     print("Tracking started — press 'q' to quit")
 
@@ -83,6 +85,7 @@ def main() -> None:
             print("ERROR: Failed to grab frame")
             break
 
+        total_frames += 1
         enhanced = preprocess_frame(frame, gamma_lut, clahe)
 
         results = model.track(
@@ -96,7 +99,8 @@ def main() -> None:
         )
 
         # Draw detections on the original (unprocessed) frame
-        if results and results[0].boxes is not None:
+        if results and results[0].boxes is not None and len(results[0].boxes):
+            detected_frames += 1
             boxes = results[0].boxes
             for box in boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
@@ -116,6 +120,8 @@ def main() -> None:
         prev_time = now
         fps = sum(fps_history) / len(fps_history)
         draw_label(frame, f"FPS: {fps:.1f}", 8, 24)
+        det_rate = (detected_frames / total_frames * 100) if total_frames > 0 else 0
+        draw_label(frame, f"Det: {det_rate:.1f}%", 8, 52)
 
         cv2.imshow("Ball Tracker", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
