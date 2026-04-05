@@ -18,7 +18,11 @@ def detect_device(requested: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune YOLOv8n for soccer ball detection")
-    parser.add_argument("--data",    default="data.yaml")
+    parser.add_argument(
+        "--data",
+        default="data.yaml",
+        help="Dataset yaml. For session captures, build one with dataset_tools.py build-splits.",
+    )
     parser.add_argument("--weights", default="yolov8n.pt")
     parser.add_argument("--epochs",  type=int,   default=80)
     parser.add_argument("--batch",   type=int,   default=16)
