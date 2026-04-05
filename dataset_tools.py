@@ -1,5 +1,4 @@
 import argparse
-import random
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -9,6 +8,8 @@ IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
 
 def image_paths(image_dir: Path) -> list[Path]:
+    if not image_dir.exists():
+        return []
     return sorted(
         path
         for path in image_dir.iterdir()
@@ -28,7 +29,7 @@ def summarize_split(root: Path, split: str) -> dict:
     image_dir = root / "images" / split
     label_dir = root / "labels" / split
     images = image_paths(image_dir)
-    labels = sorted(label_dir.glob("*.txt"))
+    labels = sorted(label_dir.glob("*.txt")) if label_dir.exists() else []
     image_stems = {path.stem for path in images}
     label_stems = {path.stem for path in labels}
 
@@ -72,7 +73,6 @@ def nearest_gap_count(train_timestamps: list[int], val_timestamps: list[int], ma
 
     count = 0
     for timestamp in val_timestamps:
-        insert_at = 0
         lo = 0
         hi = len(train_timestamps)
         while lo < hi:
@@ -121,6 +121,8 @@ def clean_orphans(root: Path, apply: bool) -> None:
     for split in ("train", "val"):
         image_dir = root / "images" / split
         label_dir = root / "labels" / split
+        if not image_dir.exists() or not label_dir.exists():
+            continue
         for label_path in sorted(label_dir.glob("*.txt")):
             if find_image_for_stem(image_dir, label_path.stem) is not None:
                 continue
@@ -135,16 +137,22 @@ def clean_orphans(root: Path, apply: bool) -> None:
         print("Dry run only. Re-run with --apply to delete orphan labels.")
 
 
-def capture_sessions(captures_root: Path) -> list[Path]:
-    sessions: list[Path] = []
-    for session_dir in sorted(captures_root.iterdir()):
-        if not session_dir.is_dir():
+def label_paths(label_dir: Path) -> set[Path]:
+    return set(label_dir.glob("*.txt")) if label_dir.exists() else set()
+
+
+def legacy_pairs(legacy_root: Path) -> list[tuple[Path, Path]]:
+    pairs: list[tuple[Path, Path]] = []
+    for split in ("train", "val"):
+        image_dir = legacy_root / "images" / split
+        label_dir = legacy_root / "labels" / split
+        if not image_dir.exists() or not label_dir.exists():
             continue
-        image_dir = session_dir / "images"
-        label_dir = session_dir / "labels"
-        if image_dir.exists() and label_dir.exists():
-            sessions.append(session_dir)
-    return sessions
+        for image_path in image_paths(image_dir):
+            label_path = label_dir / f"{image_path.stem}.txt"
+            if label_path.exists():
+                pairs.append((image_path, label_path))
+    return pairs
 
 
 def session_pairs(session_dir: Path) -> list[tuple[Path, Path]]:
@@ -158,12 +166,64 @@ def session_pairs(session_dir: Path) -> list[tuple[Path, Path]]:
     return pairs
 
 
-def write_data_yaml(output_root: Path) -> None:
+def bucket_ranges(total: int, bucket_count: int) -> list[tuple[int, int]]:
+    base = total // bucket_count
+    remainder = total % bucket_count
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    for bucket in range(bucket_count):
+        size = base + (1 if bucket < remainder else 0)
+        end = start + size
+        ranges.append((start, end))
+        start = end
+    return ranges
+
+
+def split_session_pairs(
+    pairs: list[tuple[Path, Path]], bucket_count: int, val_buckets: set[int]
+) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]], list[tuple[int, int]]]:
+    ranges = bucket_ranges(len(pairs), bucket_count)
+    train_pairs: list[tuple[Path, Path]] = []
+    val_pairs: list[tuple[Path, Path]] = []
+    for bucket_index, (start, end) in enumerate(ranges):
+        bucket_pairs = pairs[start:end]
+        if bucket_index in val_buckets:
+            val_pairs.extend(bucket_pairs)
+        else:
+            train_pairs.extend(bucket_pairs)
+    return train_pairs, val_pairs, ranges
+
+
+def ensure_empty_output_root(output_root: Path) -> None:
+    if output_root.exists() and any(output_root.iterdir()):
+        raise SystemExit(
+            f"Output directory '{output_root}' already exists and is not empty. "
+            "Use a fresh path or remove the existing prepared dataset first."
+        )
+
+
+def copy_pairs_to_split(
+    pairs: list[tuple[Path, Path]], output_root: Path, split: str
+) -> int:
+    image_output_dir = output_root / "images" / split
+    label_output_dir = output_root / "labels" / split
+    image_output_dir.mkdir(parents=True, exist_ok=True)
+    label_output_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    for image_path, label_path in pairs:
+        shutil.copy2(image_path, image_output_dir / image_path.name)
+        shutil.copy2(label_path, label_output_dir / label_path.name)
+        copied += 1
+    return copied
+
+
+def write_data_yaml(output_root: Path, train_images_path: str, val_images_path: str) -> None:
     content = "\n".join(
         [
             f"path: {output_root.as_posix()}",
-            "train: images/train",
-            "val: images/val",
+            f"train: {train_images_path}",
+            f"val: {val_images_path}",
             "",
             "nc: 1",
             "names:",
@@ -174,49 +234,81 @@ def write_data_yaml(output_root: Path) -> None:
     (output_root / "data.yaml").write_text(content, encoding="utf-8")
 
 
-def build_splits(captures_root: Path, output_root: Path, val_ratio: float, seed: int) -> None:
-    sessions = capture_sessions(captures_root)
-    if not sessions:
-        raise SystemExit(f"No capture sessions found under '{captures_root}'.")
+def write_prep_summary(output_root: Path, summary: dict) -> None:
+    lines = [f"{key}: {value}" for key, value in summary.items()]
+    (output_root / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    if output_root.exists() and any(output_root.iterdir()):
-        raise SystemExit(
-            f"Output directory '{output_root}' already exists and is not empty. "
-            "Use a fresh path to avoid overwriting prepared data."
-        )
 
-    rng = random.Random(seed)
-    rng.shuffle(sessions)
+def prepare_v4_datasets(
+    legacy_root: Path,
+    captures_root: Path,
+    session_name: str,
+    tune_output_root: Path,
+    all_output_root: Path,
+    bucket_count: int,
+    val_buckets: set[int],
+) -> None:
+    session_dir = captures_root / session_name
+    if not session_dir.exists():
+        raise SystemExit(f"Capture session '{session_name}' not found under '{captures_root}'.")
 
-    if len(sessions) == 1:
-        val_count = 0
-    else:
-        val_count = max(1, round(len(sessions) * val_ratio))
-        val_count = min(val_count, len(sessions) - 1)
+    ensure_empty_output_root(tune_output_root)
+    ensure_empty_output_root(all_output_root)
 
-    val_sessions = {session.name for session in sessions[:val_count]}
-    split_counts = Counter()
+    legacy = legacy_pairs(legacy_root)
+    session = session_pairs(session_dir)
+    if not session:
+        raise SystemExit(f"No labeled session images found in '{session_dir}'.")
 
-    for split in ("train", "val"):
-        (output_root / "images" / split).mkdir(parents=True, exist_ok=True)
-        (output_root / "labels" / split).mkdir(parents=True, exist_ok=True)
+    train_session, val_session, ranges = split_session_pairs(session, bucket_count, val_buckets)
 
-    for session_dir in sorted(sessions):
-        split = "val" if session_dir.name in val_sessions else "train"
-        for image_path, label_path in session_pairs(session_dir):
-            shutil.copy2(image_path, output_root / "images" / split / image_path.name)
-            shutil.copy2(label_path, output_root / "labels" / split / label_path.name)
-            split_counts[split] += 1
+    tune_train_count = copy_pairs_to_split(legacy, tune_output_root, "train")
+    tune_train_count += copy_pairs_to_split(train_session, tune_output_root, "train")
+    tune_val_count = copy_pairs_to_split(val_session, tune_output_root, "val")
+    write_data_yaml(tune_output_root, "images/train", "images/val")
 
-    write_data_yaml(output_root)
-    print(f"Prepared dataset written to '{output_root}'.")
-    print(f"Sessions: total={len(sessions)} train={len(sessions) - val_count} val={val_count}")
-    print(f"Samples: train={split_counts['train']} val={split_counts['val']}")
-    print(f"Training config: {output_root / 'data.yaml'}")
+    final_train_count = copy_pairs_to_split(legacy, all_output_root, "train")
+    final_train_count += copy_pairs_to_split(session, all_output_root, "train")
+    write_data_yaml(all_output_root, "images/train", "images/train")
+
+    tune_summary = {
+        "legacy_pairs": len(legacy),
+        "session_pairs": len(session),
+        "bucket_count": bucket_count,
+        "val_buckets": ",".join(str(bucket) for bucket in sorted(val_buckets)),
+        "bucket_ranges": ranges,
+        "train_session_pairs": len(train_session),
+        "val_session_pairs": len(val_session),
+        "tune_train_pairs": tune_train_count,
+        "tune_val_pairs": tune_val_count,
+    }
+    final_summary = {
+        "legacy_pairs": len(legacy),
+        "session_pairs": len(session),
+        "final_train_pairs": final_train_count,
+        "validation_mode": "train-set",
+    }
+    write_prep_summary(tune_output_root, tune_summary)
+    write_prep_summary(all_output_root, final_summary)
+
+    print(f"Tune dataset written to '{tune_output_root}'.")
+    print(f"Final dataset written to '{all_output_root}'.")
+    print(
+        f"Tune counts: train={tune_train_count} val={tune_val_count} "
+        f"(legacy={len(legacy)} session_train={len(train_session)} session_val={len(val_session)})"
+    )
+    print(f"Final counts: train={final_train_count}")
+
+
+def parse_bucket_set(raw: str) -> set[int]:
+    values = {int(part.strip()) for part in raw.split(",") if part.strip()}
+    if not values:
+        raise argparse.ArgumentTypeError("Expected at least one bucket index.")
+    return values
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Dataset cleanup and split utilities")
+    parser = argparse.ArgumentParser(description="Dataset cleanup and preparation utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     audit_parser = subparsers.add_parser("audit", help="Summarize a prepared train/val dataset")
@@ -228,30 +320,59 @@ def main() -> None:
     clean_parser.add_argument("--root", default="dataset", help="Prepared dataset root")
     clean_parser.add_argument("--apply", action="store_true", help="Delete orphan labels")
 
-    build_parser = subparsers.add_parser(
-        "build-splits",
-        help="Build leak-free train/val splits from session-based captures",
+    prepare_parser = subparsers.add_parser(
+        "prepare-v4",
+        help="Build the v4 tune/all datasets from legacy labels plus a reviewed capture session",
     )
-    build_parser.add_argument(
+    prepare_parser.add_argument("--legacy-root", default="dataset", help="Legacy dataset root")
+    prepare_parser.add_argument(
         "--captures-root",
         default="dataset/captures",
-        help="Directory containing session capture folders",
+        help="Directory containing reviewed capture sessions",
     )
-    build_parser.add_argument(
-        "--output-root",
-        default="dataset_prepared",
-        help="Destination for the prepared train/val dataset",
+    prepare_parser.add_argument(
+        "--session",
+        default="tennis-court-passing-and-shooting",
+        help="Capture session to merge into v4",
     )
-    build_parser.add_argument("--val-ratio", type=float, default=0.2, help="Session-level val split")
-    build_parser.add_argument("--seed", type=int, default=0, help="Shuffle seed")
+    prepare_parser.add_argument(
+        "--tune-output-root",
+        default="dataset_prepared_v4_tune",
+        help="Destination for the tune dataset",
+    )
+    prepare_parser.add_argument(
+        "--all-output-root",
+        default="dataset_prepared_v4_all",
+        help="Destination for the final all-data dataset",
+    )
+    prepare_parser.add_argument(
+        "--bucket-count",
+        type=int,
+        default=10,
+        help="Number of contiguous buckets to split the reviewed session into",
+    )
+    prepare_parser.add_argument(
+        "--val-buckets",
+        type=parse_bucket_set,
+        default={2, 7},
+        help="Comma-separated 0-based session bucket indices reserved for tune validation",
+    )
 
     args = parser.parse_args()
     if args.command == "audit":
         audit_dataset(Path(args.root))
     elif args.command == "clean-orphans":
         clean_orphans(Path(args.root), apply=args.apply)
-    elif args.command == "build-splits":
-        build_splits(Path(args.captures_root), Path(args.output_root), args.val_ratio, args.seed)
+    elif args.command == "prepare-v4":
+        prepare_v4_datasets(
+            legacy_root=Path(args.legacy_root),
+            captures_root=Path(args.captures_root),
+            session_name=args.session,
+            tune_output_root=Path(args.tune_output_root),
+            all_output_root=Path(args.all_output_root),
+            bucket_count=args.bucket_count,
+            val_buckets=args.val_buckets,
+        )
 
 
 if __name__ == "__main__":
