@@ -112,6 +112,7 @@ def main() -> None:
         description="Fine-tune YOLO for soccer ball detection",
         parents=[bootstrap],
     )
+    parser.set_defaults(preset=bootstrap_args.preset)
     parser.add_argument(
         "--data",
         default=defaults["data"],
@@ -122,6 +123,12 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=defaults["batch"])
     parser.add_argument("--imgsz", type=int, default=defaults["imgsz"])
     parser.add_argument("--name", default=defaults["name"])
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=defaults.get("workers", 4),
+        help="Dataloader workers. Override to 0 when multiprocessing is restricted.",
+    )
     parser.add_argument(
         "--device",
         default="auto",
@@ -144,7 +151,7 @@ def main() -> None:
         "device": device,
         "cache": cache,
         "amp": True,
-        "workers": preset.get("workers", 4),
+        "workers": args.workers,
         "verbose": True,
         "exist_ok": False,
         "optimizer": preset.get("optimizer", "AdamW"),
