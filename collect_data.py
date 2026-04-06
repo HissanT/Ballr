@@ -10,7 +10,7 @@ from ballr_utils import build_gamma_lut, ensure_dir, parse_source, preprocess_fr
 
 SPORTS_BALL_CLASS_ID = 0
 AUTO_LABEL_CLASS_ID = 0
-MODEL_PATH = "runs/train/ballr_v3/weights/best.pt"
+MODEL_PATH = "runs/train/ballr_v4/weights/best.pt"
 IOU_THRESHOLD = 0.35
 
 

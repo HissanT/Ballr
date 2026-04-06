@@ -11,9 +11,9 @@ from ultralytics import YOLO
 from ballr_utils import build_gamma_lut, parse_source, preprocess_frame
 
 SPORTS_BALL_CLASS_ID = 0
-CANDIDATE_CONF_THRESHOLD = 0.18
-INIT_CONF_THRESHOLD = 0.35
-REACQUIRE_CONF_THRESHOLD = 0.55
+CANDIDATE_CONF_THRESHOLD = 0.25
+INIT_CONF_THRESHOLD = 0.40
+REACQUIRE_CONF_THRESHOLD = 0.60
 IOU_THRESHOLD = 0.35
 MAX_DETECTIONS = 8
 MAX_MISSES = 4
@@ -21,7 +21,7 @@ MOTION_DECAY = 0.82
 CENTER_SMOOTHING = 0.65
 VELOCITY_SMOOTHING = 0.55
 RADIUS_SMOOTHING = 0.60
-MODEL_PATH = "runs/train/ballr_v3/weights/best.pt"
+MODEL_PATH = "runs/train/ballr_v4/weights/best.pt"
 
 
 @dataclass
