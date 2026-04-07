@@ -1,0 +1,378 @@
+import math
+from typing import Optional
+
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
+
+from ball_tracker_targets import (
+    TARGET_IDLE_PULSE_PERIOD_SECONDS,
+    TARGET_IDLE_PULSE_SCALE,
+    TargetState,
+    clamp_unit,
+    target_animation_progress,
+)
+from ball_tracker_tracking import BallTrack
+
+TARGET_REFERENCE_WIDTH = 216
+TARGET_REFERENCE_HEIGHT = 202
+TARGET_REFERENCE_IDLE_CENTER = (107.5, 94.5)
+TARGET_REFERENCE_SCORED_CENTER = (111.5, 96.5)
+TARGET_REFERENCE_COLLISION_RADIUS = 84.0
+TARGET_REFERENCE_ORBIT_RADIUS = 79.0
+TARGET_REFERENCE_ORBIT_THICKNESS = 6.0
+TARGET_IDLE_DASH_COUNT = 21
+TARGET_IDLE_DASH_SWEEP_DEGREES = 7.5
+TARGET_SCORED_NODE_COUNT = 8
+TARGET_SCORED_NODE_RADIUS = 5.0
+TARGET_BADGE_OUTER_RADIUS = 59.0
+TARGET_BADGE_FILL_RADIUS = 53.0
+TARGET_BADGE_CORE_RADIUS = 31.0
+TARGET_STAR_OUTER_RADIUS = 18.0
+TARGET_STAR_INNER_RADIUS = 7.5
+TARGET_RENDER_OVERSAMPLE = 4
+TARGET_REFERENCE_BACKGROUND_RGB = (38, 38, 36)
+
+TARGET_IDLE_DASH_COLOR = (173, 223, 204)
+TARGET_IDLE_BADGE_RIM_COLOR = (75, 156, 120)
+TARGET_IDLE_BADGE_FILL_COLOR = (229, 245, 239)
+TARGET_IDLE_BADGE_CORE_COLOR = (75, 156, 120)
+TARGET_IDLE_STAR_COLOR = (183, 216, 201)
+
+TARGET_SCORED_RING_COLOR = (122, 200, 167)
+TARGET_SCORED_NODE_COLOR = (228, 163, 69)
+TARGET_SCORED_BADGE_RIM_COLOR = (75, 156, 120)
+TARGET_SCORED_BADGE_FILL_COLOR = (173, 223, 204)
+TARGET_SCORED_BADGE_CORE_COLOR = (50, 109, 88)
+TARGET_SCORED_STAR_COLOR = (245, 248, 247)
+
+PIL_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+
+def mirror_frame(frame: np.ndarray) -> np.ndarray:
+    return cv2.flip(frame, 1)
+
+
+def smoothstep(edge0: float, edge1: float, value: float) -> float:
+    if edge0 == edge1:
+        return 1.0 if value >= edge1 else 0.0
+
+    t = clamp_unit((value - edge0) / (edge1 - edge0))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def lerp_color(start: tuple[int, int, int], end: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t = clamp_unit(t)
+    return tuple(
+        int(round(start[index] + (end[index] - start[index]) * t))
+        for index in range(3)
+    )
+
+
+def with_alpha(color: tuple[int, int, int], alpha: float) -> tuple[int, int, int, int]:
+    return color + (int(round(255 * clamp_unit(alpha))),)
+
+
+def lerp_point(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    t: float,
+) -> tuple[float, float]:
+    t = clamp_unit(t)
+    return (
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+    )
+
+
+def polar_point(center: tuple[float, float], radius: float, angle_degrees: float) -> tuple[float, float]:
+    angle_radians = math.radians(angle_degrees)
+    return (
+        center[0] + math.cos(angle_radians) * radius,
+        center[1] + math.sin(angle_radians) * radius,
+    )
+
+
+def star_points(
+    center: tuple[float, float],
+    outer_radius: float,
+    inner_radius: float,
+    rotation_degrees: float = -90.0,
+) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for index in range(10):
+        radius = outer_radius if index % 2 == 0 else inner_radius
+        angle = rotation_degrees + index * 36.0
+        points.append(polar_point(center, radius, angle))
+    return points
+
+
+def draw_circle(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[float, float],
+    radius: float,
+    *,
+    fill: Optional[tuple[int, int, int, int]] = None,
+    outline: Optional[tuple[int, int, int, int]] = None,
+    width: int = 1,
+) -> None:
+    bbox = (
+        center[0] - radius,
+        center[1] - radius,
+        center[0] + radius,
+        center[1] + radius,
+    )
+    draw.ellipse(bbox, fill=fill, outline=outline, width=width)
+
+
+def draw_arc_with_round_caps(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[float, float],
+    radius: float,
+    start_degrees: float,
+    end_degrees: float,
+    width: float,
+    fill: tuple[int, int, int, int],
+    rounded: bool = True,
+) -> None:
+    bbox = (
+        center[0] - radius,
+        center[1] - radius,
+        center[0] + radius,
+        center[1] + radius,
+    )
+    pixel_width = max(int(round(width)), 1)
+    draw.arc(bbox, start=start_degrees, end=end_degrees, fill=fill, width=pixel_width)
+
+    if not rounded:
+        return
+
+    cap_radius = pixel_width / 2.0
+    for angle in (start_degrees, end_degrees):
+        cap_center = polar_point(center, radius, angle)
+        draw_circle(draw, cap_center, cap_radius, fill=fill)
+
+
+def composite_sprite(
+    frame: np.ndarray,
+    sprite_rgba: np.ndarray,
+    anchor: tuple[float, float],
+    center: np.ndarray,
+) -> None:
+    sprite_h, sprite_w = sprite_rgba.shape[:2]
+    x0 = int(round(float(center[0]) - anchor[0]))
+    y0 = int(round(float(center[1]) - anchor[1]))
+    x1 = x0 + sprite_w
+    y1 = y0 + sprite_h
+
+    clip_x0 = max(x0, 0)
+    clip_y0 = max(y0, 0)
+    clip_x1 = min(x1, frame.shape[1])
+    clip_y1 = min(y1, frame.shape[0])
+    if clip_x0 >= clip_x1 or clip_y0 >= clip_y1:
+        return
+
+    sprite_x0 = clip_x0 - x0
+    sprite_y0 = clip_y0 - y0
+    sprite_x1 = sprite_x0 + (clip_x1 - clip_x0)
+    sprite_y1 = sprite_y0 + (clip_y1 - clip_y0)
+
+    sprite_roi = sprite_rgba[sprite_y0:sprite_y1, sprite_x0:sprite_x1]
+    sprite_alpha = sprite_roi[:, :, 3:4].astype(np.float32) / 255.0
+    if not np.any(sprite_alpha):
+        return
+
+    sprite_bgr = sprite_roi[:, :, :3][:, :, ::-1].astype(np.float32)
+    frame_roi = frame[clip_y0:clip_y1, clip_x0:clip_x1].astype(np.float32)
+    frame[clip_y0:clip_y1, clip_x0:clip_x1] = np.clip(
+        sprite_bgr * sprite_alpha + frame_roi * (1.0 - sprite_alpha),
+        0.0,
+        255.0,
+    ).astype(np.uint8)
+
+
+def render_target_reference_rgba(scoring_progress: float, idle_pulse: float = 0.0) -> np.ndarray:
+    progress = clamp_unit(scoring_progress)
+    pulse_scale = 1.0 + (1.0 - progress) * TARGET_IDLE_PULSE_SCALE * idle_pulse
+    scale = TARGET_RENDER_OVERSAMPLE
+
+    canvas = Image.new(
+        "RGBA",
+        (TARGET_REFERENCE_WIDTH * scale, TARGET_REFERENCE_HEIGHT * scale),
+        (0, 0, 0, 0),
+    )
+    draw = ImageDraw.Draw(canvas)
+
+    center = tuple(
+        component * scale
+        for component in lerp_point(TARGET_REFERENCE_IDLE_CENTER, TARGET_REFERENCE_SCORED_CENTER, progress)
+    )
+    orbit_radius = TARGET_REFERENCE_ORBIT_RADIUS * pulse_scale * scale
+    orbit_width = TARGET_REFERENCE_ORBIT_THICKNESS * scale
+    badge_outer_radius = TARGET_BADGE_OUTER_RADIUS * pulse_scale * scale
+    badge_fill_radius = TARGET_BADGE_FILL_RADIUS * pulse_scale * scale
+    badge_core_radius = TARGET_BADGE_CORE_RADIUS * pulse_scale * scale
+    star_outer_radius = TARGET_STAR_OUTER_RADIUS * pulse_scale * scale
+    star_inner_radius = TARGET_STAR_INNER_RADIUS * pulse_scale * scale
+
+    idle_dash_alpha = 1.0 - progress
+    if idle_dash_alpha > 0.0:
+        idle_dash_color = with_alpha(TARGET_IDLE_DASH_COLOR, idle_dash_alpha)
+        for dash_index in range(TARGET_IDLE_DASH_COUNT):
+            angle = -90.0 + dash_index * (360.0 / TARGET_IDLE_DASH_COUNT)
+            start = angle - TARGET_IDLE_DASH_SWEEP_DEGREES / 2.0
+            end = angle + TARGET_IDLE_DASH_SWEEP_DEGREES / 2.0
+            draw_arc_with_round_caps(
+                draw,
+                center,
+                orbit_radius,
+                start,
+                end,
+                orbit_width,
+                idle_dash_color,
+                rounded=False,
+            )
+
+    if progress > 0.0:
+        scored_ring_color = with_alpha(TARGET_SCORED_RING_COLOR, smoothstep(0.0, 0.35, progress))
+        if progress >= 0.999:
+            draw_circle(
+                draw,
+                center,
+                orbit_radius,
+                outline=scored_ring_color,
+                width=max(int(round(orbit_width)), 1),
+            )
+        else:
+            draw_arc_with_round_caps(
+                draw,
+                center,
+                orbit_radius,
+                -90.0,
+                -90.0 + 360.0 * progress,
+                orbit_width,
+                scored_ring_color,
+            )
+
+        node_alpha = smoothstep(0.45, 0.85, progress)
+        if node_alpha > 0.0:
+            node_radius = TARGET_SCORED_NODE_RADIUS * scale * (0.82 + 0.18 * node_alpha)
+            node_color = with_alpha(TARGET_SCORED_NODE_COLOR, node_alpha)
+            for node_index in range(TARGET_SCORED_NODE_COUNT):
+                angle = -90.0 + node_index * (360.0 / TARGET_SCORED_NODE_COUNT)
+                node_center = polar_point(center, orbit_radius, angle)
+                draw_circle(draw, node_center, node_radius, fill=node_color)
+
+    badge_rim_color = with_alpha(
+        lerp_color(TARGET_IDLE_BADGE_RIM_COLOR, TARGET_SCORED_BADGE_RIM_COLOR, progress),
+        1.0,
+    )
+    badge_fill_color = with_alpha(
+        lerp_color(TARGET_IDLE_BADGE_FILL_COLOR, TARGET_SCORED_BADGE_FILL_COLOR, progress),
+        1.0,
+    )
+    badge_core_color = with_alpha(
+        lerp_color(TARGET_IDLE_BADGE_CORE_COLOR, TARGET_SCORED_BADGE_CORE_COLOR, progress),
+        1.0,
+    )
+    star_color = with_alpha(
+        lerp_color(TARGET_IDLE_STAR_COLOR, TARGET_SCORED_STAR_COLOR, progress),
+        1.0,
+    )
+
+    draw_circle(draw, center, badge_outer_radius, fill=badge_rim_color)
+    draw_circle(draw, center, badge_fill_radius, fill=badge_fill_color)
+    draw_circle(draw, center, badge_core_radius, fill=badge_core_color)
+
+    glow_strength = math.sin(progress * math.pi)
+    if glow_strength > 0.0:
+        glow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow_layer)
+        glow_points = star_points(center, star_outer_radius * 1.08, star_inner_radius * 1.08)
+        glow_draw.polygon(glow_points, fill=with_alpha(TARGET_SCORED_STAR_COLOR, glow_strength * 0.18))
+        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=3.0 * scale * glow_strength))
+        canvas = Image.alpha_composite(canvas, glow_layer)
+        draw = ImageDraw.Draw(canvas)
+
+    draw.polygon(star_points(center, star_outer_radius, star_inner_radius), fill=star_color)
+
+    return np.array(
+        canvas.resize((TARGET_REFERENCE_WIDTH, TARGET_REFERENCE_HEIGHT), PIL_LANCZOS),
+        dtype=np.uint8,
+    )
+
+
+def render_target_reference_rgb(scoring_progress: float, idle_pulse: float = 0.0) -> np.ndarray:
+    background = np.full(
+        (TARGET_REFERENCE_HEIGHT, TARGET_REFERENCE_WIDTH, 3),
+        TARGET_REFERENCE_BACKGROUND_RGB,
+        dtype=np.uint8,
+    )
+    sprite = render_target_reference_rgba(scoring_progress, idle_pulse=idle_pulse)
+    alpha = sprite[:, :, 3:4].astype(np.float32) / 255.0
+    background[:] = np.clip(
+        sprite[:, :, :3].astype(np.float32) * alpha + background.astype(np.float32) * (1.0 - alpha),
+        0.0,
+        255.0,
+    ).astype(np.uint8)
+    return background
+
+
+def render_target_sprite(target: TargetState, timestamp: float) -> tuple[np.ndarray, tuple[float, float]]:
+    progress = target_animation_progress(target, timestamp)
+    idle_pulse = math.sin((2.0 * math.pi * timestamp) / TARGET_IDLE_PULSE_PERIOD_SECONDS)
+    reference_sprite = render_target_reference_rgba(progress, idle_pulse=idle_pulse)
+
+    scale = target.radius / TARGET_REFERENCE_COLLISION_RADIUS
+    scaled_width = max(int(round(reference_sprite.shape[1] * scale)), 1)
+    scaled_height = max(int(round(reference_sprite.shape[0] * scale)), 1)
+    sprite = cv2.resize(reference_sprite, (scaled_width, scaled_height), interpolation=cv2.INTER_LINEAR)
+    reference_center = lerp_point(
+        TARGET_REFERENCE_IDLE_CENTER,
+        TARGET_REFERENCE_SCORED_CENTER,
+        progress,
+    )
+    anchor = (reference_center[0] * scale, reference_center[1] * scale)
+    return sprite, anchor
+
+
+def draw_label(frame: np.ndarray, text: str, x: int, y: int) -> None:
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    y = max(y, th + baseline)
+    cv2.rectangle(frame, (x, y - th - baseline), (x + tw, y + baseline), (0, 0, 0), -1)
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2,
+        lineType=cv2.LINE_AA,
+    )
+
+
+def draw_label_right(frame: np.ndarray, text: str, right_margin: int, y: int) -> None:
+    (tw, _th), _baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    x = max(frame.shape[1] - right_margin - tw, 0)
+    draw_label(frame, text, x, y)
+
+
+def draw_track(frame: np.ndarray, track: BallTrack) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    cx = int(np.clip(track.center[0], 0, frame_w - 1))
+    cy = int(np.clip(track.center[1], 0, frame_h - 1))
+    radius = max(int(round(track.radius)), 4)
+    color = (0, 255, 0) if track.misses == 0 else (0, 215, 255)
+    thickness = 2 if track.misses == 0 else 1
+    cv2.circle(frame, (cx, cy), radius, color, thickness, lineType=cv2.LINE_AA)
+
+    label = f"Ball #{track.track_id}"
+    if track.misses:
+        label += f" hold ({track.misses})"
+    draw_label(frame, label, max(cx - radius, 0), max(cy - radius - 8, 16))
+
+
+def draw_target(frame: np.ndarray, target: TargetState, timestamp: float) -> None:
+    sprite, anchor = render_target_sprite(target, timestamp)
+    composite_sprite(frame, sprite, anchor, target.center)
