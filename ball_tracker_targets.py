@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -15,11 +15,14 @@ TARGET_BALL_CLEARANCE = 20.0
 TARGET_SPAWN_ATTEMPTS = 64
 TARGET_IDLE_PULSE_PERIOD_SECONDS = 0.90
 TARGET_IDLE_PULSE_SCALE = 0.02
-TARGET_SCORE_ANIMATION_SECONDS = 0.18
-
-TARGET_PHASE_IDLE = "idle"
-TARGET_PHASE_SCORING = "scoring"
-TargetPhase = Literal["idle", "scoring"]
+TARGET_SCORE_VALUE = 5
+TARGET_SCORE_BURST_SECONDS = 0.35
+TARGET_SCORE_POPUP_DELAY_SECONDS = 0.20
+TARGET_SCORE_POPUP_SECONDS = 0.75
+TARGET_SCORE_EFFECT_SECONDS = max(
+    TARGET_SCORE_BURST_SECONDS,
+    TARGET_SCORE_POPUP_DELAY_SECONDS + TARGET_SCORE_POPUP_SECONDS,
+)
 
 
 @dataclass
@@ -27,8 +30,14 @@ class TargetState:
     center: np.ndarray
     radius: int
     score: int = 0
-    phase: TargetPhase = TARGET_PHASE_IDLE
-    phase_started_at: float = 0.0
+
+
+@dataclass
+class ScoredTargetEffect:
+    center: np.ndarray
+    radius: int
+    points: int
+    started_at: float
 
 
 def clamp_unit(value: float) -> float:
@@ -153,37 +162,20 @@ def spawn_target(
     return best_candidate
 
 
-def target_animation_progress(target: TargetState, timestamp: float) -> float:
-    if target.phase != TARGET_PHASE_SCORING:
-        return 0.0
-
-    return clamp_unit((timestamp - target.phase_started_at) / TARGET_SCORE_ANIMATION_SECONDS)
-
-
-def begin_target_scoring(target: TargetState, timestamp: float) -> TargetState:
-    return TargetState(
-        center=target.center.copy(),
-        radius=target.radius,
-        score=target.score + 1,
-        phase=TARGET_PHASE_SCORING,
-        phase_started_at=timestamp,
-    )
-
-
-def advance_target_state(
+def score_target(
     target: TargetState,
     timestamp: float,
     frame_size: tuple[int, int],
     rng: Optional[np.random.Generator] = None,
     ball_track: Optional[BallTrack] = None,
-) -> TargetState:
-    if target.phase != TARGET_PHASE_SCORING:
-        return target
-
-    if target_animation_progress(target, timestamp) < 1.0:
-        return target
-
-    return TargetState(
+) -> tuple[TargetState, ScoredTargetEffect]:
+    effect = ScoredTargetEffect(
+        center=target.center.copy(),
+        radius=target.radius,
+        points=TARGET_SCORE_VALUE,
+        started_at=timestamp,
+    )
+    updated_target = TargetState(
         center=spawn_target(
             frame_size,
             target.radius,
@@ -192,14 +184,30 @@ def advance_target_state(
             ball_track=ball_track,
         ),
         radius=target.radius,
-        score=target.score,
-        phase=TARGET_PHASE_IDLE,
-        phase_started_at=0.0,
+        score=target.score + TARGET_SCORE_VALUE,
     )
+    return updated_target, effect
+
+
+def scored_target_effect_elapsed(effect: ScoredTargetEffect, timestamp: float) -> float:
+    return max(0.0, timestamp - effect.started_at)
+
+
+def scored_target_effect_is_active(effect: ScoredTargetEffect, timestamp: float) -> bool:
+    return scored_target_effect_elapsed(effect, timestamp) < TARGET_SCORE_EFFECT_SECONDS
+
+
+def scored_target_effect_burst_progress(effect: ScoredTargetEffect, timestamp: float) -> float:
+    return clamp_unit(scored_target_effect_elapsed(effect, timestamp) / TARGET_SCORE_BURST_SECONDS)
+
+
+def scored_target_effect_popup_progress(effect: ScoredTargetEffect, timestamp: float) -> float:
+    popup_elapsed = scored_target_effect_elapsed(effect, timestamp) - TARGET_SCORE_POPUP_DELAY_SECONDS
+    return clamp_unit(popup_elapsed / TARGET_SCORE_POPUP_SECONDS)
 
 
 def target_hit(track: Optional[BallTrack], target: TargetState) -> bool:
-    if target.phase != TARGET_PHASE_IDLE or not can_score_with_track(track):
+    if not can_score_with_track(track):
         return False
 
     return _distance_between(track.center, target.center) <= track.radius + target.radius

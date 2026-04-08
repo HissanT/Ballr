@@ -1,16 +1,26 @@
 import math
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from ball_tracker_targets import (
     TARGET_IDLE_PULSE_PERIOD_SECONDS,
     TARGET_IDLE_PULSE_SCALE,
+    TARGET_SCORE_BURST_SECONDS,
+    TARGET_SCORE_EFFECT_SECONDS,
+    TARGET_SCORE_POPUP_DELAY_SECONDS,
+    TARGET_SCORE_POPUP_SECONDS,
+    ScoredTargetEffect,
     TargetState,
     clamp_unit,
-    target_animation_progress,
+    scored_target_effect_burst_progress,
+    scored_target_effect_elapsed,
+    scored_target_effect_popup_progress,
 )
 from ball_tracker_tracking import BallTrack
 
@@ -47,6 +57,28 @@ TARGET_SCORED_BADGE_CORE_COLOR = (50, 109, 88)
 TARGET_SCORED_STAR_COLOR = (245, 248, 247)
 
 PIL_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+TARGET_SCORE_BURST_EXPAND_SCALE = 1.35
+TARGET_SCORE_POPUP_RISE_MULTIPLIER = 1.15
+TARGET_SCORE_POPUP_FONT_SCALE = 1.25
+TARGET_SCORE_POPUP_FONT_MIN_SIZE = 36
+TARGET_SCORE_POPUP_FONT_MAX_SIZE = 72
+TARGET_SCORE_POPUP_OUTLINE_ALPHA = 96
+TARGET_IDLE_CACHE_PHASES = 24
+TARGET_SCORE_BURST_CACHE_FRAMES = 14
+TARGET_SCORE_POPUP_CACHE_FRAMES = 24
+TARGET_SCORE_POPUP_FONT_PATHS = (
+    Path(r"C:\Windows\Fonts\LEMONMILK-Bold.otf"),
+    Path(r"C:\Windows\Fonts\LEMONMILK-Bold.ttf"),
+    Path(r"C:\Windows\Fonts\LEMONMILK.otf"),
+    Path(r"C:\Windows\Fonts\LEMONMILK.ttf"),
+    Path.home() / "Downloads" / "LEMONMILK-Bold.otf",
+    Path.home() / "Downloads" / "LEMONMILK-Bold.ttf",
+    Path.home() / "Desktop" / "LEMONMILK-Bold.otf",
+    Path.home() / "Desktop" / "LEMONMILK-Bold.ttf",
+    Path.home() / "Documents" / "LEMONMILK-Bold.otf",
+    Path.home() / "Documents" / "LEMONMILK-Bold.ttf",
+    Path(r"C:\Windows\Fonts\arialbd.ttf"),
+)
 
 
 def mirror_frame(frame: np.ndarray) -> np.ndarray:
@@ -191,6 +223,197 @@ def composite_sprite(
     ).astype(np.uint8)
 
 
+def resize_reference_sprite(
+    reference_sprite: np.ndarray,
+    reference_center: tuple[float, float],
+    scale: float,
+) -> tuple[np.ndarray, tuple[float, float]]:
+    scaled_width = max(int(round(reference_sprite.shape[1] * scale)), 1)
+    scaled_height = max(int(round(reference_sprite.shape[0] * scale)), 1)
+    sprite = cv2.resize(reference_sprite, (scaled_width, scaled_height), interpolation=cv2.INTER_LINEAR)
+    anchor = (reference_center[0] * scale, reference_center[1] * scale)
+    return sprite, anchor
+
+
+@dataclass(frozen=True)
+class CachedSprite:
+    sprite: np.ndarray
+    anchor: tuple[float, float]
+
+
+@dataclass
+class RenderAtlas:
+    radius: int
+    idle_sprites: list[CachedSprite]
+    burst_sprites: list[CachedSprite]
+    popup_sprites: dict[int, list[CachedSprite]]
+
+
+class RenderCache:
+    def __init__(self) -> None:
+        self._atlases: dict[int, RenderAtlas] = {}
+
+    def prime(self, radius: int, popup_points: tuple[int, ...] = ()) -> None:
+        self._get_atlas(radius, popup_points)
+
+    def get_idle_sprite(self, radius: int, timestamp: float) -> CachedSprite:
+        atlas = self._get_atlas(radius)
+        phase = (timestamp % TARGET_IDLE_PULSE_PERIOD_SECONDS) / TARGET_IDLE_PULSE_PERIOD_SECONDS
+        return atlas.idle_sprites[_quantize_progress_index(phase, len(atlas.idle_sprites))]
+
+    def get_burst_sprite(self, effect: ScoredTargetEffect, timestamp: float) -> Optional[CachedSprite]:
+        elapsed = scored_target_effect_elapsed(effect, timestamp)
+        if elapsed >= TARGET_SCORE_BURST_SECONDS:
+            return None
+
+        atlas = self._get_atlas(effect.radius)
+        progress = scored_target_effect_burst_progress(effect, timestamp)
+        return atlas.burst_sprites[_quantize_progress_index(progress, len(atlas.burst_sprites))]
+
+    def get_popup_sprite(self, effect: ScoredTargetEffect, timestamp: float) -> Optional[tuple[CachedSprite, float]]:
+        elapsed = scored_target_effect_elapsed(effect, timestamp)
+        if elapsed < TARGET_SCORE_POPUP_DELAY_SECONDS or elapsed >= TARGET_SCORE_EFFECT_SECONDS:
+            return None
+
+        atlas = self._get_atlas(effect.radius, (effect.points,))
+        progress = scored_target_effect_popup_progress(effect, timestamp)
+        sprite = atlas.popup_sprites[effect.points][
+            _quantize_progress_index(progress, len(atlas.popup_sprites[effect.points]))
+        ]
+        return sprite, smoothstep(0.0, 1.0, progress)
+
+    def _get_atlas(self, radius: int, popup_points: tuple[int, ...] = ()) -> RenderAtlas:
+        atlas = self._atlases.get(radius)
+        if atlas is None:
+            atlas = self._build_atlas(radius)
+            self._atlases[radius] = atlas
+
+        missing_popup_points = tuple(point for point in popup_points if point not in atlas.popup_sprites)
+        if missing_popup_points:
+            for point in missing_popup_points:
+                atlas.popup_sprites[point] = _build_popup_sprite_frames(point, radius)
+
+        return atlas
+
+    def _build_atlas(self, radius: int) -> RenderAtlas:
+        idle_scale = radius / TARGET_REFERENCE_COLLISION_RADIUS
+        idle_sprites = []
+        for index in range(TARGET_IDLE_CACHE_PHASES):
+            phase = index / max(TARGET_IDLE_CACHE_PHASES, 1)
+            idle_pulse = math.sin(2.0 * math.pi * phase)
+            reference_sprite = render_target_reference_rgba(0.0, idle_pulse=idle_pulse)
+            sprite, anchor = resize_reference_sprite(reference_sprite, TARGET_REFERENCE_IDLE_CENTER, idle_scale)
+            idle_sprites.append(CachedSprite(sprite=sprite, anchor=anchor))
+
+        scored_reference_sprite = render_target_reference_rgba(1.0, idle_pulse=0.0)
+        burst_sprites = []
+        for index in range(TARGET_SCORE_BURST_CACHE_FRAMES):
+            progress = _progress_for_index(index, TARGET_SCORE_BURST_CACHE_FRAMES)
+            eased_progress = smoothstep(0.0, 1.0, progress)
+            scale = idle_scale * (1.0 + (TARGET_SCORE_BURST_EXPAND_SCALE - 1.0) * eased_progress)
+            sprite, anchor = resize_reference_sprite(
+                scored_reference_sprite,
+                TARGET_REFERENCE_SCORED_CENTER,
+                scale,
+            )
+            burst_sprites.append(
+                CachedSprite(
+                    sprite=apply_sprite_alpha(sprite, 1.0 - eased_progress),
+                    anchor=anchor,
+                )
+            )
+
+        return RenderAtlas(
+            radius=radius,
+            idle_sprites=idle_sprites,
+            burst_sprites=burst_sprites,
+            popup_sprites={},
+        )
+
+
+def _progress_for_index(index: int, frame_count: int) -> float:
+    if frame_count <= 1:
+        return 1.0
+    return index / (frame_count - 1)
+
+
+def _quantize_progress_index(progress: float, frame_count: int) -> int:
+    if frame_count <= 1:
+        return 0
+    return int(np.clip(round(clamp_unit(progress) * (frame_count - 1)), 0, frame_count - 1))
+
+
+def _build_popup_sprite_frames(points: int, radius: int) -> list[CachedSprite]:
+    popup_frames = []
+    for index in range(TARGET_SCORE_POPUP_CACHE_FRAMES):
+        progress = _progress_for_index(index, TARGET_SCORE_POPUP_CACHE_FRAMES)
+        eased_progress = smoothstep(0.0, 1.0, progress)
+        sprite, anchor = render_score_popup_text_sprite(points, radius, 1.0 - eased_progress)
+        popup_frames.append(CachedSprite(sprite=sprite, anchor=anchor))
+    return popup_frames
+
+
+def apply_sprite_alpha(sprite_rgba: np.ndarray, alpha: float) -> np.ndarray:
+    alpha = clamp_unit(alpha)
+    if alpha >= 0.999:
+        return sprite_rgba
+
+    sprite = sprite_rgba.copy()
+    sprite[:, :, 3] = np.clip(sprite[:, :, 3].astype(np.float32) * alpha, 0.0, 255.0).astype(np.uint8)
+    return sprite
+
+
+@lru_cache(maxsize=32)
+def load_score_popup_font(font_size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    for font_path in TARGET_SCORE_POPUP_FONT_PATHS:
+        if not font_path.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(font_path), font_size)
+        except OSError:
+            continue
+
+    return ImageFont.load_default()
+
+
+def render_score_popup_text_sprite(points: int, radius: int, alpha: float) -> tuple[np.ndarray, tuple[float, float]]:
+    font_size = int(
+        round(
+            np.clip(
+                radius * TARGET_SCORE_POPUP_FONT_SCALE,
+                TARGET_SCORE_POPUP_FONT_MIN_SIZE,
+                TARGET_SCORE_POPUP_FONT_MAX_SIZE,
+            )
+        )
+    )
+    stroke_width = max(1, font_size // 18)
+    font = load_score_popup_font(font_size)
+    text = f"+{points}"
+
+    measure_canvas = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    measure_draw = ImageDraw.Draw(measure_canvas)
+    bbox = measure_draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+    padding = stroke_width + 4
+    width = max(bbox[2] - bbox[0] + padding * 2, 1)
+    height = max(bbox[3] - bbox[1] + padding * 2, 1)
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    origin = (padding - bbox[0], padding - bbox[1])
+    text_alpha = int(round(255 * clamp_unit(alpha)))
+    outline_alpha = int(round(TARGET_SCORE_POPUP_OUTLINE_ALPHA * clamp_unit(alpha)))
+    draw.text(
+        origin,
+        text,
+        font=font,
+        fill=(255, 255, 255, text_alpha),
+        stroke_width=stroke_width,
+        stroke_fill=(0, 0, 0, outline_alpha),
+    )
+    sprite = np.array(canvas, dtype=np.uint8)
+    anchor = (sprite.shape[1] / 2.0, sprite.shape[0] / 2.0)
+    return sprite, anchor
+
+
 def render_target_reference_rgba(scoring_progress: float, idle_pulse: float = 0.0) -> np.ndarray:
     progress = clamp_unit(scoring_progress)
     pulse_scale = 1.0 + (1.0 - progress) * TARGET_IDLE_PULSE_SCALE * idle_pulse
@@ -319,25 +542,65 @@ def render_target_reference_rgb(scoring_progress: float, idle_pulse: float = 0.0
 
 
 def render_target_sprite(target: TargetState, timestamp: float) -> tuple[np.ndarray, tuple[float, float]]:
-    progress = target_animation_progress(target, timestamp)
     idle_pulse = math.sin((2.0 * math.pi * timestamp) / TARGET_IDLE_PULSE_PERIOD_SECONDS)
-    reference_sprite = render_target_reference_rgba(progress, idle_pulse=idle_pulse)
-
+    reference_sprite = render_target_reference_rgba(0.0, idle_pulse=idle_pulse)
     scale = target.radius / TARGET_REFERENCE_COLLISION_RADIUS
-    scaled_width = max(int(round(reference_sprite.shape[1] * scale)), 1)
-    scaled_height = max(int(round(reference_sprite.shape[0] * scale)), 1)
-    sprite = cv2.resize(reference_sprite, (scaled_width, scaled_height), interpolation=cv2.INTER_LINEAR)
-    reference_center = lerp_point(
-        TARGET_REFERENCE_IDLE_CENTER,
-        TARGET_REFERENCE_SCORED_CENTER,
-        progress,
+    return resize_reference_sprite(reference_sprite, TARGET_REFERENCE_IDLE_CENTER, scale)
+
+
+def render_scored_target_burst_sprite(
+    effect: ScoredTargetEffect,
+    timestamp: float,
+) -> Optional[tuple[np.ndarray, tuple[float, float], np.ndarray]]:
+    elapsed = scored_target_effect_elapsed(effect, timestamp)
+    if elapsed >= TARGET_SCORE_BURST_SECONDS:
+        return None
+
+    progress = scored_target_effect_burst_progress(effect, timestamp)
+    eased_progress = smoothstep(0.0, 1.0, progress)
+    scale = (effect.radius / TARGET_REFERENCE_COLLISION_RADIUS) * (
+        1.0 + (TARGET_SCORE_BURST_EXPAND_SCALE - 1.0) * eased_progress
     )
-    anchor = (reference_center[0] * scale, reference_center[1] * scale)
-    return sprite, anchor
+    sprite, anchor = resize_reference_sprite(
+        render_target_reference_rgba(1.0, idle_pulse=0.0),
+        TARGET_REFERENCE_SCORED_CENTER,
+        scale,
+    )
+    return apply_sprite_alpha(sprite, 1.0 - eased_progress), anchor, effect.center
 
 
-def draw_label(frame: np.ndarray, text: str, x: int, y: int) -> None:
-    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+def render_score_popup_sprite(
+    effect: ScoredTargetEffect,
+    timestamp: float,
+) -> Optional[tuple[np.ndarray, tuple[float, float], np.ndarray]]:
+    elapsed = scored_target_effect_elapsed(effect, timestamp)
+    if elapsed < TARGET_SCORE_POPUP_DELAY_SECONDS or elapsed >= TARGET_SCORE_EFFECT_SECONDS:
+        return None
+
+    progress = scored_target_effect_popup_progress(effect, timestamp)
+    eased_progress = smoothstep(0.0, 1.0, progress)
+    sprite, anchor = render_score_popup_text_sprite(effect.points, effect.radius, 1.0 - eased_progress)
+    center = np.array(
+        (
+            effect.center[0],
+            effect.center[1] - effect.radius * TARGET_SCORE_POPUP_RISE_MULTIPLIER * eased_progress,
+        ),
+        dtype=np.float32,
+    )
+    return sprite, anchor, center
+
+
+def draw_label(
+    frame: np.ndarray,
+    text: str,
+    x: int,
+    y: int,
+    *,
+    font_scale: float = 0.6,
+    thickness: int = 2,
+) -> None:
+    thickness = max(int(thickness), 1)
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
     y = max(y, th + baseline)
     cv2.rectangle(frame, (x, y - th - baseline), (x + tw, y + baseline), (0, 0, 0), -1)
     cv2.putText(
@@ -345,17 +608,26 @@ def draw_label(frame: np.ndarray, text: str, x: int, y: int) -> None:
         text,
         (x, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
+        font_scale,
         (255, 255, 255),
-        2,
+        thickness,
         lineType=cv2.LINE_AA,
     )
 
 
-def draw_label_right(frame: np.ndarray, text: str, right_margin: int, y: int) -> None:
-    (tw, _th), _baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+def draw_label_right(
+    frame: np.ndarray,
+    text: str,
+    right_margin: int,
+    y: int,
+    *,
+    font_scale: float = 0.6,
+    thickness: int = 2,
+) -> None:
+    thickness = max(int(thickness), 1)
+    (tw, _th), _baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
     x = max(frame.shape[1] - right_margin - tw, 0)
-    draw_label(frame, text, x, y)
+    draw_label(frame, text, x, y, font_scale=font_scale, thickness=thickness)
 
 
 def draw_track(frame: np.ndarray, track: BallTrack) -> None:
@@ -373,6 +645,60 @@ def draw_track(frame: np.ndarray, track: BallTrack) -> None:
     draw_label(frame, label, max(cx - radius, 0), max(cy - radius - 8, 16))
 
 
-def draw_target(frame: np.ndarray, target: TargetState, timestamp: float) -> None:
-    sprite, anchor = render_target_sprite(target, timestamp)
+def draw_target(
+    frame: np.ndarray,
+    target: TargetState,
+    timestamp: float,
+    render_cache: Optional[RenderCache] = None,
+) -> None:
+    if render_cache is None:
+        sprite, anchor = render_target_sprite(target, timestamp)
+    else:
+        cached_sprite = render_cache.get_idle_sprite(target.radius, timestamp)
+        sprite, anchor = cached_sprite.sprite, cached_sprite.anchor
     composite_sprite(frame, sprite, anchor, target.center)
+
+
+def draw_scored_target_effect(
+    frame: np.ndarray,
+    effect: ScoredTargetEffect,
+    timestamp: float,
+    render_cache: Optional[RenderCache] = None,
+) -> None:
+    if render_cache is None:
+        burst = render_scored_target_burst_sprite(effect, timestamp)
+        if burst is not None:
+            burst_sprite, burst_anchor, burst_center = burst
+            composite_sprite(frame, burst_sprite, burst_anchor, burst_center)
+
+        popup = render_score_popup_sprite(effect, timestamp)
+        if popup is not None:
+            popup_sprite, popup_anchor, popup_center = popup
+            composite_sprite(frame, popup_sprite, popup_anchor, popup_center)
+        return
+
+    burst_sprite = render_cache.get_burst_sprite(effect, timestamp)
+    if burst_sprite is not None:
+        composite_sprite(frame, burst_sprite.sprite, burst_sprite.anchor, effect.center)
+
+    popup = render_cache.get_popup_sprite(effect, timestamp)
+    if popup is not None:
+        popup_sprite, popup_progress = popup
+        popup_center = np.array(
+            (
+                effect.center[0],
+                effect.center[1] - effect.radius * TARGET_SCORE_POPUP_RISE_MULTIPLIER * popup_progress,
+            ),
+            dtype=np.float32,
+        )
+        composite_sprite(frame, popup_sprite.sprite, popup_sprite.anchor, popup_center)
+
+
+def draw_scored_target_effects(
+    frame: np.ndarray,
+    effects: list[ScoredTargetEffect],
+    timestamp: float,
+    render_cache: Optional[RenderCache] = None,
+) -> None:
+    for effect in effects:
+        draw_scored_target_effect(frame, effect, timestamp, render_cache=render_cache)

@@ -2,14 +2,20 @@ import numpy as np
 
 from ball_tracker import (
     BallTrack,
+    ScoredTargetEffect,
     TargetState,
     TARGET_BALL_CLEARANCE,
     TARGET_LOWER_Y_FRACTION,
-    TARGET_PHASE_SCORING,
     TARGET_RESPAWN_DISTANCE_MULTIPLIER,
-    TARGET_SCORE_ANIMATION_SECONDS,
-    advance_target_state,
-    begin_target_scoring,
+    TARGET_SCORE_BURST_SECONDS,
+    TARGET_SCORE_EFFECT_SECONDS,
+    TARGET_SCORE_POPUP_DELAY_SECONDS,
+    TARGET_SCORE_POPUP_SECONDS,
+    TARGET_SCORE_VALUE,
+    score_target,
+    scored_target_effect_burst_progress,
+    scored_target_effect_is_active,
+    scored_target_effect_popup_progress,
     spawn_target,
     target_hit,
     target_spawn_bounds,
@@ -94,73 +100,81 @@ def test_target_hit_ignores_held_track_predictions():
     assert not target_hit(track, target)
 
 
-def test_target_hit_ignores_scoring_targets():
-    track = make_track(center=(100.0, 200.0), radius=24.0, misses=0, confirmed_frames=3)
+def test_target_hit_requires_confirmed_frames():
+    track = make_track(center=(100.0, 200.0), radius=24.0, misses=0, confirmed_frames=1)
     target = TargetState(
         center=np.array((120.0, 200.0), dtype=np.float32),
         radius=30,
         score=0,
-        phase=TARGET_PHASE_SCORING,
-        phase_started_at=1.0,
     )
 
     assert not target_hit(track, target)
 
 
-def test_begin_target_scoring_increments_score_and_locks_target():
+def test_score_target_awards_points_and_respawns_immediately():
     target = TargetState(
         center=np.array((220.0, 320.0), dtype=np.float32),
         radius=30,
-        score=4,
+        score=10,
     )
+    ball_track = make_track(center=(220.0, 320.0), radius=24.0, misses=0, confirmed_frames=4)
 
-    updated = begin_target_scoring(target, timestamp=12.5)
-
-    assert updated.score == 5
-    assert updated.phase == TARGET_PHASE_SCORING
-    assert updated.phase_started_at == 12.5
-    assert np.array_equal(updated.center, target.center)
-
-
-def test_advance_target_state_respawns_after_scoring_animation():
-    target = TargetState(
-        center=np.array((320.0, 360.0), dtype=np.float32),
-        radius=30,
-        score=3,
-        phase=TARGET_PHASE_SCORING,
-        phase_started_at=1.0,
-    )
-    ball_track = make_track(center=(320.0, 360.0), radius=26.0, misses=0, confirmed_frames=4)
-    rng = np.random.default_rng(4)
-
-    updated = advance_target_state(
+    updated_target, effect = score_target(
         target,
-        timestamp=1.0 + TARGET_SCORE_ANIMATION_SECONDS + 0.01,
+        timestamp=12.5,
         frame_size=(480, 640),
-        rng=rng,
+        rng=np.random.default_rng(4),
         ball_track=ball_track,
     )
 
-    assert updated.score == target.score
-    assert updated.phase != TARGET_PHASE_SCORING
-    assert np.linalg.norm(updated.center - target.center) >= TARGET_RESPAWN_DISTANCE_MULTIPLIER * target.radius
+    assert updated_target.score == 10 + TARGET_SCORE_VALUE
+    assert updated_target.radius == target.radius
+    assert np.linalg.norm(updated_target.center - target.center) >= (
+        TARGET_RESPAWN_DISTANCE_MULTIPLIER * target.radius
+    )
+    assert np.array_equal(effect.center, np.array((220.0, 320.0), dtype=np.float32))
+    assert effect.radius == 30
+    assert effect.points == TARGET_SCORE_VALUE
+    assert effect.started_at == 12.5
 
 
-def test_advance_target_state_holds_target_until_animation_completes():
+def test_score_target_respawn_stays_clear_of_live_ball():
     target = TargetState(
         center=np.array((320.0, 360.0), dtype=np.float32),
         radius=30,
         score=3,
-        phase=TARGET_PHASE_SCORING,
-        phase_started_at=1.0,
     )
+    ball_track = make_track(center=(320.0, 360.0), radius=26.0, misses=0, confirmed_frames=4)
 
-    updated = advance_target_state(
+    updated_target, _effect = score_target(
         target,
-        timestamp=1.0 + TARGET_SCORE_ANIMATION_SECONDS - 0.02,
+        timestamp=8.0,
         frame_size=(480, 640),
         rng=np.random.default_rng(4),
+        ball_track=ball_track,
     )
 
-    assert np.array_equal(updated.center, target.center)
-    assert updated.phase == TARGET_PHASE_SCORING
+    minimum_distance = ball_track.radius + target.radius + TARGET_BALL_CLEARANCE
+    assert np.linalg.norm(updated_target.center - ball_track.center) >= minimum_distance
+
+
+def test_scored_target_effect_lifecycle_transitions_from_burst_to_popup():
+    effect = ScoredTargetEffect(
+        center=np.array((320.0, 360.0), dtype=np.float32),
+        radius=30,
+        points=TARGET_SCORE_VALUE,
+        started_at=1.0,
+    )
+
+    assert scored_target_effect_is_active(effect, 1.0)
+    burst_midpoint = 1.0 + (TARGET_SCORE_BURST_SECONDS * 0.5)
+    assert np.isclose(scored_target_effect_burst_progress(effect, burst_midpoint), 0.5)
+    assert np.isclose(
+        scored_target_effect_popup_progress(effect, 1.0 + TARGET_SCORE_POPUP_DELAY_SECONDS - 0.01),
+        0.0,
+    )
+
+    popup_time = 1.0 + TARGET_SCORE_POPUP_DELAY_SECONDS + (TARGET_SCORE_POPUP_SECONDS * 0.25)
+    assert np.isclose(scored_target_effect_popup_progress(effect, popup_time), 0.25)
+    assert scored_target_effect_is_active(effect, 1.0 + TARGET_SCORE_EFFECT_SECONDS - 0.01)
+    assert not scored_target_effect_is_active(effect, 1.0 + TARGET_SCORE_EFFECT_SECONDS)
