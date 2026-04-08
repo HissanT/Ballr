@@ -53,13 +53,13 @@ def main() -> None:
     parser.add_argument(
         "--conf",
         type=float,
-        default=0.55,
+        default=0.65,
         help="Minimum confidence for a frame to enter the capture set",
     )
     parser.add_argument(
         "--review-conf",
         type=float,
-        default=0.25,
+        default=0.35,
         help="Minimum confidence to retain a frame in the manual review queue",
     )
     parser.add_argument(
