@@ -14,6 +14,17 @@ MOTION_DECAY = 0.82
 CENTER_SMOOTHING = 0.65
 VELOCITY_SMOOTHING = 0.55
 RADIUS_SMOOTHING = 0.60
+TRACK_GATE_RADIUS_MULTIPLIER = 5.0
+TRACK_GATE_MIN_RADIUS = 55.0
+TRACK_GATE_SPEED_FACTOR = 1.5
+TRACK_GATE_MISS_PENALTY = 25.0
+SCORE_WEIGHT_CONFIDENCE = 0.55
+SCORE_WEIGHT_MOTION = 0.35
+SCORE_WEIGHT_SIZE = 0.10
+SCORE_PROXIMITY_BONUS_GATE_FRACTION = 0.4
+SCORE_PROXIMITY_BONUS = 0.05
+TRACK_SCORE_ACCEPT_THRESHOLD = 0.35
+TRACK_REACQUIRE_MIN_MISSES = 2
 MODEL_PATH = "runs/train/ballr_v4/weights/best.pt"
 
 
@@ -39,14 +50,22 @@ class BallTrack:
     confirmed_frames: int = 0
 
 
+def is_track_live(track: Optional[BallTrack], min_confirmed_frames: int = 0) -> bool:
+    return (
+        track is not None
+        and track.misses == 0
+        and track.confirmed_frames >= min_confirmed_frames
+    )
+
+
 def predicted_center(track: BallTrack) -> np.ndarray:
     return track.center + track.velocity
 
 
 def track_gate_radius(track: BallTrack) -> float:
     speed = float(np.linalg.norm(track.velocity))
-    base = max(track.radius * 5.0, 55.0)
-    return base + speed * 1.5 + track.misses * 25.0
+    base = max(track.radius * TRACK_GATE_RADIUS_MULTIPLIER, TRACK_GATE_MIN_RADIUS)
+    return base + speed * TRACK_GATE_SPEED_FACTOR + track.misses * TRACK_GATE_MISS_PENALTY
 
 
 def extract_candidates(results) -> list[DetectionCandidate]:
@@ -55,7 +74,7 @@ def extract_candidates(results) -> list[DetectionCandidate]:
 
     candidates: list[DetectionCandidate] = []
     for box in results[0].boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+        x1, y1, x2, y2 = (int(value) for value in box.xyxy[0])
         center = np.array(((x1 + x2) / 2.0, (y1 + y2) / 2.0), dtype=np.float32)
         radius = max((x2 - x1), (y2 - y1)) / 2.0
         candidates.append(
@@ -83,10 +102,14 @@ def score_candidate(candidate: DetectionCandidate, track: BallTrack) -> float:
     motion_score = max(0.0, 1.0 - distance / max(gate, 1.0))
     size_delta = abs(candidate.radius - track.radius) / max(track.radius, 1.0)
     size_score = max(0.0, 1.0 - size_delta)
-    score = candidate.confidence * 0.55 + motion_score * 0.35 + size_score * 0.10
+    score = (
+        candidate.confidence * SCORE_WEIGHT_CONFIDENCE
+        + motion_score * SCORE_WEIGHT_MOTION
+        + size_score * SCORE_WEIGHT_SIZE
+    )
 
-    if distance <= gate * 0.4:
-        score += 0.05
+    if distance <= gate * SCORE_PROXIMITY_BONUS_GATE_FRACTION:
+        score += SCORE_PROXIMITY_BONUS
 
     return score
 
@@ -103,10 +126,10 @@ def choose_primary_candidate(
 
     best_candidate = max(candidates, key=lambda candidate: score_candidate(candidate, track))
     best_score = score_candidate(best_candidate, track)
-    if best_score >= 0.35:
+    if best_score >= TRACK_SCORE_ACCEPT_THRESHOLD:
         return best_candidate
 
-    if track.misses >= 2 and strongest.confidence >= REACQUIRE_CONF_THRESHOLD:
+    if track.misses >= TRACK_REACQUIRE_MIN_MISSES and strongest.confidence >= REACQUIRE_CONF_THRESHOLD:
         return strongest
 
     return None

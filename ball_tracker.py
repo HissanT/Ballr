@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from ball_tracker_audio import TARGET_SOUND_PATH, play_score_sound as _play_score_sound
+from ball_tracker_juggling import JuggleState, update_juggle_state
 from ball_tracker_rendering import (
     PIL_LANCZOS,
     RenderCache,
@@ -79,9 +80,7 @@ from ball_tracker_targets import (
     TARGET_SPAWN_ATTEMPTS,
     ScoredTargetEffect,
     TargetState,
-    can_score_with_track,
     clamp_unit,
-    has_live_track,
     score_target,
     scored_target_effect_burst_progress,
     scored_target_effect_elapsed,
@@ -124,6 +123,8 @@ except ImportError:
 
 
 T = TypeVar("T")
+GAME_MODE_TARGET = "target"
+GAME_MODE_JUGGLE = "juggle"
 
 HUD_BASELINE_Y = 22
 HUD_LINE_HEIGHT = 22
@@ -212,6 +213,7 @@ class TrackerRuntimeState:
     track: Optional[BallTrack] = None
     target: Optional[TargetState] = None
     score_effects: list[ScoredTargetEffect] = field(default_factory=list)
+    juggle: Optional[JuggleState] = None
     next_track_id: int = 1
     counters: PipelineCounters = field(default_factory=PipelineCounters)
 
@@ -235,11 +237,19 @@ class ProcessedFrame:
     frame_time: float
     stage_timings: StageTimings
     track: Optional[BallTrack]
-    target: TargetState
+    target: Optional[TargetState]
     score_effects: list[ScoredTargetEffect]
     candidates_count: int
     primary_candidate_confidence: Optional[float]
     counters: PipelineCounters
+    game_mode: str = GAME_MODE_TARGET
+    current_score: int = 0
+    best_score: int = 0
+    status_label: str = ""
+    total_score_events: int = 0
+    drop_resets: int = 0
+    loss_resets: int = 0
+    warmup_seconds: float = 0.0
 
 
 @dataclass
@@ -257,6 +267,7 @@ class BenchmarkAccumulator:
     candidate_counts: list[int] = field(default_factory=list)
     primary_confidences: list[float] = field(default_factory=list)
     final_counters: PipelineCounters = field(default_factory=PipelineCounters)
+    final_frame: Optional[ProcessedFrame] = None
 
     def add(self, frame_result: ProcessedFrame) -> None:
         self.capture_ms.append(frame_result.stage_timings.capture_ms)
@@ -271,12 +282,14 @@ class BenchmarkAccumulator:
         if frame_result.primary_candidate_confidence is not None:
             self.primary_confidences.append(frame_result.primary_candidate_confidence)
         self.final_counters = replace(frame_result.counters)
+        self.final_frame = frame_result
 
     def summary(
         self,
         *,
         source: str,
         frame_size: tuple[int, int],
+        mode: str = GAME_MODE_TARGET,
         queue_drops: Optional[dict[str, int]] = None,
     ) -> dict[str, Any]:
         frames_processed = len(self.capture_ms)
@@ -295,6 +308,7 @@ class BenchmarkAccumulator:
 
         summary = {
             "source": source,
+            "mode": mode,
             "frame_size": [frame_size[0], frame_size[1]],
             "frames_processed": frames_processed,
             "avg_fps": round(frames_processed / wall_seconds, 3),
@@ -321,6 +335,27 @@ class BenchmarkAccumulator:
             },
             "queue_drops": queue_drops or {"capture_to_inference": 0, "inference_to_render": 0},
         }
+        if self.final_frame is not None and mode == GAME_MODE_TARGET:
+            summary["target_metrics"] = {
+                "score": (
+                    self.final_frame.current_score
+                    if self.final_frame.current_score
+                    else (
+                        self.final_frame.target.score
+                        if self.final_frame.target is not None
+                        else 0
+                    )
+                ),
+            }
+        if self.final_frame is not None and mode == GAME_MODE_JUGGLE:
+            summary["juggle_metrics"] = {
+                "current_streak": self.final_frame.current_score,
+                "best_streak": self.final_frame.best_score,
+                "juggles_scored": self.final_frame.total_score_events,
+                "drop_resets": self.final_frame.drop_resets,
+                "loss_resets": self.final_frame.loss_resets,
+                "warmup_seconds": round(self.final_frame.warmup_seconds, 3),
+            }
         return summary
 
 
@@ -382,16 +417,13 @@ def process_capture_packet(
     rng: np.random.Generator,
     render_cache: RenderCache,
     *,
+    game_mode: str = GAME_MODE_TARGET,
     on_score: Optional[Callable[[], None]] = None,
 ) -> tuple[TrackerRuntimeState, ProcessedFrame]:
     frame_time = packet.capture_finished_at
     stage_timings = StageTimings(capture_ms=packet.capture_ms)
     counters = state.counters
     counters.total_frames += 1
-
-    score_effects = [
-        effect for effect in state.score_effects if scored_target_effect_is_active(effect, frame_time)
-    ]
 
     preprocess_started_at = time.perf_counter()
     enhanced = preprocess_frame(packet.frame, gamma_lut, clahe)
@@ -417,27 +449,67 @@ def process_capture_packet(
         if track is not None:
             counters.held_frames += 1
 
-    target = state.target
-    if target is None:
-        target_radius = target_radius_for_frame(packet.frame.shape)
-        render_cache.prime(target_radius, (TARGET_SCORE_VALUE,))
-        target = TargetState(
-            center=spawn_target(packet.frame.shape[:2], target_radius, rng=rng),
-            radius=target_radius,
-        )
+    target: Optional[TargetState] = state.target
+    score_effects: list[ScoredTargetEffect] = []
+    juggle_state = state.juggle
+    current_score = 0
+    best_score = 0
+    status_label = game_mode.title()
+    total_score_events = counters.hit_frames
+    drop_resets = 0
+    loss_resets = 0
+    warmup_seconds = 0.0
 
-    if target_hit(track, target):
-        target, scored_effect = score_target(
-            target,
+    if game_mode == GAME_MODE_TARGET:
+        score_effects = [
+            effect for effect in state.score_effects if scored_target_effect_is_active(effect, frame_time)
+        ]
+        if target is None:
+            target_radius = target_radius_for_frame(packet.frame.shape)
+            render_cache.prime(target_radius, (TARGET_SCORE_VALUE,))
+            target = TargetState(
+                center=spawn_target(packet.frame.shape[:2], target_radius, rng=rng),
+                radius=target_radius,
+            )
+
+        if target_hit(track, target):
+            target, scored_effect = score_target(
+                target,
+                frame_time,
+                packet.frame.shape[:2],
+                rng=rng,
+                ball_track=track,
+            )
+            score_effects.append(scored_effect)
+            counters.hit_frames += 1
+            if on_score is not None:
+                on_score()
+
+        current_score = target.score
+        best_score = target.score
+        status_label = "Target"
+        total_score_events = counters.hit_frames
+    elif game_mode == GAME_MODE_JUGGLE:
+        target = None
+        score_effects = []
+        juggle_state, juggle_scored = update_juggle_state(
+            state.juggle,
+            track,
             frame_time,
             packet.frame.shape[:2],
-            rng=rng,
-            ball_track=track,
         )
-        score_effects.append(scored_effect)
-        counters.hit_frames += 1
-        if on_score is not None:
-            on_score()
+        if juggle_scored:
+            counters.hit_frames += 1
+
+        current_score = juggle_state.current_streak
+        best_score = juggle_state.best_streak
+        status_label = juggle_state.status_label
+        total_score_events = juggle_state.total_juggles
+        drop_resets = juggle_state.drop_resets
+        loss_resets = juggle_state.loss_resets
+        warmup_seconds = juggle_state.warmup_seconds
+    else:
+        raise ValueError(f"Unsupported game mode: {game_mode}")
 
     if track is not None:
         counters.active_frames += 1
@@ -449,6 +521,7 @@ def process_capture_packet(
         track=track,
         target=target,
         score_effects=score_effects,
+        juggle=juggle_state,
         next_track_id=next_track_id,
         counters=counters,
     )
@@ -465,6 +538,14 @@ def process_capture_packet(
             float(primary_candidate.confidence) if primary_candidate is not None else None
         ),
         counters=_copy_counters(counters),
+        game_mode=game_mode,
+        current_score=current_score,
+        best_score=best_score,
+        status_label=status_label,
+        total_score_events=total_score_events,
+        drop_resets=drop_resets,
+        loss_resets=loss_resets,
+        warmup_seconds=warmup_seconds,
     )
     return updated_state, frame_result
 
@@ -481,21 +562,47 @@ def render_processed_frame(
     if frame_result.track is not None:
         draw_track(frame, frame_result.track)
 
-    draw_target(frame, frame_result.target, frame_result.frame_time, render_cache=render_cache)
-    draw_scored_target_effects(
-        frame,
-        frame_result.score_effects,
-        frame_result.frame_time,
-        render_cache=render_cache,
-    )
-    draw_label_right(
-        frame,
-        f"Score: {frame_result.target.score}",
-        8,
-        HUD_BASELINE_Y,
-        font_scale=HUD_FONT_SCALE,
-        thickness=HUD_FONT_THICKNESS,
-    )
+    if frame_result.game_mode == GAME_MODE_TARGET and frame_result.target is not None:
+        draw_target(frame, frame_result.target, frame_result.frame_time, render_cache=render_cache)
+        draw_scored_target_effects(
+            frame,
+            frame_result.score_effects,
+            frame_result.frame_time,
+            render_cache=render_cache,
+        )
+        draw_label_right(
+            frame,
+            f"Score: {frame_result.current_score}",
+            8,
+            HUD_BASELINE_Y,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+    elif frame_result.game_mode == GAME_MODE_JUGGLE:
+        draw_label_right(
+            frame,
+            f"Current: {frame_result.current_score}",
+            8,
+            HUD_BASELINE_Y,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"Best: {frame_result.best_score}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"Status: {frame_result.status_label}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 2,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
 
     counters = frame_result.counters
     draw_label(
@@ -556,6 +663,7 @@ def run_benchmark(
     cap: cv2.VideoCapture,
     *,
     source_label: str,
+    game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
     gamma_lut: np.ndarray,
@@ -598,6 +706,7 @@ def run_benchmark(
             clahe,
             rng,
             render_cache,
+            game_mode=game_mode,
         )
 
         if previous_frame_time is not None:
@@ -615,7 +724,7 @@ def run_benchmark(
 
     benchmark.wall_finished_at = time.perf_counter()
     frame_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    summary = benchmark.summary(source=source_label, frame_size=frame_size)
+    summary = benchmark.summary(source=source_label, frame_size=frame_size, mode=game_mode)
     summary_json = json.dumps(summary, indent=2)
     print(summary_json)
 
@@ -662,6 +771,7 @@ def _inference_worker(
     result_store: LatestValueStore[ProcessedFrame],
     stop_event: threading.Event,
     *,
+    game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
     gamma_lut: np.ndarray,
@@ -689,6 +799,7 @@ def _inference_worker(
                 clahe,
                 rng,
                 render_cache,
+                game_mode=game_mode,
                 on_score=on_score,
             )
             result_store.put(frame_result)
@@ -700,6 +811,7 @@ def run_live_tracker(
     cap: cv2.VideoCapture,
     *,
     source_label: str,
+    game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
     gamma_lut: np.ndarray,
@@ -721,13 +833,14 @@ def run_live_tracker(
         target=_inference_worker,
         args=(frame_store, result_store, stop_event),
         kwargs={
+            "game_mode": game_mode,
             "model": model,
             "predict_kwargs": predict_kwargs,
             "gamma_lut": gamma_lut,
             "clahe": clahe,
             "rng": rng,
             "render_cache": render_cache,
-            "on_score": play_score_sound,
+            "on_score": play_score_sound if game_mode == GAME_MODE_TARGET else None,
         },
         daemon=True,
     )
@@ -783,6 +896,12 @@ def main() -> None:
     from ultralytics import YOLO
 
     parser = argparse.ArgumentParser(description="Real-time single-ball tracker")
+    parser.add_argument(
+        "--mode",
+        choices=(GAME_MODE_TARGET, GAME_MODE_JUGGLE),
+        default=GAME_MODE_TARGET,
+        help="Gameplay mode to run",
+    )
     parser.add_argument("--source", default="0", help="Webcam index or video file / stream URL")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
@@ -800,7 +919,8 @@ def main() -> None:
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     rng = np.random.default_rng()
     render_cache = RenderCache()
-    render_cache.prime(target_radius_for_frame((args.height, args.width)), (TARGET_SCORE_VALUE,))
+    if args.mode == GAME_MODE_TARGET:
+        render_cache.prime(target_radius_for_frame((args.height, args.width)), (TARGET_SCORE_VALUE,))
 
     source = parse_source(args.source)
     cap = cv2.VideoCapture(source)
@@ -812,13 +932,14 @@ def main() -> None:
         print(f"ERROR: Could not open source '{args.source}'")
         return
 
-    print(f"Tracking started on device: {device_name}")
+    print(f"Tracking started on device: {device_name} ({args.mode} mode)")
 
     try:
         if args.benchmark:
             run_benchmark(
                 cap,
                 source_label=str(args.source),
+                game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
                 gamma_lut=gamma_lut,
@@ -832,6 +953,7 @@ def main() -> None:
             run_live_tracker(
                 cap,
                 source_label=str(args.source),
+                game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
                 gamma_lut=gamma_lut,

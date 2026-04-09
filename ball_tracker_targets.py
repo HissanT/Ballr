@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 
-from ball_tracker_tracking import BallTrack
+from ball_tracker_tracking import BallTrack, is_track_live
 
 TARGET_LOWER_Y_FRACTION = 0.50
 TARGET_RADIUS_RATIO = 0.091
@@ -51,11 +51,11 @@ def target_radius_for_frame(frame_shape: tuple[int, ...]) -> int:
 
 
 def has_live_track(track: Optional[BallTrack]) -> bool:
-    return track is not None and track.misses == 0
+    return is_track_live(track)
 
 
 def can_score_with_track(track: Optional[BallTrack]) -> bool:
-    return track is not None and track.misses == 0 and track.confirmed_frames >= 2
+    return is_track_live(track, min_confirmed_frames=2)
 
 
 def target_spawn_bounds(frame_size: tuple[int, int], radius: int) -> tuple[int, int, int, int]:
@@ -72,42 +72,35 @@ def _distance_between(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
 
 
-def _target_position_quality(
+def _evaluate_target_position(
     center: np.ndarray,
     previous_center: Optional[np.ndarray],
     ball_track: Optional[BallTrack],
     radius: int,
-) -> float:
+) -> tuple[float, bool]:
     previous_distance = (
-        _distance_between(center, previous_center) if previous_center is not None else radius * 10.0
+        _distance_between(center, previous_center) if previous_center is not None else None
     )
+    live_ball_track = has_live_track(ball_track)
+    ball_distance = _distance_between(center, ball_track.center) if live_ball_track else None
 
-    if has_live_track(ball_track):
-        ball_distance = _distance_between(center, ball_track.center)
-        ball_clearance = max(ball_distance - ball_track.radius - radius, 0.0)
+    quality = previous_distance if previous_distance is not None else radius * 10.0
+    if ball_distance is not None:
+        quality += max(ball_distance - ball_track.radius - radius, 0.0)
     else:
-        ball_clearance = radius * 10.0
+        quality += radius * 10.0
 
-    return previous_distance + ball_clearance
-
-
-def _target_position_is_valid(
-    center: np.ndarray,
-    previous_center: Optional[np.ndarray],
-    ball_track: Optional[BallTrack],
-    radius: int,
-) -> bool:
-    if previous_center is not None:
+    if previous_distance is not None:
         minimum_previous_distance = TARGET_RESPAWN_DISTANCE_MULTIPLIER * radius
-        if _distance_between(center, previous_center) < minimum_previous_distance:
-            return False
+        if previous_distance < minimum_previous_distance:
+            return quality, False
 
-    if has_live_track(ball_track):
+    if ball_distance is not None:
         minimum_ball_distance = ball_track.radius + radius + TARGET_BALL_CLEARANCE
-        if _distance_between(center, ball_track.center) < minimum_ball_distance:
-            return False
+        if ball_distance < minimum_ball_distance:
+            return quality, False
 
-    return True
+    return quality, True
 
 
 def spawn_target(
@@ -131,12 +124,12 @@ def spawn_target(
             ],
             dtype=np.float32,
         )
-        quality = _target_position_quality(candidate, previous_center, ball_track, radius)
+        quality, is_valid = _evaluate_target_position(candidate, previous_center, ball_track, radius)
         if quality > best_quality:
             best_candidate = candidate
             best_quality = quality
 
-        if _target_position_is_valid(candidate, previous_center, ball_track, radius):
+        if is_valid:
             return candidate
 
     fallback_candidates = (
@@ -148,12 +141,12 @@ def spawn_target(
         np.array(((min_x + max_x) / 2.0, max_y), dtype=np.float32),
     )
     for candidate in fallback_candidates:
-        quality = _target_position_quality(candidate, previous_center, ball_track, radius)
+        quality, is_valid = _evaluate_target_position(candidate, previous_center, ball_track, radius)
         if quality > best_quality:
             best_candidate = candidate
             best_quality = quality
 
-        if _target_position_is_valid(candidate, previous_center, ball_track, radius):
+        if is_valid:
             return candidate
 
     if best_candidate is None:
