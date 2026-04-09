@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from ball_tracker_pose import PoseFrame
 from ball_tracker_targets import (
     TARGET_IDLE_PULSE_PERIOD_SECONDS,
     TARGET_IDLE_PULSE_SCALE,
@@ -643,6 +644,42 @@ def draw_track(frame: np.ndarray, track: BallTrack) -> None:
     if track.misses:
         label += f" hold ({track.misses})"
     draw_label(frame, label, max(cx - radius, 0), max(cy - radius - 8, 16))
+
+
+def draw_pose_overlay(frame: np.ndarray, pose_frame: Optional[PoseFrame]) -> None:
+    if pose_frame is None or not pose_frame.available:
+        return
+
+    frame_h, frame_w = frame.shape[:2]
+    line_color = (86, 196, 255) if pose_frame.live else (0, 215, 255)
+    ground_color = (91, 224, 140) if pose_frame.live else (0, 180, 140)
+    point_color = (255, 255, 255) if pose_frame.live else (200, 200, 200)
+    if pose_frame.box is not None:
+        x1, y1, x2, y2 = pose_frame.box
+        left = max(int(round(x1)) - 16, 0)
+        right = min(int(round(x2)) + 16, frame_w - 1)
+        top = max(int(round(y1)), 0)
+    else:
+        left = 0
+        right = frame_w - 1
+        top = 0
+
+    if pose_frame.knee_line_y is not None:
+        y = int(np.clip(round(pose_frame.knee_line_y), 0, frame_h - 1))
+        cv2.line(frame, (left, y), (right, y), line_color, 2, lineType=cv2.LINE_AA)
+        draw_label(frame, "Knee line", max(left, 8), max(y - 6, 16), font_scale=0.4, thickness=1)
+
+    if pose_frame.ground_y is not None:
+        y = int(np.clip(round(pose_frame.ground_y), 0, frame_h - 1))
+        cv2.line(frame, (left, y), (right, y), ground_color, 2, lineType=cv2.LINE_AA)
+        draw_label(frame, "Ground", max(left, 8), min(y + 18, frame_h - 4), font_scale=0.4, thickness=1)
+
+    nearest_name = pose_frame.nearest_contact.name if pose_frame.nearest_contact is not None else None
+    for name, point in pose_frame.keypoints.items():
+        px = int(np.clip(round(float(point[0])), 0, frame_w - 1))
+        py = int(np.clip(round(float(point[1])), 0, frame_h - 1))
+        color = (0, 255, 0) if name == nearest_name else point_color
+        cv2.circle(frame, (px, py), 5 if name == nearest_name else 4, color, -1, lineType=cv2.LINE_AA)
 
 
 def draw_target(

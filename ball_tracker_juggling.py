@@ -2,30 +2,47 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
 
 import numpy as np
 
+from ball_tracker_pose import PoseFrame
 from ball_tracker_tracking import BallTrack, is_track_live
 
-JUGGLE_WARMUP_SECONDS = 2.0
-JUGGLE_HISTORY_SECONDS = 3.0
-JUGGLE_MIN_SAMPLES_TO_ARM = 12
-JUGGLE_LOW_BAND_PERCENTILE = 82.0
-JUGGLE_LOW_BAND_MARGIN_MULTIPLIER = 0.45
-JUGGLE_MIN_DESCENT_RADIUS_MULTIPLIER = 1.15
-JUGGLE_MIN_DESCENT_PIXELS = 18.0
-JUGGLE_MIN_REBOUND_RADIUS_MULTIPLIER = 1.0
-JUGGLE_MIN_REBOUND_PIXELS = 20.0
-JUGGLE_DIRECTION_SPEED_RADIUS_MULTIPLIER = 7.5
-JUGGLE_DIRECTION_SPEED_MIN = 120.0
-JUGGLE_RESET_CLEAR_RISE_RADIUS_MULTIPLIER = 0.8
-JUGGLE_RESET_CLEAR_RISE_PIXELS = 14.0
-JUGGLE_DROP_RESET_SECONDS = 0.55
-JUGGLE_LOSS_RESET_SECONDS = 0.45
-JUGGLE_GENERAL_LOSS_RESET_SECONDS = 1.20
-JUGGLE_STATUS_RESET_SECONDS = 0.8
+JUGGLE_WARMUP_SECONDS = 0.5
+JUGGLE_HISTORY_SECONDS = 1.5
 JUGGLE_MIN_CONFIRMED_FRAMES = 2
+
+JUGGLE_CONTACT_WINDOW_SECONDS = 0.20
+JUGGLE_RISE_CONFIRM_SECONDS = 0.25
+JUGGLE_LOSS_RESET_SECONDS = 0.45
+JUGGLE_GROUND_DWELL_SECONDS = 0.18
+
+JUGGLE_CONTACT_SCORE_WEIGHT = 0.45
+JUGGLE_TRAJECTORY_SCORE_WEIGHT = 0.35
+JUGGLE_CLEARANCE_SCORE_WEIGHT = 0.20
+JUGGLE_SCORE_THRESHOLD = 0.70
+
+JUGGLE_CLEARANCE_RISE_RADIUS_MULTIPLIER = 1.5
+DESCENDING_ON = 1.5
+DESCENDING_OFF = 0.5
+RISING_ON = -1.5
+RISING_OFF = -0.5
+
+JUGGLE_GROUND_MARGIN_RADIUS_MULTIPLIER = 0.65
+JUGGLE_GROUND_MARGIN_MIN = 8.0
+JUGGLE_KNEE_ZONE_MARGIN_RADIUS_MULTIPLIER = 0.25
+JUGGLE_KNEE_ZONE_MARGIN_MIN = 4.0
+
+
+class JugglePhase(str, Enum):
+    WARMUP = "Warmup"
+    READY = "Ready"
+    CONTACT_WINDOW = "ContactWindow"
+    RISE_WINDOW = "RiseWindow"
+    DROP_PENDING = "DropPending"
+    LOST = "Lost"
 
 
 @dataclass(frozen=True)
@@ -36,38 +53,54 @@ class JuggleSample:
 
 
 @dataclass
-class PendingJuggle:
-    contact_at: float
-    contact_y: float
-    min_rebound_rise: float
-
-
-@dataclass
-class DropPending:
+class PendingContact:
     started_at: float
     contact_y: float
-    reason: str
-    loss_started_at: Optional[float] = None
+    origin_y: float
+    landmark_name: str
+    landmark_display_name: str
+    landmark_distance: float
+    landmark_confidence: float
+    contact_score: float = JUGGLE_CONTACT_SCORE_WEIGHT
+    trajectory_score: float = 0.0
+    clearance_score: float = 0.0
+
+    @property
+    def total_score(self) -> float:
+        return self.contact_score + self.trajectory_score + self.clearance_score
 
 
 @dataclass
 class JuggleState:
     history: deque[JuggleSample] = field(default_factory=deque)
+    phase: JugglePhase = JugglePhase.WARMUP
     current_streak: int = 0
     best_streak: int = 0
     total_juggles: int = 0
     drop_resets: int = 0
     loss_resets: int = 0
-    armed: bool = False
     warmup_started_at: Optional[float] = None
     armed_at: Optional[float] = None
     last_live_track_at: Optional[float] = None
     loss_started_at: Optional[float] = None
-    pending_juggle: Optional[PendingJuggle] = None
-    drop_pending: Optional[DropPending] = None
-    status_label: str = "Warmup"
-    last_reset_reason: Optional[str] = None
-    last_reset_at: Optional[float] = None
+    pending_contact: Optional[PendingContact] = None
+    drop_started_at: Optional[float] = None
+    awaiting_rearm: bool = False
+    rearm_ready: bool = False
+    last_count_at: Optional[float] = None
+    ground_blocked_active: bool = False
+    status_label: str = JugglePhase.WARMUP.value
+    body_part_counts: dict[str, int] = field(default_factory=dict)
+    ground_suppressed_events: int = 0
+    contact_candidates: int = 0
+    pose_live_frames: int = 0
+    pose_stale_frames: int = 0
+    descending_active: bool = False
+    rising_active: bool = False
+
+    @property
+    def armed(self) -> bool:
+        return self.armed_at is not None
 
     @property
     def warmup_seconds(self) -> float:
@@ -83,71 +116,130 @@ def has_live_juggle_track(track: Optional[BallTrack]) -> bool:
 def update_juggle_state(
     state: Optional[JuggleState],
     track: Optional[BallTrack],
+    pose_frame: Optional[PoseFrame],
     timestamp: float,
     frame_size: tuple[int, int],
 ) -> tuple[JuggleState, bool]:
+    del frame_size
     state = state or JuggleState()
     live_track = has_live_juggle_track(track)
+    pose_frame = pose_frame or PoseFrame()
+
+    if pose_frame.live:
+        state.pose_live_frames += 1
+    elif pose_frame.stale:
+        state.pose_stale_frames += 1
 
     if live_track:
         assert track is not None
         _append_live_sample(state, track, timestamp)
         state.last_live_track_at = timestamp
         state.loss_started_at = None
-        if state.drop_pending is not None:
-            state.drop_pending.loss_started_at = None
+    else:
+        _handle_tracking_loss(state, timestamp)
+        _update_status(state)
+        return state, False
 
-        if not state.armed and _history_is_armed(state):
-            state.armed = True
-            state.armed_at = timestamp
+    if not state.armed:
+        _advance_warmup(state, pose_frame, timestamp)
+        _update_status(state)
+        return state, False
 
-        if not state.armed:
-            _update_status(state, timestamp, live_track=True)
-            return state, False
+    if state.phase == JugglePhase.LOST:
+        state.phase = JugglePhase.READY
 
-        effective_radius = _effective_radius(state, track.radius)
-        low_band_y = _low_band_y(state, frame_size[0])
-        down_speed_threshold = max(
-            effective_radius * JUGGLE_DIRECTION_SPEED_RADIUS_MULTIPLIER,
-            JUGGLE_DIRECTION_SPEED_MIN,
+    scored = False
+    effective_radius = _effective_radius(state, track.radius)
+    current_y = float(track.center[1])
+    vertical_speed = float(track.velocity[1])
+    descending, rising = _update_vertical_motion_state(state, vertical_speed)
+
+    knee_line_y = pose_frame.knee_line_y
+    ground_y = pose_frame.ground_y
+    lower_body_zone = _is_lower_body_zone(current_y, knee_line_y, effective_radius)
+    ground_band_overlap = _is_ground_overlap(current_y, ground_y, effective_radius)
+    contact_candidate = (
+        pose_frame.nearest_contact
+        if pose_frame.nearest_contact is not None and pose_frame.nearest_contact.is_valid
+        else None
+    )
+
+    if state.awaiting_rearm and not state.rearm_ready and not lower_body_zone:
+        state.rearm_ready = True
+    if state.awaiting_rearm and state.rearm_ready and (descending or lower_body_zone):
+        state.awaiting_rearm = False
+        state.rearm_ready = False
+        if state.pending_contact is None and not ground_band_overlap:
+            state.phase = JugglePhase.READY
+
+    if (
+        pose_frame.live
+        and not state.awaiting_rearm
+        and state.pending_contact is None
+        and contact_candidate is not None
+        and lower_body_zone
+        and descending
+        and not ground_band_overlap
+    ):
+        state.contact_candidates += 1
+        state.pending_contact = PendingContact(
+            started_at=timestamp,
+            contact_y=current_y,
+            origin_y=_recent_origin_y(state, default=current_y),
+            landmark_name=contact_candidate.name,
+            landmark_display_name=contact_candidate.display_name,
+            landmark_distance=contact_candidate.distance,
+            landmark_confidence=contact_candidate.confidence,
         )
+        state.phase = JugglePhase.CONTACT_WINDOW
+        state.drop_started_at = None
 
-        _start_or_update_drop_pending(
+    if state.pending_contact is not None:
+        scored = _advance_pending_contact(
             state,
             timestamp,
-            float(track.center[1]),
+            current_y,
+            knee_line_y,
             effective_radius,
-            low_band_y,
-            frame_size[0],
-            down_speed_threshold,
+            rising=rising,
         )
-        _seed_pending_juggle(state, effective_radius, low_band_y, down_speed_threshold)
 
-        scored = _confirm_pending_juggle(state, timestamp, float(track.center[1]))
-        _maybe_clear_drop_pending(state, float(track.center[1]), effective_radius)
-        _maybe_reset_drop(state, timestamp, float(track.center[1]), effective_radius)
-        _update_status(state, timestamp, live_track=True)
-        return state, scored
-
-    if state.loss_started_at is None:
-        state.loss_started_at = timestamp
-    if state.drop_pending is not None and state.drop_pending.loss_started_at is None:
-        state.drop_pending.loss_started_at = timestamp
-
-    if state.armed:
-        if state.drop_pending is not None:
-            loss_started_at = state.drop_pending.loss_started_at or state.loss_started_at or timestamp
-            if timestamp - loss_started_at >= JUGGLE_LOSS_RESET_SECONDS:
-                _reset_streak(state, "loss", timestamp)
-        elif (
-            state.current_streak > 0
-            and state.loss_started_at is not None
-            and timestamp - state.loss_started_at >= JUGGLE_GENERAL_LOSS_RESET_SECONDS
+    if ground_band_overlap:
+        if state.drop_started_at is None:
+            state.drop_started_at = timestamp
+        if rising and not state.ground_blocked_active and state.pending_contact is None:
+            state.ground_suppressed_events += 1
+            state.ground_blocked_active = True
+        if not scored and state.pending_contact is None:
+            state.phase = JugglePhase.DROP_PENDING
+        if (
+            not scored
+            and timestamp - state.drop_started_at >= JUGGLE_GROUND_DWELL_SECONDS
+            and state.pending_contact is None
         ):
-            _reset_streak(state, "loss", timestamp)
+            _reset_streak(state, "drop")
+            state.phase = JugglePhase.DROP_PENDING
+    else:
+        state.drop_started_at = None
+        state.ground_blocked_active = False
+        if (
+            state.pending_contact is None
+            and not state.awaiting_rearm
+            and state.phase == JugglePhase.DROP_PENDING
+        ):
+            state.phase = JugglePhase.READY
 
-    _update_status(state, timestamp, live_track=False)
-    return state, False
+    if (
+        state.pending_contact is None
+        and not state.awaiting_rearm
+        and state.phase == JugglePhase.RISE_WINDOW
+        and state.last_count_at is not None
+        and timestamp - state.last_count_at > JUGGLE_RISE_CONFIRM_SECONDS
+    ):
+        state.phase = JugglePhase.READY
+
+    _update_status(state)
+    return state, scored
 
 
 def _append_live_sample(state: JuggleState, track: BallTrack, timestamp: float) -> None:
@@ -155,212 +247,159 @@ def _append_live_sample(state: JuggleState, track: BallTrack, timestamp: float) 
         JuggleSample(
             timestamp=timestamp,
             center=track.center.copy(),
-            radius=track.radius,
+            radius=float(track.radius),
         )
     )
-    if state.warmup_started_at is None and state.history:
-        state.warmup_started_at = state.history[0].timestamp
     cutoff = timestamp - JUGGLE_HISTORY_SECONDS
     while state.history and state.history[0].timestamp < cutoff:
         state.history.popleft()
 
 
-def _history_is_armed(state: JuggleState) -> bool:
-    if len(state.history) < JUGGLE_MIN_SAMPLES_TO_ARM:
+def _advance_warmup(state: JuggleState, pose_frame: PoseFrame, timestamp: float) -> None:
+    if not pose_frame.live:
+        state.warmup_started_at = None
+        state.phase = JugglePhase.WARMUP
+        return
+
+    if state.warmup_started_at is None:
+        state.warmup_started_at = timestamp
+
+    if timestamp - state.warmup_started_at >= JUGGLE_WARMUP_SECONDS:
+        state.armed_at = timestamp
+        state.phase = JugglePhase.READY
+
+
+def _handle_tracking_loss(state: JuggleState, timestamp: float) -> None:
+    state.descending_active = False
+    state.rising_active = False
+    if state.loss_started_at is None:
+        state.loss_started_at = timestamp
+
+    protected_rise = (
+        state.phase == JugglePhase.RISE_WINDOW
+        and state.last_count_at is not None
+        and timestamp - state.last_count_at <= JUGGLE_LOSS_RESET_SECONDS
+    )
+    if protected_rise:
+        return
+
+    if state.armed and timestamp - state.loss_started_at >= JUGGLE_LOSS_RESET_SECONDS:
+        _reset_streak(state, "loss")
+        state.phase = JugglePhase.LOST
+
+
+def _advance_pending_contact(
+    state: JuggleState,
+    timestamp: float,
+    current_y: float,
+    knee_line_y: Optional[float],
+    effective_radius: float,
+    *,
+    rising: bool,
+) -> bool:
+    pending = state.pending_contact
+    if pending is None:
         return False
-    return (state.history[-1].timestamp - state.history[0].timestamp) >= JUGGLE_WARMUP_SECONDS
+
+    if rising:
+        pending.trajectory_score = JUGGLE_TRAJECTORY_SCORE_WEIGHT
+        clearance_rise = max(
+            effective_radius * JUGGLE_CLEARANCE_RISE_RADIUS_MULTIPLIER,
+            8.0,
+        )
+        if (
+            knee_line_y is not None and current_y <= knee_line_y
+        ) or (pending.contact_y - current_y >= clearance_rise):
+            pending.clearance_score = JUGGLE_CLEARANCE_SCORE_WEIGHT
+
+        state.phase = JugglePhase.RISE_WINDOW
+        if pending.total_score >= JUGGLE_SCORE_THRESHOLD:
+            state.current_streak += 1
+            state.best_streak = max(state.best_streak, state.current_streak)
+            state.total_juggles += 1
+            state.body_part_counts[pending.landmark_display_name] = (
+                state.body_part_counts.get(pending.landmark_display_name, 0) + 1
+            )
+            state.pending_contact = None
+            state.awaiting_rearm = True
+            state.rearm_ready = False
+            state.last_count_at = timestamp
+            return True
+
+    if timestamp - pending.started_at > JUGGLE_CONTACT_WINDOW_SECONDS:
+        state.pending_contact = None
+        if not state.awaiting_rearm and state.phase == JugglePhase.CONTACT_WINDOW:
+            state.phase = JugglePhase.READY
+    return False
+
+
+def _recent_origin_y(state: JuggleState, *, default: float) -> float:
+    if not state.history:
+        return default
+    recent = [
+        float(sample.center[1])
+        for sample in state.history
+        if state.history[-1].timestamp - sample.timestamp <= 0.6
+    ]
+    if not recent:
+        return default
+    return float(min(recent))
 
 
 def _effective_radius(state: JuggleState, fallback_radius: float) -> float:
     if not state.history:
         return fallback_radius
     radii = np.array([sample.radius for sample in state.history], dtype=np.float32)
-    return float(np.median(radii)) if len(radii) else fallback_radius
+    if not len(radii):
+        return fallback_radius
+    return float(np.median(radii))
 
 
-def _low_band_y(state: JuggleState, frame_height: int) -> float:
-    if not state.history:
-        return frame_height * 0.75
-    ys = np.array([sample.center[1] for sample in state.history], dtype=np.float32)
-    if len(ys) < 4:
-        return float(ys.max())
-    return float(np.percentile(ys, JUGGLE_LOW_BAND_PERCENTILE))
-
-
-def _current_vertical_speed(state: JuggleState) -> Optional[float]:
-    if len(state.history) < 2:
-        return None
-    previous = state.history[-2]
-    current = state.history[-1]
-    dt = max(current.timestamp - previous.timestamp, 1e-6)
-    return float((current.center[1] - previous.center[1]) / dt)
-
-
-def _start_or_update_drop_pending(
-    state: JuggleState,
-    timestamp: float,
-    current_y: float,
-    effective_radius: float,
-    low_band_y: float,
-    frame_height: int,
-    down_speed_threshold: float,
-) -> None:
-    vertical_speed = _current_vertical_speed(state)
-    if vertical_speed is None or vertical_speed < down_speed_threshold:
-        return
-
-    low_margin = max(effective_radius * JUGGLE_LOW_BAND_MARGIN_MULTIPLIER, 10.0)
-    near_bottom = current_y + effective_radius >= frame_height - max(effective_radius * 0.6, 12.0)
-    if current_y < low_band_y - low_margin and not near_bottom:
-        return
-
-    if state.drop_pending is None:
-        state.drop_pending = DropPending(
-            started_at=timestamp,
-            contact_y=current_y,
-            reason="low_descent",
-        )
-        return
-
-    state.drop_pending.contact_y = max(state.drop_pending.contact_y, current_y)
-
-
-def _seed_pending_juggle(
-    state: JuggleState,
-    effective_radius: float,
-    low_band_y: float,
-    down_speed_threshold: float,
-) -> None:
-    if len(state.history) < 3:
-        return
-
-    oldest, middle, newest = tuple(state.history)[-3:]
-    dt1 = max(middle.timestamp - oldest.timestamp, 1e-6)
-    dt2 = max(newest.timestamp - middle.timestamp, 1e-6)
-    previous_speed = float((middle.center[1] - oldest.center[1]) / dt1)
-    current_speed = float((newest.center[1] - middle.center[1]) / dt2)
-    contact_y = float(middle.center[1])
-
-    if previous_speed < down_speed_threshold or current_speed > -down_speed_threshold:
-        return
-
-    recent_origin_y = min(
-        sample.center[1]
-        for sample in state.history
-        if 0.0 <= middle.timestamp - sample.timestamp <= 0.75
-    )
-    descent = contact_y - float(recent_origin_y)
-    min_descent = max(
-        effective_radius * JUGGLE_MIN_DESCENT_RADIUS_MULTIPLIER,
-        JUGGLE_MIN_DESCENT_PIXELS,
-    )
-    low_margin = max(effective_radius * JUGGLE_LOW_BAND_MARGIN_MULTIPLIER, 10.0)
-    if contact_y < low_band_y - low_margin or descent < min_descent:
-        return
-
-    if state.pending_juggle is not None and abs(middle.timestamp - state.pending_juggle.contact_at) < 0.12:
-        return
-
-    state.pending_juggle = PendingJuggle(
-        contact_at=middle.timestamp,
-        contact_y=contact_y,
-        min_rebound_rise=max(
-            effective_radius * JUGGLE_MIN_REBOUND_RADIUS_MULTIPLIER,
-            JUGGLE_MIN_REBOUND_PIXELS,
-        ),
-    )
-
-    if state.drop_pending is None:
-        state.drop_pending = DropPending(
-            started_at=middle.timestamp,
-            contact_y=contact_y,
-            reason="low_contact",
-        )
-    else:
-        state.drop_pending.contact_y = max(state.drop_pending.contact_y, contact_y)
-
-
-def _confirm_pending_juggle(state: JuggleState, timestamp: float, current_y: float) -> bool:
-    if state.pending_juggle is None:
+def _is_lower_body_zone(current_y: float, knee_line_y: Optional[float], radius: float) -> bool:
+    if knee_line_y is None:
         return False
-
-    rebound_rise = state.pending_juggle.contact_y - current_y
-    if rebound_rise >= state.pending_juggle.min_rebound_rise:
-        state.current_streak += 1
-        state.best_streak = max(state.best_streak, state.current_streak)
-        state.total_juggles += 1
-        state.pending_juggle = None
-        state.drop_pending = None
-        state.last_reset_reason = None
-        state.last_reset_at = None
-        return True
-
-    if timestamp - state.pending_juggle.contact_at > JUGGLE_DROP_RESET_SECONDS:
-        state.pending_juggle = None
-
-    return False
+    margin = max(radius * JUGGLE_KNEE_ZONE_MARGIN_RADIUS_MULTIPLIER, JUGGLE_KNEE_ZONE_MARGIN_MIN)
+    return current_y >= knee_line_y - margin
 
 
-def _maybe_clear_drop_pending(state: JuggleState, current_y: float, effective_radius: float) -> None:
-    if state.drop_pending is None:
-        return
-
-    clear_rise = max(
-        effective_radius * JUGGLE_RESET_CLEAR_RISE_RADIUS_MULTIPLIER,
-        JUGGLE_RESET_CLEAR_RISE_PIXELS,
-    )
-    if current_y <= state.drop_pending.contact_y - clear_rise:
-        state.drop_pending = None
+def _is_ground_overlap(current_y: float, ground_y: Optional[float], radius: float) -> bool:
+    if ground_y is None:
+        return False
+    margin = max(radius * JUGGLE_GROUND_MARGIN_RADIUS_MULTIPLIER, JUGGLE_GROUND_MARGIN_MIN)
+    return current_y + radius >= ground_y - margin
 
 
-def _maybe_reset_drop(
-    state: JuggleState,
-    timestamp: float,
-    current_y: float,
-    effective_radius: float,
-) -> None:
-    if state.drop_pending is None:
-        return
-
-    clear_rise = max(
-        effective_radius * JUGGLE_RESET_CLEAR_RISE_RADIUS_MULTIPLIER,
-        JUGGLE_RESET_CLEAR_RISE_PIXELS,
-    )
-    if (
-        timestamp - state.drop_pending.started_at >= JUGGLE_DROP_RESET_SECONDS
-        and current_y > state.drop_pending.contact_y - clear_rise
-    ):
-        _reset_streak(state, "drop", timestamp)
-
-
-def _reset_streak(state: JuggleState, reason: str, timestamp: float) -> None:
+def _reset_streak(state: JuggleState, reason: str) -> None:
     if reason == "drop":
         state.drop_resets += 1
     else:
         state.loss_resets += 1
-
     state.current_streak = 0
-    state.pending_juggle = None
-    state.drop_pending = None
-    state.last_reset_reason = reason
-    state.last_reset_at = timestamp
+    state.pending_contact = None
+    state.awaiting_rearm = False
+    state.rearm_ready = False
+    state.last_count_at = None
+    state.descending_active = False
+    state.rising_active = False
 
 
-def _update_status(state: JuggleState, timestamp: float, *, live_track: bool) -> None:
-    if not state.armed:
-        state.status_label = "Warmup"
-        return
+def _update_vertical_motion_state(state: JuggleState, vertical_speed: float) -> tuple[bool, bool]:
+    if state.descending_active:
+        if vertical_speed <= DESCENDING_OFF:
+            state.descending_active = False
+    elif vertical_speed >= DESCENDING_ON:
+        state.descending_active = True
+        state.rising_active = False
 
-    if (
-        state.last_reset_reason is not None
-        and state.last_reset_at is not None
-        and timestamp - state.last_reset_at <= JUGGLE_STATUS_RESET_SECONDS
-    ):
-        state.status_label = "Drop" if state.last_reset_reason == "drop" else "Lost"
-        return
+    if state.rising_active:
+        if vertical_speed >= RISING_OFF:
+            state.rising_active = False
+    elif vertical_speed <= RISING_ON:
+        state.rising_active = True
+        state.descending_active = False
 
-    if state.drop_pending is not None:
-        state.status_label = "Recover"
-        return
+    return state.descending_active, state.rising_active
 
-    state.status_label = "Armed" if live_track else "Tracking"
+
+def _update_status(state: JuggleState) -> None:
+    state.status_label = state.phase.value

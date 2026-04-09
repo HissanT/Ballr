@@ -12,6 +12,14 @@ import numpy as np
 
 from ball_tracker_audio import TARGET_SOUND_PATH, play_score_sound as _play_score_sound
 from ball_tracker_juggling import JuggleState, update_juggle_state
+from ball_tracker_pose import (
+    POSE_CONF_THRESHOLD,
+    POSE_IMG_SIZE,
+    POSE_MODEL_PATH,
+    PoseFrame,
+    PoseState,
+    update_pose_state,
+)
 from ball_tracker_rendering import (
     PIL_LANCZOS,
     RenderCache,
@@ -49,6 +57,7 @@ from ball_tracker_rendering import (
     draw_circle,
     draw_label,
     draw_label_right,
+    draw_pose_overlay,
     draw_scored_target_effects,
     draw_target,
     draw_track,
@@ -93,6 +102,7 @@ from ball_tracker_targets import (
 )
 from ball_tracker_tracking import (
     CANDIDATE_CONF_THRESHOLD,
+    BallMotionState,
     CENTER_SMOOTHING,
     INIT_CONF_THRESHOLD,
     IOU_THRESHOLD,
@@ -109,6 +119,7 @@ from ball_tracker_tracking import (
     advance_track,
     choose_primary_candidate,
     extract_candidates,
+    predict_track,
     predicted_center,
     score_candidate,
     track_gate_radius,
@@ -206,14 +217,18 @@ class PipelineCounters:
     held_frames: int = 0
     active_frames: int = 0
     hit_frames: int = 0
+    pose_live_frames: int = 0
+    pose_stale_frames: int = 0
 
 
 @dataclass
 class TrackerRuntimeState:
     track: Optional[BallTrack] = None
+    motion: Optional[BallMotionState] = None
     target: Optional[TargetState] = None
     score_effects: list[ScoredTargetEffect] = field(default_factory=list)
     juggle: Optional[JuggleState] = None
+    pose: Optional[PoseState] = None
     next_track_id: int = 1
     counters: PipelineCounters = field(default_factory=PipelineCounters)
 
@@ -250,6 +265,10 @@ class ProcessedFrame:
     drop_resets: int = 0
     loss_resets: int = 0
     warmup_seconds: float = 0.0
+    pose_frame: Optional[PoseFrame] = None
+    body_part_counts: dict[str, int] = field(default_factory=dict)
+    ground_suppressed_events: int = 0
+    contact_candidates: int = 0
 
 
 @dataclass
@@ -327,9 +346,13 @@ class BenchmarkAccumulator:
                 "held_frames": counters.held_frames,
                 "active_frames": counters.active_frames,
                 "hit_frames": counters.hit_frames,
+                "pose_live_frames": counters.pose_live_frames,
+                "pose_stale_frames": counters.pose_stale_frames,
                 "detection_rate_pct": round(_rate(counters.matched_frames, counters.total_frames), 3),
                 "hold_rate_pct": round(_rate(counters.held_frames, counters.total_frames), 3),
                 "lock_rate_pct": round(_rate(counters.active_frames, counters.total_frames), 3),
+                "pose_live_rate_pct": round(_rate(counters.pose_live_frames, counters.total_frames), 3),
+                "pose_stale_rate_pct": round(_rate(counters.pose_stale_frames, counters.total_frames), 3),
                 "avg_candidates_per_frame": round(_mean_or_zero(self.candidate_counts), 3),
                 "avg_primary_confidence": round(_mean_or_zero(self.primary_confidences), 4),
             },
@@ -355,6 +378,11 @@ class BenchmarkAccumulator:
                 "drop_resets": self.final_frame.drop_resets,
                 "loss_resets": self.final_frame.loss_resets,
                 "warmup_seconds": round(self.final_frame.warmup_seconds, 3),
+                "pose_live_rate_pct": round(_rate(counters.pose_live_frames, counters.total_frames), 3),
+                "pose_stale_rate_pct": round(_rate(counters.pose_stale_frames, counters.total_frames), 3),
+                "contact_candidates": self.final_frame.contact_candidates,
+                "ground_suppressed_events": self.final_frame.ground_suppressed_events,
+                "body_part_counts": self.final_frame.body_part_counts,
             }
         return summary
 
@@ -402,6 +430,17 @@ def _build_predict_kwargs(width: int, height: int) -> tuple[dict[str, Any], str]
     return predict_kwargs, device_name
 
 
+def _build_pose_predict_kwargs(device: Any, pose_imgsz: int, pose_conf: float) -> dict[str, Any]:
+    return {
+        "conf": pose_conf,
+        "imgsz": pose_imgsz,
+        "verbose": False,
+        "device": device,
+        "classes": [0],
+        "max_det": 4,
+    }
+
+
 def _warmup_detector(model, predict_kwargs: dict[str, Any], width: int, height: int) -> None:
     warmup_frame = np.zeros((height, width, 3), dtype=np.uint8)
     model.predict(warmup_frame, **predict_kwargs)
@@ -412,6 +451,8 @@ def process_capture_packet(
     state: TrackerRuntimeState,
     model,
     predict_kwargs: dict[str, Any],
+    pose_model,
+    pose_predict_kwargs: Optional[dict[str, Any]],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
@@ -431,27 +472,41 @@ def process_capture_packet(
 
     inference_started_at = time.perf_counter()
     results = model.predict(enhanced, **predict_kwargs)
+    pose_results = None
+    if game_mode == GAME_MODE_JUGGLE and pose_model is not None and pose_predict_kwargs is not None:
+        pose_results = pose_model.predict(packet.frame, **pose_predict_kwargs)
     stage_timings.inference_ms = (time.perf_counter() - inference_started_at) * 1000.0
-
-    candidate_started_at = time.perf_counter()
-    candidates = extract_candidates(results)
-    primary_candidate = choose_primary_candidate(candidates, state.track)
-    stage_timings.candidate_ms = (time.perf_counter() - candidate_started_at) * 1000.0
 
     tracking_started_at = time.perf_counter()
     track = state.track
+    motion = state.motion
     next_track_id = state.next_track_id
+    track, motion = predict_track(track, motion, frame_time)
+
+    candidate_started_at = time.perf_counter()
+    candidates = extract_candidates(results)
+    primary_candidate = choose_primary_candidate(candidates, track)
+    stage_timings.candidate_ms = (time.perf_counter() - candidate_started_at) * 1000.0
+
     if primary_candidate is not None:
-        track, next_track_id = update_track(track, primary_candidate, next_track_id)
+        track, motion, next_track_id = update_track(
+            track,
+            motion,
+            primary_candidate,
+            next_track_id,
+            frame_time,
+        )
         counters.matched_frames += 1
     else:
-        track = advance_track(track)
+        track, motion = advance_track(track, motion)
         if track is not None:
             counters.held_frames += 1
 
     target: Optional[TargetState] = state.target
     score_effects: list[ScoredTargetEffect] = []
     juggle_state = state.juggle
+    pose_state = state.pose
+    pose_frame: Optional[PoseFrame] = None
     current_score = 0
     best_score = 0
     status_label = game_mode.title()
@@ -459,6 +514,9 @@ def process_capture_packet(
     drop_resets = 0
     loss_resets = 0
     warmup_seconds = 0.0
+    body_part_counts: dict[str, int] = {}
+    ground_suppressed_events = 0
+    contact_candidates = 0
 
     if game_mode == GAME_MODE_TARGET:
         score_effects = [
@@ -492,9 +550,21 @@ def process_capture_packet(
     elif game_mode == GAME_MODE_JUGGLE:
         target = None
         score_effects = []
+        pose_state, pose_frame = update_pose_state(
+            state.pose,
+            pose_results,
+            track,
+            packet.frame.shape[:2],
+            frame_time,
+        )
+        if pose_frame.live:
+            counters.pose_live_frames += 1
+        elif pose_frame.stale:
+            counters.pose_stale_frames += 1
         juggle_state, juggle_scored = update_juggle_state(
             state.juggle,
             track,
+            pose_frame,
             frame_time,
             packet.frame.shape[:2],
         )
@@ -508,6 +578,9 @@ def process_capture_packet(
         drop_resets = juggle_state.drop_resets
         loss_resets = juggle_state.loss_resets
         warmup_seconds = juggle_state.warmup_seconds
+        body_part_counts = dict(juggle_state.body_part_counts)
+        ground_suppressed_events = juggle_state.ground_suppressed_events
+        contact_candidates = juggle_state.contact_candidates
     else:
         raise ValueError(f"Unsupported game mode: {game_mode}")
 
@@ -519,9 +592,11 @@ def process_capture_packet(
 
     updated_state = TrackerRuntimeState(
         track=track,
+        motion=motion,
         target=target,
         score_effects=score_effects,
         juggle=juggle_state,
+        pose=pose_state,
         next_track_id=next_track_id,
         counters=counters,
     )
@@ -546,6 +621,10 @@ def process_capture_packet(
         drop_resets=drop_resets,
         loss_resets=loss_resets,
         warmup_seconds=warmup_seconds,
+        pose_frame=pose_frame,
+        body_part_counts=body_part_counts,
+        ground_suppressed_events=ground_suppressed_events,
+        contact_candidates=contact_candidates,
     )
     return updated_state, frame_result
 
@@ -561,6 +640,8 @@ def render_processed_frame(
 
     if frame_result.track is not None:
         draw_track(frame, frame_result.track)
+    if frame_result.game_mode == GAME_MODE_JUGGLE:
+        draw_pose_overlay(frame, frame_result.pose_frame)
 
     if frame_result.game_mode == GAME_MODE_TARGET and frame_result.target is not None:
         draw_target(frame, frame_result.target, frame_result.frame_time, render_cache=render_cache)
@@ -600,6 +681,28 @@ def render_processed_frame(
             f"Status: {frame_result.status_label}",
             8,
             HUD_BASELINE_Y + HUD_LINE_HEIGHT * 2,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        pose_source = "None"
+        if frame_result.pose_frame is not None and frame_result.pose_frame.available:
+            pose_source = "Live" if frame_result.pose_frame.live else "Held"
+        draw_label_right(
+            frame,
+            f"Pose: {pose_source}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 3,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        contact_label = "None"
+        if frame_result.pose_frame is not None and frame_result.pose_frame.nearest_contact is not None:
+            contact_label = frame_result.pose_frame.nearest_contact.display_name
+        draw_label_right(
+            frame,
+            f"Contact: {contact_label}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 4,
             font_scale=HUD_FONT_SCALE,
             thickness=HUD_FONT_THICKNESS,
         )
@@ -666,6 +769,8 @@ def run_benchmark(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
+    pose_model,
+    pose_predict_kwargs: Optional[dict[str, Any]],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
@@ -702,6 +807,8 @@ def run_benchmark(
             runtime_state,
             model,
             predict_kwargs,
+            pose_model,
+            pose_predict_kwargs,
             gamma_lut,
             clahe,
             rng,
@@ -774,6 +881,8 @@ def _inference_worker(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
+    pose_model,
+    pose_predict_kwargs: Optional[dict[str, Any]],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
@@ -795,6 +904,8 @@ def _inference_worker(
                 runtime_state,
                 model,
                 predict_kwargs,
+                pose_model,
+                pose_predict_kwargs,
                 gamma_lut,
                 clahe,
                 rng,
@@ -814,6 +925,8 @@ def run_live_tracker(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
+    pose_model,
+    pose_predict_kwargs: Optional[dict[str, Any]],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
@@ -836,6 +949,8 @@ def run_live_tracker(
             "game_mode": game_mode,
             "model": model,
             "predict_kwargs": predict_kwargs,
+            "pose_model": pose_model,
+            "pose_predict_kwargs": pose_predict_kwargs,
             "gamma_lut": gamma_lut,
             "clahe": clahe,
             "rng": rng,
@@ -909,11 +1024,35 @@ def main() -> None:
     parser.add_argument("--benchmark-output", help="Optional JSON file path for benchmark metrics")
     parser.add_argument("--max-frames", type=int, help="Optional processing cap for live runs or benchmarks")
     parser.add_argument("--no-display", action="store_true", help="Disable the OpenCV preview window")
+    parser.add_argument("--pose-model", default=POSE_MODEL_PATH, help="Pose model path for juggle mode")
+    parser.add_argument(
+        "--pose-imgsz",
+        type=int,
+        default=POSE_IMG_SIZE,
+        help="Pose inference image size for juggle mode",
+    )
+    parser.add_argument(
+        "--pose-conf",
+        type=float,
+        default=POSE_CONF_THRESHOLD,
+        help="Pose confidence threshold for juggle mode",
+    )
     args = parser.parse_args()
 
     model = YOLO(MODEL_PATH)
     predict_kwargs, device_name = _build_predict_kwargs(args.width, args.height)
+    pose_model = None
+    pose_predict_kwargs: Optional[dict[str, Any]] = None
+    if args.mode == GAME_MODE_JUGGLE:
+        pose_model = YOLO(args.pose_model)
+        pose_predict_kwargs = _build_pose_predict_kwargs(
+            predict_kwargs["device"],
+            args.pose_imgsz,
+            args.pose_conf,
+        )
     _warmup_detector(model, predict_kwargs, args.width, args.height)
+    if pose_model is not None and pose_predict_kwargs is not None:
+        _warmup_detector(pose_model, pose_predict_kwargs, args.width, args.height)
 
     gamma_lut = build_gamma_lut()
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -942,6 +1081,8 @@ def main() -> None:
                 game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
+                pose_model=pose_model,
+                pose_predict_kwargs=pose_predict_kwargs,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
@@ -956,6 +1097,8 @@ def main() -> None:
                 game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
+                pose_model=pose_model,
+                pose_predict_kwargs=pose_predict_kwargs,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
