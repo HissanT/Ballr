@@ -10,119 +10,69 @@ from typing import Any, Callable, Generic, Optional, TypeVar
 import cv2
 import numpy as np
 
-from ball_tracker_audio import TARGET_SOUND_PATH, play_score_sound as _play_score_sound
-from ball_tracker_juggling import JuggleState, update_juggle_state
+from ball_tracker_audio import (
+    COMBO_SOUNDTRACK_DIR,
+    TARGET_SOUND_PATH,
+    combo_sound_path_for_streak,
+    play_score_sound as _play_score_sound,
+)
+from ball_tracker_juggling import (
+    JUGGLE_COUNT_THRESHOLD,
+    JUGGLE_GROUND_MARGIN_RADIUS_FRACTION,
+    JUGGLE_LAST_EVENT_DISPLAY_SECONDS,
+    JUGGLE_LOOKAHEAD_FRAMES,
+    JUGGLE_PROMINENCE_RADIUS_FRACTION,
+    JuggleEventPrediction,
+    JuggleState,
+    update_juggle_state,
+)
 from ball_tracker_pose import (
+    POSE_BACKEND_AUTO,
+    POSE_BACKEND_CHOICES,
     POSE_CONF_THRESHOLD,
     POSE_IMG_SIZE,
     POSE_MODEL_PATH,
+    PoseBackendResults,
     PoseFrame,
+    PoseRuntimeContext,
     PoseState,
-    update_pose_state,
+    close_pose_runtime,
+    create_pose_runtime,
+    infer_pose_backends,
+    update_pose_state_from_backends,
+)
+from ball_tracker_target_mode import (
+    TargetModeFrame,
+    TargetModeState,
+    draw_target_mode,
+    step_target_mode,
 )
 from ball_tracker_rendering import (
-    PIL_LANCZOS,
     RenderCache,
-    TARGET_BADGE_CORE_RADIUS,
-    TARGET_BADGE_FILL_RADIUS,
-    TARGET_BADGE_OUTER_RADIUS,
-    TARGET_IDLE_BADGE_CORE_COLOR,
-    TARGET_IDLE_BADGE_FILL_COLOR,
-    TARGET_IDLE_BADGE_RIM_COLOR,
-    TARGET_IDLE_DASH_COLOR,
-    TARGET_IDLE_DASH_COUNT,
-    TARGET_IDLE_DASH_SWEEP_DEGREES,
-    TARGET_IDLE_STAR_COLOR,
-    TARGET_REFERENCE_BACKGROUND_RGB,
-    TARGET_REFERENCE_COLLISION_RADIUS,
-    TARGET_REFERENCE_HEIGHT,
-    TARGET_REFERENCE_IDLE_CENTER,
-    TARGET_REFERENCE_ORBIT_RADIUS,
-    TARGET_REFERENCE_ORBIT_THICKNESS,
-    TARGET_REFERENCE_SCORED_CENTER,
-    TARGET_REFERENCE_WIDTH,
-    TARGET_RENDER_OVERSAMPLE,
-    TARGET_SCORED_BADGE_CORE_COLOR,
-    TARGET_SCORED_BADGE_FILL_COLOR,
-    TARGET_SCORED_BADGE_RIM_COLOR,
-    TARGET_SCORED_NODE_COLOR,
-    TARGET_SCORED_NODE_COUNT,
-    TARGET_SCORED_NODE_RADIUS,
-    TARGET_SCORED_RING_COLOR,
-    TARGET_SCORED_STAR_COLOR,
-    TARGET_STAR_INNER_RADIUS,
-    TARGET_STAR_OUTER_RADIUS,
-    composite_sprite,
-    draw_arc_with_round_caps,
-    draw_circle,
     draw_label,
     draw_label_right,
     draw_pose_overlay,
-    draw_scored_target_effects,
-    draw_target,
     draw_track,
-    lerp_color,
-    lerp_point,
     mirror_frame,
-    polar_point,
     render_target_reference_rgb,
-    render_target_reference_rgba,
-    render_target_sprite,
-    smoothstep,
-    star_points,
-    with_alpha,
 )
 from ball_tracker_targets import (
-    TARGET_BALL_CLEARANCE,
-    TARGET_IDLE_PULSE_PERIOD_SECONDS,
-    TARGET_IDLE_PULSE_SCALE,
-    TARGET_LOWER_Y_FRACTION,
-    TARGET_MAX_RADIUS,
-    TARGET_MIN_RADIUS,
-    TARGET_RADIUS_RATIO,
-    TARGET_RESPAWN_DISTANCE_MULTIPLIER,
-    TARGET_SCORE_BURST_SECONDS,
-    TARGET_SCORE_EFFECT_SECONDS,
-    TARGET_SCORE_POPUP_DELAY_SECONDS,
-    TARGET_SCORE_POPUP_SECONDS,
-    TARGET_SCORE_VALUE,
-    TARGET_SPAWN_ATTEMPTS,
     ScoredTargetEffect,
     TargetState,
-    clamp_unit,
-    score_target,
-    scored_target_effect_burst_progress,
-    scored_target_effect_elapsed,
-    scored_target_effect_is_active,
-    scored_target_effect_popup_progress,
-    spawn_target,
-    target_hit,
     target_radius_for_frame,
-    target_spawn_bounds,
 )
 from ball_tracker_tracking import (
     CANDIDATE_CONF_THRESHOLD,
     BallMotionState,
-    CENTER_SMOOTHING,
-    INIT_CONF_THRESHOLD,
     IOU_THRESHOLD,
     MAX_DETECTIONS,
-    MAX_MISSES,
     MODEL_PATH,
-    MOTION_DECAY,
-    RADIUS_SMOOTHING,
-    REACQUIRE_CONF_THRESHOLD,
     SPORTS_BALL_CLASS_ID,
-    VELOCITY_SMOOTHING,
     BallTrack,
-    DetectionCandidate,
     advance_track,
     choose_primary_candidate,
     extract_candidates,
     predict_track,
-    predicted_center,
-    score_candidate,
-    track_gate_radius,
     update_track,
 )
 from ballr_utils import build_gamma_lut, parse_source, preprocess_frame
@@ -145,6 +95,17 @@ HUD_FONT_THICKNESS = 1
 
 def play_score_sound(sound_path: Path = TARGET_SOUND_PATH) -> None:
     _play_score_sound(sound_path, winsound_module=winsound)
+
+
+def play_combo_sound(hit_streak: int, soundtrack_dir: Path = COMBO_SOUNDTRACK_DIR) -> None:
+    _play_score_sound(
+        combo_sound_path_for_streak(hit_streak, soundtrack_dir=soundtrack_dir),
+        winsound_module=winsound,
+    )
+
+
+def play_target_score_sound(_hit_streak: int) -> None:
+    play_score_sound()
 
 
 class LatestValueStore(Generic[T]):
@@ -225,10 +186,9 @@ class PipelineCounters:
 class TrackerRuntimeState:
     track: Optional[BallTrack] = None
     motion: Optional[BallMotionState] = None
-    target: Optional[TargetState] = None
-    score_effects: list[ScoredTargetEffect] = field(default_factory=list)
-    juggle: Optional[JuggleState] = None
-    pose: Optional[PoseState] = None
+    target_mode: TargetModeState = field(default_factory=TargetModeState)
+    juggle_mode: JuggleState = field(default_factory=JuggleState)
+    pose: PoseState = field(default_factory=PoseState)
     next_track_id: int = 1
     counters: PipelineCounters = field(default_factory=PipelineCounters)
 
@@ -258,17 +218,20 @@ class ProcessedFrame:
     primary_candidate_confidence: Optional[float]
     counters: PipelineCounters
     game_mode: str = GAME_MODE_TARGET
+    target_mode: Optional[TargetModeFrame] = None
+    pose_frame: Optional[PoseFrame] = None
+    juggle_event: Optional[JuggleEventPrediction] = None
     current_score: int = 0
     best_score: int = 0
-    status_label: str = ""
     total_score_events: int = 0
-    drop_resets: int = 0
-    loss_resets: int = 0
-    warmup_seconds: float = 0.0
-    pose_frame: Optional[PoseFrame] = None
+    status_label: str = ""
     body_part_counts: dict[str, int] = field(default_factory=dict)
     ground_suppressed_events: int = 0
     contact_candidates: int = 0
+    pending_candidates: int = 0
+    pose_backend: str = "none"
+    pose_quality: float = 0.0
+    displayed_juggle_event: Optional[JuggleEventPrediction] = None
 
 
 @dataclass
@@ -360,29 +323,22 @@ class BenchmarkAccumulator:
         }
         if self.final_frame is not None and mode == GAME_MODE_TARGET:
             summary["target_metrics"] = {
-                "score": (
-                    self.final_frame.current_score
-                    if self.final_frame.current_score
-                    else (
-                        self.final_frame.target.score
-                        if self.final_frame.target is not None
-                        else 0
-                    )
-                ),
+                "score": self.final_frame.current_score,
             }
         if self.final_frame is not None and mode == GAME_MODE_JUGGLE:
             summary["juggle_metrics"] = {
                 "current_streak": self.final_frame.current_score,
                 "best_streak": self.final_frame.best_score,
                 "juggles_scored": self.final_frame.total_score_events,
-                "drop_resets": self.final_frame.drop_resets,
-                "loss_resets": self.final_frame.loss_resets,
-                "warmup_seconds": round(self.final_frame.warmup_seconds, 3),
+                "status": self.final_frame.status_label,
                 "pose_live_rate_pct": round(_rate(counters.pose_live_frames, counters.total_frames), 3),
                 "pose_stale_rate_pct": round(_rate(counters.pose_stale_frames, counters.total_frames), 3),
                 "contact_candidates": self.final_frame.contact_candidates,
+                "pending_candidates": self.final_frame.pending_candidates,
                 "ground_suppressed_events": self.final_frame.ground_suppressed_events,
                 "body_part_counts": self.final_frame.body_part_counts,
+                "pose_backend": self.final_frame.pose_backend,
+                "pose_quality": round(self.final_frame.pose_quality, 3),
             }
         return summary
 
@@ -437,7 +393,6 @@ def _build_pose_predict_kwargs(device: Any, pose_imgsz: int, pose_conf: float) -
         "verbose": False,
         "device": device,
         "classes": [0],
-        "max_det": 4,
     }
 
 
@@ -451,15 +406,18 @@ def process_capture_packet(
     state: TrackerRuntimeState,
     model,
     predict_kwargs: dict[str, Any],
-    pose_model,
-    pose_predict_kwargs: Optional[dict[str, Any]],
+    pose_runtime: Optional[PoseRuntimeContext],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
     *,
     game_mode: str = GAME_MODE_TARGET,
-    on_score: Optional[Callable[[], None]] = None,
+    juggle_count_threshold: float = JUGGLE_COUNT_THRESHOLD,
+    juggle_lookahead_frames: int = JUGGLE_LOOKAHEAD_FRAMES,
+    juggle_prominence_radius_fraction: float = JUGGLE_PROMINENCE_RADIUS_FRACTION,
+    juggle_ground_margin_radius_fraction: float = JUGGLE_GROUND_MARGIN_RADIUS_FRACTION,
+    on_score: Optional[Callable[[int], None]] = None,
 ) -> tuple[TrackerRuntimeState, ProcessedFrame]:
     frame_time = packet.capture_finished_at
     stage_timings = StageTimings(capture_ms=packet.capture_ms)
@@ -472,9 +430,9 @@ def process_capture_packet(
 
     inference_started_at = time.perf_counter()
     results = model.predict(enhanced, **predict_kwargs)
-    pose_results = None
-    if game_mode == GAME_MODE_JUGGLE and pose_model is not None and pose_predict_kwargs is not None:
-        pose_results = pose_model.predict(packet.frame, **pose_predict_kwargs)
+    pose_results: Optional[PoseBackendResults] = None
+    if game_mode == GAME_MODE_JUGGLE and pose_runtime is not None:
+        pose_results = infer_pose_backends(packet.frame, pose_runtime)
     stage_timings.inference_ms = (time.perf_counter() - inference_started_at) * 1000.0
 
     tracking_started_at = time.perf_counter()
@@ -502,55 +460,42 @@ def process_capture_packet(
         if track is not None:
             counters.held_frames += 1
 
-    target: Optional[TargetState] = state.target
-    score_effects: list[ScoredTargetEffect] = []
-    juggle_state = state.juggle
+    target_mode_state = state.target_mode
+    target_mode_frame: Optional[TargetModeFrame] = None
+    juggle_mode_state = state.juggle_mode
     pose_state = state.pose
     pose_frame: Optional[PoseFrame] = None
+    juggle_event: Optional[JuggleEventPrediction] = None
     current_score = 0
     best_score = 0
-    status_label = game_mode.title()
     total_score_events = counters.hit_frames
-    drop_resets = 0
-    loss_resets = 0
-    warmup_seconds = 0.0
+    status_label = game_mode.title()
     body_part_counts: dict[str, int] = {}
     ground_suppressed_events = 0
     contact_candidates = 0
+    pending_candidates = 0
+    pose_backend = "none"
+    pose_quality = 0.0
+    displayed_juggle_event: Optional[JuggleEventPrediction] = None
 
     if game_mode == GAME_MODE_TARGET:
-        score_effects = [
-            effect for effect in state.score_effects if scored_target_effect_is_active(effect, frame_time)
-        ]
-        if target is None:
-            target_radius = target_radius_for_frame(packet.frame.shape)
-            render_cache.prime(target_radius, (TARGET_SCORE_VALUE,))
-            target = TargetState(
-                center=spawn_target(packet.frame.shape[:2], target_radius, rng=rng),
-                radius=target_radius,
-            )
-
-        if target_hit(track, target):
-            target, scored_effect = score_target(
-                target,
-                frame_time,
-                packet.frame.shape[:2],
-                rng=rng,
-                ball_track=track,
-            )
-            score_effects.append(scored_effect)
+        target_mode_state, target_mode_frame, target_scored = step_target_mode(
+            state.target_mode,
+            track,
+            packet.frame.shape[:2],
+            frame_time,
+            rng,
+            render_cache,
+        )
+        if target_scored:
             counters.hit_frames += 1
             if on_score is not None:
-                on_score()
-
-        current_score = target.score
-        best_score = target.score
-        status_label = "Target"
+                on_score(target_mode_frame.hit_streak)
+        current_score = target_mode_frame.score
         total_score_events = counters.hit_frames
+        status_label = "Target"
     elif game_mode == GAME_MODE_JUGGLE:
-        target = None
-        score_effects = []
-        pose_state, pose_frame = update_pose_state(
+        pose_state, pose_frame = update_pose_state_from_backends(
             state.pose,
             pose_results,
             track,
@@ -561,26 +506,41 @@ def process_capture_packet(
             counters.pose_live_frames += 1
         elif pose_frame.stale:
             counters.pose_stale_frames += 1
-        juggle_state, juggle_scored = update_juggle_state(
-            state.juggle,
+        juggle_mode_state, juggle_event = update_juggle_state(
+            state.juggle_mode,
             track,
             pose_frame,
             frame_time,
             packet.frame.shape[:2],
+            frame_index=packet.frame_index,
+            count_threshold=juggle_count_threshold,
+            lookahead_frames=juggle_lookahead_frames,
+            prominence_radius_fraction=juggle_prominence_radius_fraction,
+            ground_margin_radius_fraction=juggle_ground_margin_radius_fraction,
         )
-        if juggle_scored:
+        if juggle_event is not None and juggle_event.counted:
             counters.hit_frames += 1
+            if on_score is not None:
+                on_score(juggle_mode_state.current_streak)
 
-        current_score = juggle_state.current_streak
-        best_score = juggle_state.best_streak
-        status_label = juggle_state.status_label
-        total_score_events = juggle_state.total_juggles
-        drop_resets = juggle_state.drop_resets
-        loss_resets = juggle_state.loss_resets
-        warmup_seconds = juggle_state.warmup_seconds
-        body_part_counts = dict(juggle_state.body_part_counts)
-        ground_suppressed_events = juggle_state.ground_suppressed_events
-        contact_candidates = juggle_state.contact_candidates
+        current_score = juggle_mode_state.current_streak
+        best_score = juggle_mode_state.best_streak
+        total_score_events = juggle_mode_state.total_juggles
+        status_label = juggle_mode_state.status_label
+        body_part_counts = dict(juggle_mode_state.body_part_counts)
+        ground_suppressed_events = juggle_mode_state.ground_suppressed_events
+        contact_candidates = juggle_mode_state.contact_candidates
+        pending_candidates = len(juggle_mode_state.pending_candidates)
+        pose_backend = pose_frame.backend if pose_frame is not None else "none"
+        pose_quality = pose_frame.quality if pose_frame is not None else 0.0
+        if juggle_event is not None:
+            displayed_juggle_event = juggle_event
+        elif (
+            juggle_mode_state.last_prediction is not None
+            and juggle_mode_state.last_prediction_at is not None
+            and frame_time - juggle_mode_state.last_prediction_at <= JUGGLE_LAST_EVENT_DISPLAY_SECONDS
+        ):
+            displayed_juggle_event = juggle_mode_state.last_prediction
     else:
         raise ValueError(f"Unsupported game mode: {game_mode}")
 
@@ -593,9 +553,8 @@ def process_capture_packet(
     updated_state = TrackerRuntimeState(
         track=track,
         motion=motion,
-        target=target,
-        score_effects=score_effects,
-        juggle=juggle_state,
+        target_mode=target_mode_state,
+        juggle_mode=juggle_mode_state,
         pose=pose_state,
         next_track_id=next_track_id,
         counters=counters,
@@ -606,25 +565,28 @@ def process_capture_packet(
         frame_time=frame_time,
         stage_timings=stage_timings,
         track=track,
-        target=target,
-        score_effects=score_effects,
+        target=target_mode_frame.target if target_mode_frame is not None else None,
+        score_effects=target_mode_frame.score_effects if target_mode_frame is not None else [],
+        game_mode=game_mode,
+        target_mode=target_mode_frame,
+        pose_frame=pose_frame,
+        juggle_event=juggle_event,
         candidates_count=len(candidates),
         primary_candidate_confidence=(
             float(primary_candidate.confidence) if primary_candidate is not None else None
         ),
         counters=_copy_counters(counters),
-        game_mode=game_mode,
         current_score=current_score,
         best_score=best_score,
-        status_label=status_label,
         total_score_events=total_score_events,
-        drop_resets=drop_resets,
-        loss_resets=loss_resets,
-        warmup_seconds=warmup_seconds,
-        pose_frame=pose_frame,
+        status_label=status_label,
         body_part_counts=body_part_counts,
         ground_suppressed_events=ground_suppressed_events,
         contact_candidates=contact_candidates,
+        pending_candidates=pending_candidates,
+        pose_backend=pose_backend,
+        pose_quality=pose_quality,
+        displayed_juggle_event=displayed_juggle_event,
     )
     return updated_state, frame_result
 
@@ -642,69 +604,12 @@ def render_processed_frame(
         draw_track(frame, frame_result.track)
     if frame_result.game_mode == GAME_MODE_JUGGLE:
         draw_pose_overlay(frame, frame_result.pose_frame)
-
-    if frame_result.game_mode == GAME_MODE_TARGET and frame_result.target is not None:
-        draw_target(frame, frame_result.target, frame_result.frame_time, render_cache=render_cache)
-        draw_scored_target_effects(
+    elif frame_result.target_mode is not None:
+        draw_target_mode(
             frame,
-            frame_result.score_effects,
+            frame_result.target_mode,
             frame_result.frame_time,
             render_cache=render_cache,
-        )
-        draw_label_right(
-            frame,
-            f"Score: {frame_result.current_score}",
-            8,
-            HUD_BASELINE_Y,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
-        )
-    elif frame_result.game_mode == GAME_MODE_JUGGLE:
-        draw_label_right(
-            frame,
-            f"Current: {frame_result.current_score}",
-            8,
-            HUD_BASELINE_Y,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
-        )
-        draw_label_right(
-            frame,
-            f"Best: {frame_result.best_score}",
-            8,
-            HUD_BASELINE_Y + HUD_LINE_HEIGHT,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
-        )
-        draw_label_right(
-            frame,
-            f"Status: {frame_result.status_label}",
-            8,
-            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 2,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
-        )
-        pose_source = "None"
-        if frame_result.pose_frame is not None and frame_result.pose_frame.available:
-            pose_source = "Live" if frame_result.pose_frame.live else "Held"
-        draw_label_right(
-            frame,
-            f"Pose: {pose_source}",
-            8,
-            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 3,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
-        )
-        contact_label = "None"
-        if frame_result.pose_frame is not None and frame_result.pose_frame.nearest_contact is not None:
-            contact_label = frame_result.pose_frame.nearest_contact.display_name
-        draw_label_right(
-            frame,
-            f"Contact: {contact_label}",
-            8,
-            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 4,
-            font_scale=HUD_FONT_SCALE,
-            thickness=HUD_FONT_THICKNESS,
         )
 
     counters = frame_result.counters
@@ -758,6 +663,80 @@ def render_processed_frame(
             thickness=HUD_FONT_THICKNESS,
         )
 
+    if frame_result.game_mode == GAME_MODE_TARGET:
+        draw_label_right(
+            frame,
+            f"Score: {frame_result.current_score}",
+            8,
+            HUD_BASELINE_Y,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+    elif frame_result.game_mode == GAME_MODE_JUGGLE:
+        draw_label_right(
+            frame,
+            f"Current: {frame_result.current_score}",
+            8,
+            HUD_BASELINE_Y,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"Best: {frame_result.best_score}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        pose_source = "None"
+        if frame_result.pose_frame is not None and frame_result.pose_frame.available:
+            freshness = "Live" if frame_result.pose_frame.live else "Held"
+            pose_source = f"{frame_result.pose_backend.title()} {freshness}"
+        draw_label_right(
+            frame,
+            f"Pose: {pose_source}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 2,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"Pose Q: {frame_result.pose_quality:.2f}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 3,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        event_label = "None"
+        if frame_result.displayed_juggle_event is not None:
+            event_label = frame_result.displayed_juggle_event.event_class.value.title()
+        draw_label_right(
+            frame,
+            f"Event: {event_label}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 4,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"State: {frame_result.status_label}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 5,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+        draw_label_right(
+            frame,
+            f"Pending: {frame_result.pending_candidates}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 6,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+
     render_ms = (time.perf_counter() - render_started_at) * 1000.0
     return frame, render_ms
 
@@ -769,12 +748,15 @@ def run_benchmark(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
-    pose_model,
-    pose_predict_kwargs: Optional[dict[str, Any]],
+    pose_runtime: Optional[PoseRuntimeContext],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
+    juggle_count_threshold: float,
+    juggle_lookahead_frames: int,
+    juggle_prominence_radius_fraction: float,
+    juggle_ground_margin_radius_fraction: float,
     max_frames: Optional[int],
     benchmark_output: Optional[str],
 ) -> dict[str, Any]:
@@ -807,13 +789,16 @@ def run_benchmark(
             runtime_state,
             model,
             predict_kwargs,
-            pose_model,
-            pose_predict_kwargs,
+            pose_runtime,
             gamma_lut,
             clahe,
             rng,
             render_cache,
             game_mode=game_mode,
+            juggle_count_threshold=juggle_count_threshold,
+            juggle_lookahead_frames=juggle_lookahead_frames,
+            juggle_prominence_radius_fraction=juggle_prominence_radius_fraction,
+            juggle_ground_margin_radius_fraction=juggle_ground_margin_radius_fraction,
         )
 
         if previous_frame_time is not None:
@@ -881,13 +866,16 @@ def _inference_worker(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
-    pose_model,
-    pose_predict_kwargs: Optional[dict[str, Any]],
+    pose_runtime: Optional[PoseRuntimeContext],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
-    on_score: Optional[Callable[[], None]],
+    juggle_count_threshold: float,
+    juggle_lookahead_frames: int,
+    juggle_prominence_radius_fraction: float,
+    juggle_ground_margin_radius_fraction: float,
+    on_score: Optional[Callable[[int], None]],
 ) -> None:
     runtime_state = TrackerRuntimeState()
     last_version = 0
@@ -904,13 +892,16 @@ def _inference_worker(
                 runtime_state,
                 model,
                 predict_kwargs,
-                pose_model,
-                pose_predict_kwargs,
+                pose_runtime,
                 gamma_lut,
                 clahe,
                 rng,
                 render_cache,
                 game_mode=game_mode,
+                juggle_count_threshold=juggle_count_threshold,
+                juggle_lookahead_frames=juggle_lookahead_frames,
+                juggle_prominence_radius_fraction=juggle_prominence_radius_fraction,
+                juggle_ground_margin_radius_fraction=juggle_ground_margin_radius_fraction,
                 on_score=on_score,
             )
             result_store.put(frame_result)
@@ -925,12 +916,15 @@ def run_live_tracker(
     game_mode: str,
     model,
     predict_kwargs: dict[str, Any],
-    pose_model,
-    pose_predict_kwargs: Optional[dict[str, Any]],
+    pose_runtime: Optional[PoseRuntimeContext],
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
+    juggle_count_threshold: float,
+    juggle_lookahead_frames: int,
+    juggle_prominence_radius_fraction: float,
+    juggle_ground_margin_radius_fraction: float,
     max_frames: Optional[int],
     display: bool,
 ) -> None:
@@ -949,13 +943,18 @@ def run_live_tracker(
             "game_mode": game_mode,
             "model": model,
             "predict_kwargs": predict_kwargs,
-            "pose_model": pose_model,
-            "pose_predict_kwargs": pose_predict_kwargs,
+            "pose_runtime": pose_runtime,
             "gamma_lut": gamma_lut,
             "clahe": clahe,
             "rng": rng,
             "render_cache": render_cache,
-            "on_score": play_score_sound if game_mode == GAME_MODE_TARGET else None,
+            "juggle_count_threshold": juggle_count_threshold,
+            "juggle_lookahead_frames": juggle_lookahead_frames,
+            "juggle_prominence_radius_fraction": juggle_prominence_radius_fraction,
+            "juggle_ground_margin_radius_fraction": juggle_ground_margin_radius_fraction,
+            "on_score": (
+                play_target_score_sound if game_mode == GAME_MODE_TARGET else None
+            ),
         },
         daemon=True,
     )
@@ -1026,6 +1025,12 @@ def main() -> None:
     parser.add_argument("--no-display", action="store_true", help="Disable the OpenCV preview window")
     parser.add_argument("--pose-model", default=POSE_MODEL_PATH, help="Pose model path for juggle mode")
     parser.add_argument(
+        "--pose-backend",
+        choices=POSE_BACKEND_CHOICES,
+        default=POSE_BACKEND_AUTO,
+        help="Lower-body pose backend for juggle mode",
+    )
+    parser.add_argument(
         "--pose-imgsz",
         type=int,
         default=POSE_IMG_SIZE,
@@ -1037,18 +1042,49 @@ def main() -> None:
         default=POSE_CONF_THRESHOLD,
         help="Pose confidence threshold for juggle mode",
     )
+    parser.add_argument(
+        "--juggle-lookahead-frames",
+        type=int,
+        default=JUGGLE_LOOKAHEAD_FRAMES,
+        help="Fixed lookahead used to confirm juggle reversal candidates",
+    )
+    parser.add_argument(
+        "--juggle-prominence-radius-fraction",
+        type=float,
+        default=JUGGLE_PROMINENCE_RADIUS_FRACTION,
+        help="Minimum apex prominence as a fraction of ball radius",
+    )
+    parser.add_argument(
+        "--juggle-proof-threshold",
+        type=float,
+        default=JUGGLE_COUNT_THRESHOLD,
+        help="Minimum body-part proof score required to count a juggle",
+    )
+    parser.add_argument(
+        "--juggle-ground-margin-radius-fraction",
+        type=float,
+        default=JUGGLE_GROUND_MARGIN_RADIUS_FRACTION,
+        help="Ground band size as a fraction of ball radius",
+    )
     args = parser.parse_args()
 
     model = YOLO(MODEL_PATH)
     predict_kwargs, device_name = _build_predict_kwargs(args.width, args.height)
     pose_model = None
     pose_predict_kwargs: Optional[dict[str, Any]] = None
+    pose_runtime: Optional[PoseRuntimeContext] = None
     if args.mode == GAME_MODE_JUGGLE:
-        pose_model = YOLO(args.pose_model)
-        pose_predict_kwargs = _build_pose_predict_kwargs(
-            predict_kwargs["device"],
-            args.pose_imgsz,
-            args.pose_conf,
+        if args.pose_backend in {POSE_BACKEND_AUTO, "yolo"}:
+            pose_model = YOLO(args.pose_model)
+            pose_predict_kwargs = _build_pose_predict_kwargs(
+                predict_kwargs["device"],
+                args.pose_imgsz,
+                args.pose_conf,
+            )
+        pose_runtime = create_pose_runtime(
+            args.pose_backend,
+            yolo_model=pose_model,
+            yolo_predict_kwargs=pose_predict_kwargs,
         )
     _warmup_detector(model, predict_kwargs, args.width, args.height)
     if pose_model is not None and pose_predict_kwargs is not None:
@@ -1059,7 +1095,10 @@ def main() -> None:
     rng = np.random.default_rng()
     render_cache = RenderCache()
     if args.mode == GAME_MODE_TARGET:
-        render_cache.prime(target_radius_for_frame((args.height, args.width)), (TARGET_SCORE_VALUE,))
+        render_cache.prime(
+            target_radius_for_frame((args.height, args.width)),
+            tuple((points, 1.0) for points in (1, 2, 3, 4, 5)),
+        )
 
     source = parse_source(args.source)
     cap = cv2.VideoCapture(source)
@@ -1081,12 +1120,15 @@ def main() -> None:
                 game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
-                pose_model=pose_model,
-                pose_predict_kwargs=pose_predict_kwargs,
+                pose_runtime=pose_runtime,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
                 render_cache=render_cache,
+                juggle_count_threshold=args.juggle_proof_threshold,
+                juggle_lookahead_frames=args.juggle_lookahead_frames,
+                juggle_prominence_radius_fraction=args.juggle_prominence_radius_fraction,
+                juggle_ground_margin_radius_fraction=args.juggle_ground_margin_radius_fraction,
                 max_frames=args.max_frames,
                 benchmark_output=args.benchmark_output,
             )
@@ -1097,16 +1139,20 @@ def main() -> None:
                 game_mode=args.mode,
                 model=model,
                 predict_kwargs=predict_kwargs,
-                pose_model=pose_model,
-                pose_predict_kwargs=pose_predict_kwargs,
+                pose_runtime=pose_runtime,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
                 render_cache=render_cache,
+                juggle_count_threshold=args.juggle_proof_threshold,
+                juggle_lookahead_frames=args.juggle_lookahead_frames,
+                juggle_prominence_radius_fraction=args.juggle_prominence_radius_fraction,
+                juggle_ground_margin_radius_fraction=args.juggle_ground_margin_radius_fraction,
                 max_frames=args.max_frames,
                 display=not args.no_display,
             )
     finally:
+        close_pose_runtime(pose_runtime)
         cap.release()
 
 

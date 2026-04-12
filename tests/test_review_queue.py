@@ -18,6 +18,7 @@ from review_queue import (
     ensure_clean_dataset_copy,
     order_dataset_items,
     read_normalized_boxes,
+    suggest_tight_ball_box,
     write_normalized_boxes,
 )
 
@@ -156,6 +157,37 @@ def test_exclude_keep_and_redraw_only_touch_cleaned_copy(workspace_tmp: Path):
     assert item.review_status == "redrawn"
 
 
+def test_suggest_tight_ball_box_fits_synthetic_circle():
+    frame = np.zeros((400, 400, 3), dtype=np.uint8)
+    true_center = (220, 180)
+    true_radius = 24
+    cv2.circle(frame, true_center, true_radius, (255, 255, 255), thickness=-1)
+
+    # Deliberately oversized seed: 4x the true diameter, slightly off-center.
+    seed_w = (true_radius * 2 * 4) / 400
+    seed_h = (true_radius * 2 * 4) / 400
+    seed = NormalizedBox(
+        class_id=0,
+        cx=(true_center[0] + 6) / 400,
+        cy=(true_center[1] - 4) / 400,
+        w=seed_w,
+        h=seed_h,
+    )
+
+    suggestion = suggest_tight_ball_box(frame, seed)
+
+    assert suggestion is not None
+    suggested_cx_px = suggestion.cx * 400
+    suggested_cy_px = suggestion.cy * 400
+    suggested_w_px = suggestion.w * 400
+    # Should converge from the offset seed (cx+6, cy-4) toward the true center.
+    seed_offset_x = abs((true_center[0] + 6) - true_center[0])
+    seed_offset_y = abs((true_center[1] - 4) - true_center[1])
+    assert abs(suggested_cx_px - true_center[0]) < seed_offset_x
+    assert abs(suggested_cy_px - true_center[1]) < seed_offset_y
+    assert abs(suggested_w_px - true_radius * 2) <= true_radius * 0.30
+
+
 def test_order_dataset_items_and_resume_prioritize_flagged_pending_items():
     reviewed = make_item("reviewed", 0, 20, review_status="kept")
     clean = make_item("clean", 3, 0)
@@ -166,4 +198,5 @@ def test_order_dataset_items_and_resume_prioritize_flagged_pending_items():
 
     assert [item.item_id for item in ordered] == ["high", "low", "clean", "reviewed"]
     assert determine_start_index(ordered, {"current_item_id": "clean"}, resume=True) == 2
+    assert determine_start_index(ordered, {"current_item_id": "reviewed"}, resume=True) == 0
     assert determine_start_index(ordered, {}, resume=False) == 0

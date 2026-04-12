@@ -1,4 +1,6 @@
 import argparse
+import json
+from pathlib import Path
 
 import torch
 from ultralytics import YOLO
@@ -8,11 +10,11 @@ PRESETS = {
     "custom": {},
     "v4-tune": {
         "weights": "yolo11n.pt",
-        "data": "dataset_prepared_v4_tune/data.yaml",
-        "epochs": 120,
+        "data": "dataset_prepared_v4_tune_cleaned/data.yaml",
+        "epochs": 90,
         "batch": 8,
-        "imgsz": 832,
-        "name": "ballr_v4_tune",
+        "imgsz": 768,
+        "name": "ballr_v4_tune_cleaned",
         "optimizer": "AdamW",
         "lr0": 0.0008,
         "lrf": 0.01,
@@ -35,15 +37,15 @@ PRESETS = {
         "copy_paste": 0.0,
         "erasing": 0.10,
         "auto_augment": None,
-        "workers": 4,
+        "workers": 0,
     },
     "v4-final": {
-        "weights": "runs/train/ballr_v4_tune/weights/best.pt",
+        "weights": "runs/train/ballr_v4_tune_cleaned/weights/best.pt",
         "data": "dataset_prepared_v4_all/data.yaml",
-        "epochs": 20,
+        "epochs": 15,
         "batch": 8,
-        "imgsz": 832,
-        "name": "ballr_v4",
+        "imgsz": 768,
+        "name": "ballr_v4_cleaned_final",
         "optimizer": "AdamW",
         "lr0": 0.0002,
         "lrf": 1.0,
@@ -66,7 +68,7 @@ PRESETS = {
         "copy_paste": 0.0,
         "erasing": 0.0,
         "auto_augment": None,
-        "workers": 4,
+        "workers": 0,
     },
 }
 
@@ -82,6 +84,65 @@ def detect_device(requested: str) -> str:
         return "0"
     print("No CUDA GPU found - falling back to CPU (training will be slow)")
     return "cpu"
+
+
+def read_dataset_yaml(path: Path) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    if not path.exists():
+        return payload
+
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in {"path", "train", "val"}:
+            payload[key] = value.strip()
+    return payload
+
+
+def warn_about_dataset_state(data_yaml: str) -> None:
+    data_yaml_path = Path(data_yaml)
+    if not data_yaml_path.exists():
+        print(f"WARNING: dataset yaml '{data_yaml_path}' does not exist.")
+        return
+
+    dataset_meta = read_dataset_yaml(data_yaml_path)
+    train_split = dataset_meta.get("train")
+    val_split = dataset_meta.get("val")
+    if train_split and val_split and train_split == val_split:
+        print(
+            "WARNING: this dataset yaml uses the train split for validation. "
+            "Metrics will be optimistic and should not drive model selection."
+        )
+
+    dataset_root = Path(dataset_meta["path"]) if dataset_meta.get("path") else data_yaml_path.parent
+    review_manifest_path = dataset_root / "review" / "manifest.jsonl"
+    if not review_manifest_path.exists():
+        return
+
+    pending_total = 0
+    pending_val = 0
+    for line in review_manifest_path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        if item.get("review_status") != "pending":
+            continue
+        pending_total += 1
+        if item.get("split") == "val":
+            pending_val += 1
+
+    if pending_total:
+        print(
+            f"WARNING: {pending_total} review items remain pending under '{dataset_root.name}'."
+        )
+    if pending_val:
+        print(
+            f"WARNING: {pending_val} validation images are still pending review. "
+            "Finish reviewing val before trusting tune metrics."
+        )
 
 
 def parser_defaults(preset_name: str) -> dict:
@@ -103,7 +164,7 @@ def main() -> None:
         "--preset",
         choices=sorted(PRESETS),
         default="custom",
-        help="Training preset. Use v4-tune then v4-final for the promoted workflow.",
+        help="Training preset. Use v4-tune on the cleaned tune split, then v4-final for the post-review all-data pass.",
     )
     bootstrap_args, remaining_argv = bootstrap.parse_known_args()
     defaults = parser_defaults(bootstrap_args.preset)
@@ -116,7 +177,7 @@ def main() -> None:
     parser.add_argument(
         "--data",
         default=defaults["data"],
-        help="Dataset yaml. For the promoted workflow, use dataset_tools.py prepare-v4 first.",
+        help="Dataset yaml. The default tune preset targets dataset_prepared_v4_tune_cleaned/data.yaml.",
     )
     parser.add_argument("--weights", default=defaults["weights"])
     parser.add_argument("--epochs", type=int, default=defaults["epochs"])
@@ -183,11 +244,12 @@ def main() -> None:
         f"Training preset: {args.preset} | weights={args.weights} | data={args.data} "
         f"| imgsz={args.imgsz} | batch={args.batch} | epochs={args.epochs}"
     )
+    warn_about_dataset_state(args.data)
     model.train(**train_kwargs)
 
     print("\nTraining complete.")
     print(f"Best weights: runs/train/{args.name}/weights/best.pt")
-    print("Promoted production model path: runs/train/ballr_v4/weights/best.pt")
+    print("Review validation results before promoting weights to the production model path.")
 
 
 if __name__ == "__main__":

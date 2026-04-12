@@ -6,12 +6,18 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 
 from ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
 from ballr_utils import build_gamma_lut, ensure_dir, preprocess_frame
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 DEFAULT_DATASET_SPLITS = ("train", "val")
+DEFAULT_EXTERNAL_SPLIT_MAP = {
+    "train": "train",
+    "valid": "val",
+    "test": "val",
+}
 REVIEW_WINDOW_NAME = "Review Queue"
 DATASET_WINDOW_NAME = "Dataset Review"
 PREDICTION_CONF_THRESHOLD = 0.35
@@ -23,6 +29,14 @@ HIGH_ASPECT_THRESHOLD = 1.35
 LOW_AREA_THRESHOLD = 0.0035
 HIGH_AREA_THRESHOLD = 0.06
 SOCCER_BALL_CLASS_ID = 0
+HUD_FONT_SCALE = 0.40
+HUD_FONT_THICKNESS = 1
+HUD_PADDING_X = 5
+HUD_PADDING_Y = 3
+HUD_LINE_GAP = 4
+HUD_MARGIN_X = 8
+HUD_MARGIN_TOP = 18
+HUD_MARGIN_BOTTOM = 10
 
 SUSPICION_REASON_LABELS = {
     "empty_label_with_prediction": "Empty label + model hit",
@@ -140,6 +154,15 @@ class DatasetReviewItem:
         )
 
 
+@dataclass(frozen=True)
+class ExternalImportSpec:
+    source_image_path: Path
+    source_label_path: Path
+    mapped_split: str
+    output_name: str
+    boxes: list[NormalizedBox]
+
+
 @dataclass
 class BoxDrawerState:
     boxes: list[tuple[int, int, int, int]]
@@ -220,6 +243,27 @@ def parse_split_list(raw: str) -> tuple[str, ...]:
     return splits
 
 
+def parse_external_split_map(raw: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise argparse.ArgumentTypeError(
+                "Expected external split mapping entries like 'train=train,valid=val,test=val'."
+            )
+        source_split, target_split = (token.strip() for token in part.split("=", 1))
+        if not source_split or not target_split:
+            raise argparse.ArgumentTypeError(
+                "External split mapping entries must include both source and target split names."
+            )
+        mapping[source_split] = target_split
+    if not mapping:
+        raise argparse.ArgumentTypeError("Expected at least one external split mapping.")
+    return mapping
+
+
 def normalize_box(
     *,
     class_id: int,
@@ -244,7 +288,7 @@ def read_normalized_boxes(label_path: Path) -> list[NormalizedBox]:
         return []
 
     boxes: list[NormalizedBox] = []
-    for raw_line in label_path.read_text(encoding="utf-8").splitlines():
+    for raw_line in label_path.read_text(encoding="utf-8-sig").splitlines():
         parts = raw_line.split()
         if len(parts) != 5:
             continue
@@ -268,6 +312,67 @@ def write_normalized_boxes(label_path: Path, boxes: list[NormalizedBox]) -> None
             handle.write(
                 f"{box.class_id} {box.cx:.6f} {box.cy:.6f} {box.w:.6f} {box.h:.6f}\n"
             )
+
+
+def imported_output_name(prefix: str, external_split: str, image_name: str) -> str:
+    return f"{prefix}_{external_split}_{image_name}"
+
+
+def filter_boxes_by_class(
+    boxes: list[NormalizedBox],
+    class_id: int,
+    output_class_id: int = SOCCER_BALL_CLASS_ID,
+) -> list[NormalizedBox]:
+    return [
+        normalize_box(
+            class_id=output_class_id,
+            cx=box.cx,
+            cy=box.cy,
+            w=box.w,
+            h=box.h,
+            conf=box.conf,
+        )
+        for box in boxes
+        if box.class_id == class_id
+    ]
+
+
+def collect_external_import_specs(
+    external_root: Path,
+    split_map: dict[str, str],
+    *,
+    class_id: int,
+    prefix: str,
+) -> tuple[list[ExternalImportSpec], dict[str, int]]:
+    specs: list[ExternalImportSpec] = []
+    stats = {
+        "images_scanned": 0,
+        "missing_labels": 0,
+        "without_ball": 0,
+    }
+    for external_split, mapped_split in split_map.items():
+        image_dir = external_root / external_split / "images"
+        label_dir = external_root / external_split / "labels"
+        for image_path in image_paths(image_dir):
+            stats["images_scanned"] += 1
+            label_path = label_dir / f"{image_path.stem}.txt"
+            if not label_path.exists():
+                stats["missing_labels"] += 1
+                continue
+            boxes = filter_boxes_by_class(read_normalized_boxes(label_path), class_id=class_id)
+            if not boxes:
+                stats["without_ball"] += 1
+                continue
+            specs.append(
+                ExternalImportSpec(
+                    source_image_path=image_path,
+                    source_label_path=label_path,
+                    mapped_split=mapped_split,
+                    output_name=imported_output_name(prefix, external_split, image_path.name),
+                    boxes=boxes,
+                )
+            )
+    return specs, stats
 
 
 def normalized_box_to_pixels(
@@ -309,6 +414,161 @@ def read_boxes(label_path: Path, image_width: int, image_height: int) -> list[tu
         normalized_box_to_pixels(box, image_width, image_height)
         for box in read_normalized_boxes(label_path)
     ]
+
+
+def _best_circle_from_mask(
+    mask: np.ndarray,
+    roi_center: np.ndarray,
+    roi_area: float,
+) -> tuple[float, float, float] | None:
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    max_blob_area = roi_area * 0.55
+    best: tuple[float, float, float] | None = None
+    best_score = -float("inf")
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 9.0 or area > max_blob_area:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0.0:
+            continue
+        circularity = 4.0 * np.pi * area / (perimeter * perimeter)
+        if circularity < 0.55:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        if radius <= 1.0:
+            continue
+        distance = float(np.linalg.norm(np.array((cx, cy), dtype=np.float32) - roi_center))
+        score = circularity * area - distance * 0.5
+        if score > best_score:
+            best_score = score
+            best = (float(cx), float(cy), float(radius))
+    return best
+
+
+def _circle_from_blob_fallback(
+    roi_bgr: np.ndarray,
+) -> tuple[float, float, float] | None:
+    """Find a ball-like blob via Otsu threshold (covers monochrome + colorful balls).
+    Returns (cx, cy, r) in ROI pixel coords, or None."""
+    if roi_bgr.size == 0:
+        return None
+    roi_h, roi_w = roi_bgr.shape[:2]
+    roi_center = np.array((roi_w / 2.0, roi_h / 2.0), dtype=np.float32)
+    roi_area = float(roi_w * roi_h)
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 1.2)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    candidates: list[tuple[float, float, float]] = []
+    for thresh_flag in (
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+    ):
+        _value, mask = cv2.threshold(blurred, 0, 255, thresh_flag)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+        candidate = _best_circle_from_mask(mask, roi_center, roi_area)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    saturation_mask = cv2.inRange(hsv[:, :, 1], 40, 255)
+    saturation_mask = cv2.morphologyEx(saturation_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    candidate = _best_circle_from_mask(saturation_mask, roi_center, roi_area)
+    if candidate is not None:
+        candidates.append(candidate)
+
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda c: float(
+            np.linalg.norm(np.array((c[0], c[1]), dtype=np.float32) - roi_center)
+        ),
+    )
+
+
+def suggest_tight_ball_box(
+    frame: np.ndarray,
+    seed_box: NormalizedBox,
+    *,
+    search_pad: float = 1.8,
+) -> NormalizedBox | None:
+    """Return a tight square NormalizedBox fit to the most ball-like circle inside a
+    padded crop around `seed_box`. Returns None if no plausible circle is found."""
+    if frame is None or frame.size == 0:
+        return None
+    image_height, image_width = frame.shape[:2]
+    if image_width <= 0 or image_height <= 0:
+        return None
+
+    seed_cx_px = seed_box.cx * image_width
+    seed_cy_px = seed_box.cy * image_height
+    seed_w_px = max(seed_box.w * image_width, 6.0)
+    seed_h_px = max(seed_box.h * image_height, 6.0)
+    half_w = seed_w_px * search_pad / 2.0
+    half_h = seed_h_px * search_pad / 2.0
+
+    x1 = int(max(round(seed_cx_px - half_w), 0))
+    y1 = int(max(round(seed_cy_px - half_h), 0))
+    x2 = int(min(round(seed_cx_px + half_w), image_width))
+    y2 = int(min(round(seed_cy_px + half_h), image_height))
+    if x2 - x1 < 6 or y2 - y1 < 6:
+        return None
+
+    roi = frame[y1:y2, x1:x2]
+    roi_h, roi_w = roi.shape[:2]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 1.2)
+
+    min_dim = min(roi_w, roi_h)
+    min_radius = max(int(round(min_dim * 0.10)), 4)
+    max_radius = max(int(round(min_dim * 0.55)), min_radius + 2)
+
+    chosen: tuple[float, float, float] | None = None
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=max(min_dim, 1),
+        param1=120,
+        param2=22,
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
+    if circles is not None and len(circles) > 0:
+        roi_center = np.array((roi_w / 2.0, roi_h / 2.0), dtype=np.float32)
+        candidates = circles[0]
+        best_distance = float("inf")
+        for cx, cy, r in candidates:
+            distance = float(np.linalg.norm(np.array((cx, cy), dtype=np.float32) - roi_center))
+            if distance < best_distance:
+                best_distance = distance
+                chosen = (float(cx), float(cy), float(r))
+
+    if chosen is None:
+        chosen = _circle_from_blob_fallback(roi)
+
+    if chosen is None:
+        return None
+
+    cx_roi, cy_roi, radius = chosen
+    if radius <= 1.0:
+        return None
+
+    cx_full = x1 + cx_roi
+    cy_full = y1 + cy_roi
+    diameter = 2.0 * radius
+
+    return normalize_box(
+        class_id=seed_box.class_id,
+        cx=cx_full / image_width,
+        cy=cy_full / image_height,
+        w=diameter / image_width,
+        h=diameter / image_height,
+    )
 
 
 def box_aspect_ratio(box: NormalizedBox) -> float:
@@ -457,7 +717,7 @@ def load_manifest(path: Path) -> list[DatasetReviewItem]:
     if not path.exists():
         return []
     items: list[DatasetReviewItem] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
         raw_line = raw_line.strip()
         if not raw_line:
             continue
@@ -468,7 +728,7 @@ def load_manifest(path: Path) -> list[DatasetReviewItem]:
 def load_progress(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def pending_item_count(items: list[DatasetReviewItem]) -> int:
@@ -500,6 +760,16 @@ def save_progress(
     }
     ensure_dir(path.parent)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def ordered_index_for_item_id(items: list[DatasetReviewItem], item_id: str | None, sort_mode: str) -> int | None:
+    if item_id is None:
+        return None
+    ordered_items = order_dataset_items(items, sort_mode)
+    for index, item in enumerate(ordered_items):
+        if item.item_id == item_id:
+            return index
+    return None
 
 
 def order_dataset_items(items: list[DatasetReviewItem], sort_mode: str) -> list[DatasetReviewItem]:
@@ -537,7 +807,9 @@ def determine_start_index(
         if resume_item_id is not None:
             for index, item in enumerate(items):
                 if item.item_id == resume_item_id:
-                    return index
+                    if item.review_status == "pending":
+                        return index
+                    break
     return first_pending_index(items)
 
 
@@ -607,14 +879,18 @@ def load_model_predictions(model, image_path: Path, gamma_lut, clahe) -> list[No
     return predictions
 
 
+def load_yolo_model(model_path: str):
+    from ultralytics import YOLO
+
+    return YOLO(model_path)
+
+
 def build_dataset_manifest(
     source_root: Path,
     output_root: Path,
     splits: tuple[str, ...],
     model_path: str,
 ) -> list[DatasetReviewItem]:
-    from ultralytics import YOLO
-
     ensure_clean_dataset_copy(source_root, output_root, splits)
 
     image_specs: list[tuple[int, str, Path, Path]] = []
@@ -637,7 +913,7 @@ def build_dataset_manifest(
         f"Building dataset review manifest for '{source_root}' with {len(image_specs)} images "
         f"using '{model_path}'."
     )
-    model = YOLO(model_path)
+    model = load_yolo_model(model_path)
     gamma_lut = build_gamma_lut()
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     items: list[DatasetReviewItem] = []
@@ -676,6 +952,107 @@ def load_or_create_dataset_manifest(
     if items:
         return items
     return build_dataset_manifest(source_root, output_root, splits, model_path)
+
+
+def import_external_yolo_dataset(
+    source_root: Path,
+    output_root: Path,
+    external_root: Path,
+    split_map: dict[str, str],
+    *,
+    class_id: int,
+    name_prefix: str,
+    model_path: str,
+) -> None:
+    specs, stats = collect_external_import_specs(
+        external_root,
+        split_map,
+        class_id=class_id,
+        prefix=name_prefix,
+    )
+    if not specs:
+        print(
+            f"No importable images found under '{external_root}' after filtering to class {class_id}."
+        )
+        return
+
+    existing_items = load_manifest(manifest_path(output_root))
+    progress = load_progress(progress_path(output_root))
+    sort_mode = str(progress.get("sort", "flagged"))
+    existing_item_ids = {item.item_id for item in existing_items}
+    next_sequence_index = (
+        max((item.sequence_index for item in existing_items), default=-1) + 1
+    )
+
+    model = load_yolo_model(model_path)
+    gamma_lut = build_gamma_lut()
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    imported = 0
+    skipped_existing = 0
+    new_items: list[DatasetReviewItem] = []
+    for index, spec in enumerate(specs, start=1):
+        source_image_dest = source_root / "images" / spec.mapped_split / spec.output_name
+        source_label_dest = source_root / "labels" / spec.mapped_split / f"{Path(spec.output_name).stem}.txt"
+        output_image_dest = output_root / "images" / spec.mapped_split / spec.output_name
+        output_label_dest = output_root / "labels" / spec.mapped_split / f"{Path(spec.output_name).stem}.txt"
+        item_id = f"{spec.mapped_split}/{spec.output_name}"
+
+        if item_id in existing_item_ids:
+            skipped_existing += 1
+            continue
+
+        ensure_dir(source_image_dest.parent)
+        ensure_dir(source_label_dest.parent)
+        ensure_dir(output_image_dest.parent)
+        ensure_dir(output_label_dest.parent)
+
+        shutil.copy2(spec.source_image_path, source_image_dest)
+        shutil.copy2(spec.source_image_path, output_image_dest)
+        write_normalized_boxes(source_label_dest, spec.boxes)
+        write_normalized_boxes(output_label_dest, spec.boxes)
+
+        model_predictions = load_model_predictions(model, source_image_dest, gamma_lut, clahe)
+        item = build_dataset_review_item(
+            source_root=source_root,
+            output_root=output_root,
+            split=spec.mapped_split,
+            sequence_index=next_sequence_index,
+            image_path=source_image_dest,
+            label_boxes=spec.boxes,
+            model_predictions=model_predictions,
+        )
+        existing_item_ids.add(item.item_id)
+        new_items.append(item)
+        next_sequence_index += 1
+        imported += 1
+
+        if index % 100 == 0 or index == len(specs):
+            print(f"Imported {index}/{len(specs)} external images...")
+
+    if not new_items:
+        print(
+            f"No new review items were added from '{external_root}'. "
+            f"Skipped existing: {skipped_existing}."
+        )
+        return
+
+    all_items = sorted([*existing_items, *new_items], key=lambda item: item.sequence_index)
+    save_manifest(manifest_path(output_root), all_items)
+
+    current_item_id = progress.get("current_item_id")
+    current_index = ordered_index_for_item_id(all_items, str(current_item_id) if current_item_id else None, sort_mode)
+    if current_index is None:
+        current_index = first_pending_index(order_dataset_items(all_items, sort_mode))
+    save_progress(progress_path(output_root), order_dataset_items(all_items, sort_mode), current_index, sort_mode)
+
+    print(
+        f"External import complete. Added {imported} items, skipped existing {skipped_existing}, "
+        f"skipped without ball {stats['without_ball']}, missing labels {stats['missing_labels']}."
+    )
+    print(
+        f"Imported source: '{external_root}' -> source_root='{source_root}', output_root='{output_root}'."
+    )
 
 
 def dataset_item_source_image_path(item: DatasetReviewItem, source_root: Path) -> Path:
@@ -782,26 +1159,44 @@ def draw_label(frame, text: str, x: int, y: int) -> None:
     (text_width, text_height), baseline = cv2.getTextSize(
         text,
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        2,
+        HUD_FONT_SCALE,
+        HUD_FONT_THICKNESS,
     )
-    y = max(y, text_height + baseline)
+    y = max(y, text_height + baseline + HUD_PADDING_Y)
     cv2.rectangle(
         frame,
-        (x, y - text_height - baseline),
-        (x + text_width, y + baseline),
+        (x, y - text_height - baseline - HUD_PADDING_Y),
+        (x + text_width + (HUD_PADDING_X * 2), y + baseline + HUD_PADDING_Y),
         (0, 0, 0),
         -1,
     )
     cv2.putText(
         frame,
         text,
-        (x, y),
+        (x + HUD_PADDING_X, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
+        HUD_FONT_SCALE,
         (255, 255, 255),
-        2,
+        HUD_FONT_THICKNESS,
     )
+
+
+def hud_line_step() -> int:
+    (_, text_height), baseline = cv2.getTextSize(
+        "Ag",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        HUD_FONT_SCALE,
+        HUD_FONT_THICKNESS,
+    )
+    return text_height + baseline + (HUD_PADDING_Y * 2) + HUD_LINE_GAP
+
+
+def draw_hud_lines(frame, lines: list[str]) -> None:
+    y = HUD_MARGIN_TOP
+    step = hud_line_step()
+    for line in lines:
+        draw_label(frame, line, HUD_MARGIN_X, y)
+        y += step
 
 
 def draw_box_list(
@@ -818,19 +1213,29 @@ def draw_box_list(
         label = f"{prefix} {box_index}"
         if box.conf is not None:
             label = f"{label} {box.conf:.2f}"
-        draw_label(frame, label, x1, max(18, y1 - 6))
+        draw_label(frame, label, x1, max(HUD_MARGIN_TOP, y1 - 4))
 
 
 def draw_queue_review_frame(frame, boxes, item: QueueReviewItem, index: int, total: int) -> None:
     for box_index, (x1, y1, x2, y2) in enumerate(boxes, start=1):
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 215, 255), 2)
-        draw_label(frame, f"Box {box_index}", x1, max(18, y1 - 6))
+        draw_label(frame, f"Box {box_index}", x1, max(HUD_MARGIN_TOP, y1 - 4))
 
-    draw_label(frame, f"{index + 1}/{total}", 8, 24)
-    draw_label(frame, f"Session: {item.session_name}", 8, 52)
-    draw_label(frame, f"File: {item.image_path.name}", 8, 80)
-    draw_label(frame, f"Boxes: {len(boxes)}", 8, 108)
-    draw_label(frame, "K keep  D delete  S skip  B back  Q quit", 8, frame.shape[0] - 16)
+    draw_hud_lines(
+        frame,
+        [
+            f"{index + 1}/{total}",
+            f"Session: {item.session_name}",
+            f"File: {item.image_path.name}",
+            f"Boxes: {len(boxes)}",
+        ],
+    )
+    draw_label(
+        frame,
+        "K keep  D delete  S skip  B back  Q quit",
+        HUD_MARGIN_X,
+        frame.shape[0] - HUD_MARGIN_BOTTOM,
+    )
 
 
 def humanize_reasons(reasons: list[str]) -> str:
@@ -852,25 +1257,25 @@ def draw_dataset_review_frame(
     draw_box_list(frame, current_boxes, (0, 215, 255), "Label", image_width, image_height)
     draw_box_list(frame, predictions, (255, 180, 0), "Pred", image_width, image_height)
 
-    draw_label(frame, f"{index + 1}/{total}", 8, 24)
-    draw_label(frame, f"Split: {item.split}", 8, 52)
-    draw_label(frame, f"File: {item.image_name}", 8, 80)
-    draw_label(frame, f"Status: {item.review_status}", 8, 108)
-    draw_label(frame, f"Labels: {item.label_count}", 8, 136)
-    draw_label(frame, f"Predictions: {len(predictions)}", 8, 164)
-    draw_label(frame, f"Flagged remaining: {flagged_remaining}", 8, 192)
-    draw_label(
+    draw_hud_lines(
         frame,
-        f"Score: {item.suspicion_score} | Best IoU: {item.best_iou if item.best_iou is not None else 'n/a'}",
-        8,
-        220,
+        [
+            f"{index + 1}/{total}",
+            f"Split: {item.split}",
+            f"File: {item.image_name}",
+            f"Status: {item.review_status}",
+            f"Labels: {item.label_count}",
+            f"Predictions: {len(predictions)}",
+            f"Flagged remaining: {flagged_remaining}",
+            f"Score: {item.suspicion_score} | Best IoU: {item.best_iou if item.best_iou is not None else 'n/a'}",
+            f"Reasons: {humanize_reasons(item.suspicion_reasons)}",
+        ],
     )
-    draw_label(frame, f"Reasons: {humanize_reasons(item.suspicion_reasons)}", 8, 248)
     draw_label(
         frame,
         "K keep  R redraw  E empty  X exclude  S skip  B back  Q quit",
-        8,
-        frame.shape[0] - 16,
+        HUD_MARGIN_X,
+        frame.shape[0] - HUD_MARGIN_BOTTOM,
     )
 
 
@@ -886,12 +1291,17 @@ def draw_redraw_overlay(
     draw_box_list(frame, model_predictions, (255, 180, 0), "Pred", image_width, image_height)
     for box_index, (x1, y1, x2, y2) in enumerate(draft_boxes, start=1):
         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
-        draw_label(frame, f"New {box_index}", x1, max(18, y1 - 6))
+        draw_label(frame, f"New {box_index}", x1, max(HUD_MARGIN_TOP, y1 - 4))
     if draft_box is not None:
         x1, y1, x2, y2 = draft_box
         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 1)
 
-    draw_label(frame, "Redraw mode: drag boxes, U undo, Enter save, Esc cancel", 8, 24)
+    draw_label(
+        frame,
+        "Redraw: drag, T tighten, U undo, Enter save, Esc cancel",
+        HUD_MARGIN_X,
+        HUD_MARGIN_TOP,
+    )
 
 
 def redraw_mouse_handler(event, x, y, _flags, state: BoxDrawerState) -> None:
@@ -918,6 +1328,20 @@ def redraw_mouse_handler(event, x, y, _flags, state: BoxDrawerState) -> None:
         y2 = max(state.start_y, y)
         if (x2 - x1) >= 3 and (y2 - y1) >= 3:
             state.boxes.append((x1, y1, x2, y2))
+
+
+def _tighten_pixel_box(
+    frame: np.ndarray,
+    pixel_box: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    image_height, image_width = frame.shape[:2]
+    seed = pixels_to_normalized_boxes([pixel_box], image_width, image_height)
+    if not seed:
+        return None
+    suggestion = suggest_tight_ball_box(frame, seed[0])
+    if suggestion is None:
+        return None
+    return normalized_box_to_pixels(suggestion, image_width, image_height)
 
 
 def redraw_boxes(
@@ -951,6 +1375,10 @@ def redraw_boxes(
                 )
             if key == ord("u") and state.boxes:
                 state.boxes.pop()
+            if key == ord("t") and state.boxes:
+                tightened = _tighten_pixel_box(frame, state.boxes[-1])
+                if tightened is not None:
+                    state.boxes[-1] = tightened
             if key in (27, ord("c")):
                 return None
     finally:
@@ -1146,9 +1574,9 @@ def main() -> None:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("queue", "dataset"),
+        choices=("queue", "dataset", "import-external"),
         default="queue",
-        help="Review the manual queue or a full dataset root",
+        help="Review the manual queue, a full dataset root, or import an external YOLO dataset",
     )
     parser.add_argument("--root", help="Review root. Defaults to dataset/review or dataset based on mode.")
     parser.add_argument("--session", help="Only review one queue session folder")
@@ -1178,11 +1606,47 @@ def main() -> None:
         action="store_true",
         help="Resume dataset review from the saved progress item",
     )
+    parser.add_argument(
+        "--external-root",
+        help="External YOLO dataset root to import in import-external mode",
+    )
+    parser.add_argument(
+        "--external-split-map",
+        type=parse_external_split_map,
+        default=DEFAULT_EXTERNAL_SPLIT_MAP,
+        help="Comma-separated external split mapping, e.g. train=train,valid=val,test=val",
+    )
+    parser.add_argument(
+        "--external-class-id",
+        type=int,
+        default=SOCCER_BALL_CLASS_ID,
+        help="Class id to keep from the external YOLO labels",
+    )
+    parser.add_argument(
+        "--external-prefix",
+        default="juggling_v7i",
+        help="Prefix added to imported filenames to avoid collisions",
+    )
     args = parser.parse_args()
 
     if args.mode == "queue":
         review_root = Path(args.root or "dataset/review")
         run_queue_mode(review_root, args.session)
+        return
+
+    if args.mode == "import-external":
+        if not args.external_root:
+            raise SystemExit("--external-root is required in import-external mode.")
+        source_root = Path(args.root or "dataset")
+        import_external_yolo_dataset(
+            source_root=source_root,
+            output_root=Path(args.output_root),
+            external_root=Path(args.external_root),
+            split_map=args.external_split_map,
+            class_id=args.external_class_id,
+            name_prefix=args.external_prefix,
+            model_path=args.model,
+        )
         return
 
     source_root = Path(args.root or "dataset")

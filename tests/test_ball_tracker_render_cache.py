@@ -10,7 +10,7 @@ from ball_tracker_targets import (
 
 def test_render_cache_reuses_idle_sprite_for_same_quantized_phase():
     cache = RenderCache()
-    cache.prime(40, (TARGET_SCORE_VALUE,))
+    cache.prime(40, ((TARGET_SCORE_VALUE, 1.0),))
 
     first = cache.get_idle_sprite(40, 0.10)
     second = cache.get_idle_sprite(40, 0.10)
@@ -24,7 +24,7 @@ def test_render_cache_reuses_popup_sprite_for_same_effect_time():
     effect = ScoredTargetEffect(
         center=np.array((320.0, 300.0), dtype=np.float32),
         radius=40,
-        points=TARGET_SCORE_VALUE,
+        points=TARGET_SCORE_VALUE * 2,
         started_at=5.0,
     )
 

@@ -40,11 +40,20 @@ def test_render_scored_target_burst_sprite_grows_and_fades():
     assert int(late_sprite[:, :, 3].max()) < int(early_sprite[:, :, 3].max())
 
 
-def test_render_score_popup_sprite_rises_and_fades():
+def test_render_score_popup_sprite_flows_toward_hud_and_fades():
     effect = make_effect()
+    destination = np.array((560.0, 40.0), dtype=np.float32)
 
-    early = render_score_popup_sprite(effect, effect.started_at + TARGET_SCORE_POPUP_DELAY_SECONDS + 0.05)
-    late = render_score_popup_sprite(effect, effect.started_at + TARGET_SCORE_POPUP_DELAY_SECONDS + 0.60)
+    early = render_score_popup_sprite(
+        effect,
+        effect.started_at + TARGET_SCORE_POPUP_DELAY_SECONDS + 0.05,
+        popup_destination=destination,
+    )
+    late = render_score_popup_sprite(
+        effect,
+        effect.started_at + TARGET_SCORE_POPUP_DELAY_SECONDS + 0.60,
+        popup_destination=destination,
+    )
 
     assert early is not None
     assert late is not None
@@ -52,6 +61,7 @@ def test_render_score_popup_sprite_rises_and_fades():
     early_sprite, _early_anchor, early_center = early
     late_sprite, _late_anchor, late_center = late
 
+    assert late_center[0] > early_center[0]
     assert late_center[1] < early_center[1]
     assert int(late_sprite[:, :, 3].max()) < int(early_sprite[:, :, 3].max())
 
@@ -71,3 +81,15 @@ def test_draw_scored_target_effects_ignores_expired_effects():
     draw_scored_target_effects(frame, [effect], effect.started_at + TARGET_SCORE_EFFECT_SECONDS)
 
     assert not frame.any()
+
+
+def test_render_scored_target_burst_sprite_skips_popup_only_effect():
+    effect = ScoredTargetEffect(
+        center=np.array((320.0, 320.0), dtype=np.float32),
+        radius=40,
+        points=-1,
+        started_at=10.0,
+        show_burst=False,
+    )
+
+    assert render_scored_target_burst_sprite(effect, effect.started_at + 0.05) is None

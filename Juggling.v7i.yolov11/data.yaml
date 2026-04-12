@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['ball', 'foot', 'person']
+
+roboflow:
+  workspace: football-bjlgx
+  project: juggling-xfitx
+  version: 7
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/football-bjlgx/juggling-xfitx/dataset/7

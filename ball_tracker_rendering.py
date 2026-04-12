@@ -247,15 +247,15 @@ class RenderAtlas:
     radius: int
     idle_sprites: list[CachedSprite]
     burst_sprites: list[CachedSprite]
-    popup_sprites: dict[int, list[CachedSprite]]
+    popup_sprites: dict[tuple[int, int], list[CachedSprite]]
 
 
 class RenderCache:
     def __init__(self) -> None:
         self._atlases: dict[int, RenderAtlas] = {}
 
-    def prime(self, radius: int, popup_points: tuple[int, ...] = ()) -> None:
-        self._get_atlas(radius, popup_points)
+    def prime(self, radius: int, popup_specs: tuple[tuple[int, float], ...] = ()) -> None:
+        self._get_atlas(radius, popup_specs)
 
     def get_idle_sprite(self, radius: int, timestamp: float) -> CachedSprite:
         atlas = self._get_atlas(radius)
@@ -263,6 +263,9 @@ class RenderCache:
         return atlas.idle_sprites[_quantize_progress_index(phase, len(atlas.idle_sprites))]
 
     def get_burst_sprite(self, effect: ScoredTargetEffect, timestamp: float) -> Optional[CachedSprite]:
+        if not effect.show_burst:
+            return None
+
         elapsed = scored_target_effect_elapsed(effect, timestamp)
         if elapsed >= TARGET_SCORE_BURST_SECONDS:
             return None
@@ -276,23 +279,34 @@ class RenderCache:
         if elapsed < TARGET_SCORE_POPUP_DELAY_SECONDS or elapsed >= TARGET_SCORE_EFFECT_SECONDS:
             return None
 
-        atlas = self._get_atlas(effect.radius, (effect.points,))
+        popup_key = _popup_sprite_key(effect.points, effect.popup_scale)
+        atlas = self._get_atlas(effect.radius, ((effect.points, effect.popup_scale),))
         progress = scored_target_effect_popup_progress(effect, timestamp)
-        sprite = atlas.popup_sprites[effect.points][
-            _quantize_progress_index(progress, len(atlas.popup_sprites[effect.points]))
+        sprite = atlas.popup_sprites[popup_key][
+            _quantize_progress_index(progress, len(atlas.popup_sprites[popup_key]))
         ]
         return sprite, smoothstep(0.0, 1.0, progress)
 
-    def _get_atlas(self, radius: int, popup_points: tuple[int, ...] = ()) -> RenderAtlas:
+    def _get_atlas(
+        self,
+        radius: int,
+        popup_specs: tuple[tuple[int, float], ...] = (),
+    ) -> RenderAtlas:
         atlas = self._atlases.get(radius)
         if atlas is None:
             atlas = self._build_atlas(radius)
             self._atlases[radius] = atlas
 
-        missing_popup_points = tuple(point for point in popup_points if point not in atlas.popup_sprites)
-        if missing_popup_points:
-            for point in missing_popup_points:
-                atlas.popup_sprites[point] = _build_popup_sprite_frames(point, radius)
+        missing_popup_specs = tuple(
+            spec for spec in popup_specs if _popup_sprite_key(spec[0], spec[1]) not in atlas.popup_sprites
+        )
+        if missing_popup_specs:
+            for points, popup_scale in missing_popup_specs:
+                atlas.popup_sprites[_popup_sprite_key(points, popup_scale)] = _build_popup_sprite_frames(
+                    points,
+                    radius,
+                    popup_scale=popup_scale,
+                )
 
         return atlas
 
@@ -344,12 +358,21 @@ def _quantize_progress_index(progress: float, frame_count: int) -> int:
     return int(np.clip(round(clamp_unit(progress) * (frame_count - 1)), 0, frame_count - 1))
 
 
-def _build_popup_sprite_frames(points: int, radius: int) -> list[CachedSprite]:
+def _popup_sprite_key(points: int, popup_scale: float) -> tuple[int, int]:
+    return points, int(round(popup_scale * 1000.0))
+
+
+def _build_popup_sprite_frames(points: int, radius: int, *, popup_scale: float = 1.0) -> list[CachedSprite]:
     popup_frames = []
     for index in range(TARGET_SCORE_POPUP_CACHE_FRAMES):
         progress = _progress_for_index(index, TARGET_SCORE_POPUP_CACHE_FRAMES)
         eased_progress = smoothstep(0.0, 1.0, progress)
-        sprite, anchor = render_score_popup_text_sprite(points, radius, 1.0 - eased_progress)
+        sprite, anchor = render_score_popup_text_sprite(
+            points,
+            radius,
+            1.0 - eased_progress,
+            popup_scale=popup_scale,
+        )
         popup_frames.append(CachedSprite(sprite=sprite, anchor=anchor))
     return popup_frames
 
@@ -377,11 +400,17 @@ def load_score_popup_font(font_size: int) -> ImageFont.ImageFont | ImageFont.Fre
     return ImageFont.load_default()
 
 
-def render_score_popup_text_sprite(points: int, radius: int, alpha: float) -> tuple[np.ndarray, tuple[float, float]]:
+def render_score_popup_text_sprite(
+    points: int,
+    radius: int,
+    alpha: float,
+    *,
+    popup_scale: float = 1.0,
+) -> tuple[np.ndarray, tuple[float, float]]:
     font_size = int(
         round(
             np.clip(
-                radius * TARGET_SCORE_POPUP_FONT_SCALE,
+                radius * TARGET_SCORE_POPUP_FONT_SCALE * popup_scale,
                 TARGET_SCORE_POPUP_FONT_MIN_SIZE,
                 TARGET_SCORE_POPUP_FONT_MAX_SIZE,
             )
@@ -389,7 +418,7 @@ def render_score_popup_text_sprite(points: int, radius: int, alpha: float) -> tu
     )
     stroke_width = max(1, font_size // 18)
     font = load_score_popup_font(font_size)
-    text = f"+{points}"
+    text = f"{points:+d}"
 
     measure_canvas = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     measure_draw = ImageDraw.Draw(measure_canvas)
@@ -553,6 +582,9 @@ def render_scored_target_burst_sprite(
     effect: ScoredTargetEffect,
     timestamp: float,
 ) -> Optional[tuple[np.ndarray, tuple[float, float], np.ndarray]]:
+    if not effect.show_burst:
+        return None
+
     elapsed = scored_target_effect_elapsed(effect, timestamp)
     if elapsed >= TARGET_SCORE_BURST_SECONDS:
         return None
@@ -573,6 +605,7 @@ def render_scored_target_burst_sprite(
 def render_score_popup_sprite(
     effect: ScoredTargetEffect,
     timestamp: float,
+    popup_destination: Optional[np.ndarray] = None,
 ) -> Optional[tuple[np.ndarray, tuple[float, float], np.ndarray]]:
     elapsed = scored_target_effect_elapsed(effect, timestamp)
     if elapsed < TARGET_SCORE_POPUP_DELAY_SECONDS or elapsed >= TARGET_SCORE_EFFECT_SECONDS:
@@ -580,15 +613,37 @@ def render_score_popup_sprite(
 
     progress = scored_target_effect_popup_progress(effect, timestamp)
     eased_progress = smoothstep(0.0, 1.0, progress)
-    sprite, anchor = render_score_popup_text_sprite(effect.points, effect.radius, 1.0 - eased_progress)
-    center = np.array(
+    sprite, anchor = render_score_popup_text_sprite(
+        effect.points,
+        effect.radius,
+        1.0 - eased_progress,
+        popup_scale=effect.popup_scale,
+    )
+    center = popup_center_for_progress(effect, eased_progress, popup_destination)
+    return sprite, anchor, center
+
+
+def popup_center_for_progress(
+    effect: ScoredTargetEffect,
+    progress: float,
+    popup_destination: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    if popup_destination is None:
+        return np.array(
+            (
+                effect.center[0],
+                effect.center[1] - effect.radius * TARGET_SCORE_POPUP_RISE_MULTIPLIER * progress,
+            ),
+            dtype=np.float32,
+        )
+
+    return np.array(
         (
-            effect.center[0],
-            effect.center[1] - effect.radius * TARGET_SCORE_POPUP_RISE_MULTIPLIER * eased_progress,
+            effect.center[0] + (popup_destination[0] - effect.center[0]) * progress,
+            effect.center[1] + (popup_destination[1] - effect.center[1]) * progress,
         ),
         dtype=np.float32,
     )
-    return sprite, anchor, center
 
 
 def draw_label(
@@ -636,8 +691,20 @@ def draw_track(frame: np.ndarray, track: BallTrack) -> None:
     cx = int(np.clip(track.center[0], 0, frame_w - 1))
     cy = int(np.clip(track.center[1], 0, frame_h - 1))
     radius = max(int(round(track.radius)), 4)
-    color = (0, 255, 0) if track.misses == 0 else (0, 215, 255)
-    thickness = 2 if track.misses == 0 else 1
+    color = (255, 225, 160)
+    glow_color = (255, 245, 210)
+    thickness = 2
+
+    glow_overlay = frame.copy()
+    cv2.circle(
+        glow_overlay,
+        (cx, cy),
+        radius + 2,
+        glow_color,
+        thickness + 2,
+        lineType=cv2.LINE_AA,
+    )
+    cv2.addWeighted(glow_overlay, 0.24, frame, 0.76, 0.0, frame)
     cv2.circle(frame, (cx, cy), radius, color, thickness, lineType=cv2.LINE_AA)
 
     label = f"Ball #{track.track_id}"
@@ -654,15 +721,15 @@ def draw_pose_overlay(frame: np.ndarray, pose_frame: Optional[PoseFrame]) -> Non
     line_color = (86, 196, 255) if pose_frame.live else (0, 215, 255)
     ground_color = (91, 224, 140) if pose_frame.live else (0, 180, 140)
     point_color = (255, 255, 255) if pose_frame.live else (200, 200, 200)
+    thigh_color = (224, 180, 91) if pose_frame.live else (196, 156, 48)
+
     if pose_frame.box is not None:
         x1, y1, x2, y2 = pose_frame.box
         left = max(int(round(x1)) - 16, 0)
         right = min(int(round(x2)) + 16, frame_w - 1)
-        top = max(int(round(y1)), 0)
     else:
         left = 0
         right = frame_w - 1
-        top = 0
 
     if pose_frame.knee_line_y is not None:
         y = int(np.clip(round(pose_frame.knee_line_y), 0, frame_h - 1))
@@ -675,6 +742,14 @@ def draw_pose_overlay(frame: np.ndarray, pose_frame: Optional[PoseFrame]) -> Non
         draw_label(frame, "Ground", max(left, 8), min(y + 18, frame_h - 4), font_scale=0.4, thickness=1)
 
     nearest_name = pose_frame.nearest_contact.name if pose_frame.nearest_contact is not None else None
+    for candidate in pose_frame.contact_candidates:
+        if candidate.segment_start is None or candidate.segment_end is None:
+            continue
+        start = tuple(np.clip(np.round(candidate.segment_start).astype(int), (0, 0), (frame_w - 1, frame_h - 1)))
+        end = tuple(np.clip(np.round(candidate.segment_end).astype(int), (0, 0), (frame_w - 1, frame_h - 1)))
+        color = (0, 255, 0) if candidate.name == nearest_name else thigh_color
+        cv2.line(frame, start, end, color, 2, lineType=cv2.LINE_AA)
+
     for name, point in pose_frame.keypoints.items():
         px = int(np.clip(round(float(point[0])), 0, frame_w - 1))
         py = int(np.clip(round(float(point[1])), 0, frame_h - 1))
@@ -687,12 +762,15 @@ def draw_target(
     target: TargetState,
     timestamp: float,
     render_cache: Optional[RenderCache] = None,
+    alpha: float = 1.0,
 ) -> None:
     if render_cache is None:
         sprite, anchor = render_target_sprite(target, timestamp)
     else:
         cached_sprite = render_cache.get_idle_sprite(target.radius, timestamp)
         sprite, anchor = cached_sprite.sprite, cached_sprite.anchor
+    if alpha < 0.999:
+        sprite = apply_sprite_alpha(sprite, alpha)
     composite_sprite(frame, sprite, anchor, target.center)
 
 
@@ -701,6 +779,7 @@ def draw_scored_target_effect(
     effect: ScoredTargetEffect,
     timestamp: float,
     render_cache: Optional[RenderCache] = None,
+    popup_destination: Optional[np.ndarray] = None,
 ) -> None:
     if render_cache is None:
         burst = render_scored_target_burst_sprite(effect, timestamp)
@@ -708,7 +787,7 @@ def draw_scored_target_effect(
             burst_sprite, burst_anchor, burst_center = burst
             composite_sprite(frame, burst_sprite, burst_anchor, burst_center)
 
-        popup = render_score_popup_sprite(effect, timestamp)
+        popup = render_score_popup_sprite(effect, timestamp, popup_destination=popup_destination)
         if popup is not None:
             popup_sprite, popup_anchor, popup_center = popup
             composite_sprite(frame, popup_sprite, popup_anchor, popup_center)
@@ -721,12 +800,10 @@ def draw_scored_target_effect(
     popup = render_cache.get_popup_sprite(effect, timestamp)
     if popup is not None:
         popup_sprite, popup_progress = popup
-        popup_center = np.array(
-            (
-                effect.center[0],
-                effect.center[1] - effect.radius * TARGET_SCORE_POPUP_RISE_MULTIPLIER * popup_progress,
-            ),
-            dtype=np.float32,
+        popup_center = popup_center_for_progress(
+            effect,
+            popup_progress,
+            popup_destination=popup_destination,
         )
         composite_sprite(frame, popup_sprite.sprite, popup_sprite.anchor, popup_center)
 
@@ -736,6 +813,13 @@ def draw_scored_target_effects(
     effects: list[ScoredTargetEffect],
     timestamp: float,
     render_cache: Optional[RenderCache] = None,
+    popup_destination: Optional[np.ndarray] = None,
 ) -> None:
     for effect in effects:
-        draw_scored_target_effect(frame, effect, timestamp, render_cache=render_cache)
+        draw_scored_target_effect(
+            frame,
+            effect,
+            timestamp,
+            render_cache=render_cache,
+            popup_destination=popup_destination,
+        )

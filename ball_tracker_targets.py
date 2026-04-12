@@ -6,7 +6,7 @@ import numpy as np
 
 from ball_tracker_tracking import BallTrack, is_track_live
 
-TARGET_LOWER_Y_FRACTION = 0.50
+TARGET_LOWER_Y_FRACTION = 0.65
 TARGET_RADIUS_RATIO = 0.091
 TARGET_MIN_RADIUS = 36
 TARGET_MAX_RADIUS = 62
@@ -23,21 +23,45 @@ TARGET_SCORE_EFFECT_SECONDS = max(
     TARGET_SCORE_BURST_SECONDS,
     TARGET_SCORE_POPUP_DELAY_SECONDS + TARGET_SCORE_POPUP_SECONDS,
 )
+TARGET_LIFETIME_SECONDS = 4.0
+TARGET_FULL_VALUE_WINDOW_SECONDS = 2.0
+TARGET_SCORE_STEP_SECONDS = 0.40
+TARGET_MIN_BASE_POINTS = 1
+TARGET_MISS_PENALTY = 1
+TARGET_COMBO_STREAK_STEP = 10
+TARGET_COMBO_POPUP_SCALE = 0.72
 
 
-@dataclass
+@dataclass(frozen=True)
 class TargetState:
     center: np.ndarray
     radius: int
-    score: int = 0
+    spawned_at: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class ScoredTargetEffect:
     center: np.ndarray
     radius: int
     points: int
     started_at: float
+    show_burst: bool = True
+    popup_scale: float = 1.0
+
+
+@dataclass(frozen=True)
+class TargetHitResult:
+    target: TargetState
+    effect: ScoredTargetEffect
+    base_points: int
+    awarded_points: int
+
+
+@dataclass(frozen=True)
+class TargetMissResult:
+    target: TargetState
+    penalty_points: int
+    effect: ScoredTargetEffect
 
 
 def clamp_unit(value: float) -> float:
@@ -66,6 +90,38 @@ def target_spawn_bounds(frame_size: tuple[int, int], radius: int) -> tuple[int, 
     max_y = max(radius, frame_h - radius)
     min_y = min(min_y, max_y)
     return min_x, max_x, min_y, max_y
+
+
+def target_age_seconds(target: TargetState, timestamp: float) -> float:
+    return max(0.0, timestamp - target.spawned_at)
+
+
+def target_fade_alpha(target: TargetState, timestamp: float) -> float:
+    age = target_age_seconds(target, timestamp)
+    return 1.0 - clamp_unit(age / TARGET_LIFETIME_SECONDS)
+
+
+def target_has_expired(target: TargetState, timestamp: float) -> bool:
+    return target_age_seconds(target, timestamp) >= TARGET_LIFETIME_SECONDS
+
+
+def target_base_points(target: TargetState, timestamp: float) -> int:
+    age = target_age_seconds(target, timestamp)
+    if age <= TARGET_FULL_VALUE_WINDOW_SECONDS:
+        return TARGET_SCORE_VALUE
+
+    epsilon = 1e-9
+    elapsed_after_full_value = age - TARGET_FULL_VALUE_WINDOW_SECONDS
+    steps = int(math.floor((elapsed_after_full_value - epsilon) / TARGET_SCORE_STEP_SECONDS)) + 1
+    return max(TARGET_MIN_BASE_POINTS, TARGET_SCORE_VALUE - steps)
+
+
+def combo_multiplier_for_streak(streak: int) -> int:
+    return 1 + max(streak, 0) // TARGET_COMBO_STREAK_STEP
+
+
+def next_combo_threshold_for_streak(streak: int) -> int:
+    return (max(streak, 0) // TARGET_COMBO_STREAK_STEP + 1) * TARGET_COMBO_STREAK_STEP
 
 
 def _distance_between(a: np.ndarray, b: np.ndarray) -> float:
@@ -155,20 +211,28 @@ def spawn_target(
     return best_candidate
 
 
-def score_target(
+def spawn_initial_target(
+    frame_size: tuple[int, int],
+    radius: int,
+    timestamp: float,
+    rng: Optional[np.random.Generator] = None,
+    ball_track: Optional[BallTrack] = None,
+) -> TargetState:
+    return TargetState(
+        center=spawn_target(frame_size, radius, rng=rng, ball_track=ball_track),
+        radius=radius,
+        spawned_at=timestamp,
+    )
+
+
+def respawn_target(
     target: TargetState,
     timestamp: float,
     frame_size: tuple[int, int],
     rng: Optional[np.random.Generator] = None,
     ball_track: Optional[BallTrack] = None,
-) -> tuple[TargetState, ScoredTargetEffect]:
-    effect = ScoredTargetEffect(
-        center=target.center.copy(),
-        radius=target.radius,
-        points=TARGET_SCORE_VALUE,
-        started_at=timestamp,
-    )
-    updated_target = TargetState(
+) -> TargetState:
+    return TargetState(
         center=spawn_target(
             frame_size,
             target.radius,
@@ -177,9 +241,67 @@ def score_target(
             ball_track=ball_track,
         ),
         radius=target.radius,
-        score=target.score + TARGET_SCORE_VALUE,
+        spawned_at=timestamp,
     )
-    return updated_target, effect
+
+
+def score_target(
+    target: TargetState,
+    timestamp: float,
+    frame_size: tuple[int, int],
+    *,
+    base_points: int,
+    combo_multiplier: int,
+    rng: Optional[np.random.Generator] = None,
+    ball_track: Optional[BallTrack] = None,
+) -> TargetHitResult:
+    awarded_points = max(base_points, 0) * max(combo_multiplier, 1)
+    effect = ScoredTargetEffect(
+        center=target.center.copy(),
+        radius=target.radius,
+        points=awarded_points,
+        started_at=timestamp,
+    )
+    return TargetHitResult(
+        target=respawn_target(
+            target,
+            timestamp,
+            frame_size,
+            rng=rng,
+            ball_track=ball_track,
+        ),
+        effect=effect,
+        base_points=base_points,
+        awarded_points=awarded_points,
+    )
+
+
+def expire_target(
+    target: TargetState,
+    timestamp: float,
+    frame_size: tuple[int, int],
+    *,
+    rng: Optional[np.random.Generator] = None,
+    ball_track: Optional[BallTrack] = None,
+) -> TargetMissResult:
+    effect = ScoredTargetEffect(
+        center=target.center.copy(),
+        radius=target.radius,
+        points=-TARGET_MISS_PENALTY,
+        started_at=timestamp,
+        show_burst=False,
+    )
+    return TargetMissResult(
+        target=respawn_target(
+            target,
+            timestamp,
+            frame_size,
+            rng=rng,
+            ball_track=ball_track,
+        ),
+        penalty_points=TARGET_MISS_PENALTY,
+        effect=effect,
+    )
 
 
 def scored_target_effect_elapsed(effect: ScoredTargetEffect, timestamp: float) -> float:

@@ -13,7 +13,13 @@ MAX_MISSES = 4
 REFERENCE_FPS = 30.0
 SOCCER_BALL_DIAMETER_METERS = 0.22
 MEASUREMENT_NOISE_PX = 4.0
-PROCESS_ACCEL_NOISE = 8.0
+# Acceleration noise is expressed in pixels per normalized 30 fps frame^2 because
+# the Kalman process model below uses dt_frames, not dt_seconds.
+PROCESS_ACCEL_NOISE_NOMINAL = 22.0
+PROCESS_ACCEL_NOISE_CONTACT = 200.0
+CONTACT_NIS_THRESHOLD = 6.0
+CONTACT_HOLD_FRAMES = 3
+RAW_VELOCITY_MIN_DT_SEC = 1.0 / 120.0
 INITIAL_POSITION_VARIANCE = 100.0
 INITIAL_VELOCITY_VARIANCE = 50.0
 GRAVITY_MIN_PX_PER_FRAME2 = 0.75
@@ -56,6 +62,8 @@ class BallTrack:
     track_id: int
     misses: int = 0
     confirmed_frames: int = 0
+    nis: float = 0.0
+    vy_raw: Optional[float] = None
 
 
 @dataclass
@@ -64,6 +72,11 @@ class BallMotionState:
     covariance: np.ndarray
     last_time: float
     gravity_pf2: float
+    last_measurement: Optional[np.ndarray] = None
+    last_measurement_time: Optional[float] = None
+    contact_countdown: int = 0
+    nis: float = 0.0
+    vy_raw: Optional[float] = None
 
 
 OBSERVATION_MATRIX = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
@@ -174,16 +187,29 @@ def predict_track(
             track_id=track.track_id,
             misses=track.misses,
             confirmed_frames=track.confirmed_frames,
+            nis=motion.nis,
+            vy_raw=motion.vy_raw,
         ), motion
 
     dt_frames = max((float(frame_time) - motion.last_time) * REFERENCE_FPS, 0.0)
     gravity_pf2 = _gravity_from_radius(track.radius)
+    sigma_a = (
+        PROCESS_ACCEL_NOISE_CONTACT
+        if motion.contact_countdown > 0
+        else PROCESS_ACCEL_NOISE_NOMINAL
+    )
+    next_contact_countdown = max(motion.contact_countdown - 1, 0)
     if dt_frames <= 0.0:
         motion = BallMotionState(
             state=motion.state.copy(),
             covariance=motion.covariance.copy(),
             last_time=float(frame_time),
             gravity_pf2=gravity_pf2,
+            last_measurement=_copy_measurement(motion.last_measurement),
+            last_measurement_time=motion.last_measurement_time,
+            contact_countdown=next_contact_countdown,
+            nis=motion.nis,
+            vy_raw=motion.vy_raw,
         )
     else:
         transition = _state_transition_matrix(dt_frames)
@@ -198,13 +224,18 @@ def predict_track(
             dtype=float,
         )
         predicted_covariance = (
-            transition @ motion.covariance @ transition.T + _process_noise_matrix(dt_frames)
+            transition @ motion.covariance @ transition.T + _process_noise_matrix(dt_frames, sigma_a)
         )
         motion = BallMotionState(
             state=predicted_state,
             covariance=_symmetrize(predicted_covariance),
             last_time=float(frame_time),
             gravity_pf2=gravity_pf2,
+            last_measurement=_copy_measurement(motion.last_measurement),
+            last_measurement_time=motion.last_measurement_time,
+            contact_countdown=next_contact_countdown,
+            nis=motion.nis,
+            vy_raw=motion.vy_raw,
         )
 
     predicted_track = _track_from_motion_state(
@@ -214,6 +245,8 @@ def predict_track(
         track_id=track.track_id,
         misses=track.misses,
         confirmed_frames=track.confirmed_frames,
+        nis=motion.nis,
+        vy_raw=motion.vy_raw,
     )
     return predicted_track, motion
 
@@ -226,6 +259,7 @@ def update_track(
     frame_time: float,
 ) -> tuple[BallTrack, BallMotionState, int]:
     if track is None:
+        measurement = candidate.center.astype(float)
         state = np.array(
             (candidate.center[0], candidate.center[1], 0.0, 0.0),
             dtype=float,
@@ -235,6 +269,8 @@ def update_track(
             covariance=_initial_covariance_matrix(),
             last_time=float(frame_time),
             gravity_pf2=_gravity_from_radius(candidate.radius),
+            last_measurement=measurement.copy(),
+            last_measurement_time=float(frame_time),
         )
         return (
             BallTrack(
@@ -244,6 +280,8 @@ def update_track(
                 confidence=candidate.confidence,
                 track_id=next_track_id,
                 confirmed_frames=1,
+                nis=0.0,
+                vy_raw=None,
             ),
             motion,
             next_track_id + 1,
@@ -252,11 +290,16 @@ def update_track(
     if motion is None:
         motion = _bootstrap_motion_state(track, frame_time)
 
-    innovation = candidate.center.astype(float) - (OBSERVATION_MATRIX @ motion.state)
+    measurement = candidate.center.astype(float)
+    # NIS is defined against the predicted state/covariance, so this must stay
+    # before the Kalman update mutates motion.state and motion.covariance.
+    innovation = measurement - (OBSERVATION_MATRIX @ motion.state)
     innovation_covariance = (
         OBSERVATION_MATRIX @ motion.covariance @ OBSERVATION_MATRIX.T + MEASUREMENT_COVARIANCE
     )
-    kalman_gain = motion.covariance @ OBSERVATION_MATRIX.T @ np.linalg.inv(innovation_covariance)
+    innovation_covariance_inv = np.linalg.inv(innovation_covariance)
+    nis = float(innovation.T @ innovation_covariance_inv @ innovation)
+    kalman_gain = motion.covariance @ OBSERVATION_MATRIX.T @ innovation_covariance_inv
     updated_state = motion.state + kalman_gain @ innovation
     residual_transform = IDENTITY_4 - kalman_gain @ OBSERVATION_MATRIX
     updated_covariance = (
@@ -264,11 +307,22 @@ def update_track(
         + kalman_gain @ MEASUREMENT_COVARIANCE @ kalman_gain.T
     )
     blended_radius = track.radius * (1.0 - RADIUS_SMOOTHING) + candidate.radius * RADIUS_SMOOTHING
+    vy_raw = motion.vy_raw
+    if motion.last_measurement is not None and motion.last_measurement_time is not None:
+        dt_sec = max(float(frame_time) - motion.last_measurement_time, RAW_VELOCITY_MIN_DT_SEC)
+        vy_raw = float((measurement[1] - motion.last_measurement[1]) / dt_sec)
     updated_motion = BallMotionState(
         state=updated_state,
         covariance=_symmetrize(updated_covariance),
         last_time=motion.last_time,
         gravity_pf2=_gravity_from_radius(blended_radius),
+        last_measurement=measurement.copy(),
+        last_measurement_time=float(frame_time),
+        contact_countdown=(
+            CONTACT_HOLD_FRAMES if nis >= CONTACT_NIS_THRESHOLD else motion.contact_countdown
+        ),
+        nis=nis,
+        vy_raw=vy_raw,
     )
 
     return (
@@ -279,6 +333,8 @@ def update_track(
             track_id=track.track_id,
             misses=0,
             confirmed_frames=track.confirmed_frames + 1,
+            nis=nis,
+            vy_raw=vy_raw,
         ),
         updated_motion,
         next_track_id,
@@ -303,6 +359,8 @@ def advance_track(
         track_id=track.track_id,
         misses=misses,
         confirmed_frames=track.confirmed_frames,
+        nis=motion.nis,
+        vy_raw=motion.vy_raw,
     ), motion
 
 
@@ -315,6 +373,8 @@ def _bootstrap_motion_state(track: BallTrack, frame_time: float) -> BallMotionSt
         covariance=_initial_covariance_matrix(),
         last_time=float(frame_time),
         gravity_pf2=_gravity_from_radius(track.radius),
+        nis=track.nis,
+        vy_raw=track.vy_raw,
     )
 
 
@@ -341,11 +401,11 @@ def _state_transition_matrix(dt_frames: float) -> np.ndarray:
     )
 
 
-def _process_noise_matrix(dt_frames: float) -> np.ndarray:
+def _process_noise_matrix(dt_frames: float, sigma_a: float) -> np.ndarray:
     dt2 = dt_frames * dt_frames
     dt3 = dt2 * dt_frames
     dt4 = dt2 * dt2
-    sigma2 = PROCESS_ACCEL_NOISE**2
+    sigma2 = sigma_a**2
     return sigma2 * np.array(
         (
             (0.25 * dt4, 0.0, 0.5 * dt3, 0.0),
@@ -368,6 +428,12 @@ def _symmetrize(matrix: np.ndarray) -> np.ndarray:
     return (matrix + matrix.T) * 0.5
 
 
+def _copy_measurement(measurement: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if measurement is None:
+        return None
+    return measurement.copy()
+
+
 def _track_from_motion_state(
     state: np.ndarray,
     *,
@@ -376,6 +442,8 @@ def _track_from_motion_state(
     track_id: int,
     misses: int,
     confirmed_frames: int,
+    nis: float,
+    vy_raw: Optional[float],
 ) -> BallTrack:
     return BallTrack(
         center=np.array(state[:2], dtype=np.float32),
@@ -385,4 +453,6 @@ def _track_from_motion_state(
         track_id=track_id,
         misses=misses,
         confirmed_frames=confirmed_frames,
+        nis=float(nis),
+        vy_raw=vy_raw,
     )
