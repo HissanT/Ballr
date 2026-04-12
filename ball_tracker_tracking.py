@@ -39,7 +39,7 @@ SCORE_PROXIMITY_BONUS_GATE_FRACTION = 0.4
 SCORE_PROXIMITY_BONUS = 0.05
 TRACK_SCORE_ACCEPT_THRESHOLD = 0.35
 TRACK_REACQUIRE_MIN_MISSES = 2
-MODEL_PATH = "runs/train/ballr_v4/weights/best.pt"
+MODEL_PATH = "runs/train/ballr_v4_tune_cleaned/weights/best.pt"
 
 
 @dataclass
