@@ -2,8 +2,10 @@ import threading
 from pathlib import Path
 from typing import Any
 
-TARGET_SOUND_PATH = Path(__file__).with_name("target_scored_sound_effect.wav")
-COMBO_SOUNDTRACK_DIR = Path(__file__).with_name("soundtracks")
+from common.ballr_utils import asset_path
+
+TARGET_SOUND_PATH = asset_path("target_scored_sound_effect.wav")
+COMBO_SOUNDTRACK_DIR = asset_path("soundtracks")
 COMBO_SOUND_COUNT = 10
 _PLAYBACK_LOCK = threading.Lock()
 

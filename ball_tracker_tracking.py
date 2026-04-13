@@ -3,6 +3,8 @@ from typing import Optional
 
 import numpy as np
 
+from common.ballr_utils import model_path
+
 SPORTS_BALL_CLASS_ID = 0
 CANDIDATE_CONF_THRESHOLD = 0.32
 INIT_CONF_THRESHOLD = 0.50
@@ -39,7 +41,7 @@ SCORE_PROXIMITY_BONUS_GATE_FRACTION = 0.4
 SCORE_PROXIMITY_BONUS = 0.05
 TRACK_SCORE_ACCEPT_THRESHOLD = 0.35
 TRACK_REACQUIRE_MIN_MISSES = 2
-MODEL_PATH = "runs/train/ballr_v4_tune_cleaned/weights/best.pt"
+MODEL_PATH = str(model_path("ballr_v4_tune_cleaned.pt"))
 
 
 @dataclass

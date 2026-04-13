@@ -10,6 +10,14 @@ from typing import Any, Callable, Generic, Optional, TypeVar
 import cv2
 import numpy as np
 
+from common.ballr_utils import (
+    CAMERA_BACKEND_AUTO,
+    CAMERA_BACKEND_CHOICES,
+    build_gamma_lut,
+    open_video_capture,
+    parse_source,
+    preprocess_frame,
+)
 from ball_tracker_audio import (
     COMBO_SOUNDTRACK_DIR,
     TARGET_SOUND_PATH,
@@ -75,7 +83,6 @@ from ball_tracker_tracking import (
     predict_track,
     update_track,
 )
-from ballr_utils import build_gamma_lut, parse_source, preprocess_frame
 
 try:
     import winsound
@@ -1017,6 +1024,12 @@ def main() -> None:
         help="Gameplay mode to run",
     )
     parser.add_argument("--source", default="0", help="Webcam index or video file / stream URL")
+    parser.add_argument(
+        "--camera-backend",
+        choices=CAMERA_BACKEND_CHOICES,
+        default=CAMERA_BACKEND_AUTO,
+        help="Camera backend to use for numeric webcam sources",
+    )
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--benchmark", action="store_true", help="Run a replay benchmark without display")
@@ -1101,16 +1114,19 @@ def main() -> None:
         )
 
     source = parse_source(args.source)
-    cap = cv2.VideoCapture(source)
+    cap, backend_name = open_video_capture(source, backend=args.camera_backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
-        print(f"ERROR: Could not open source '{args.source}'")
+        print(f"ERROR: Could not open source '{args.source}' with backend '{backend_name}'")
         return
 
-    print(f"Tracking started on device: {device_name} ({args.mode} mode)")
+    print(
+        f"Tracking started on device: {device_name} "
+        f"({args.mode} mode, camera backend: {backend_name})"
+    )
 
     try:
         if args.benchmark:

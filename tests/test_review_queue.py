@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from review_queue import (
+from data_tools.review_queue import (
     DatasetReviewItem,
     NormalizedBox,
     apply_empty_action,

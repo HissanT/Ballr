@@ -11,7 +11,11 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from ball_tracker_juggle_dataset import labeled_records, load_manifest, manifest_path
-from ball_tracker_juggling import EVENT_CLASS_ORDER, FEATURE_NAMES, JuggleEventSequenceModel
+from ball_tracker_juggling import (
+    EVENT_CLASS_ORDER,
+    FEATURE_NAMES,
+    JuggleEventSequenceModel,
+)
 
 
 LABEL_TO_INDEX = {event_class.value: index for index, event_class in enumerate(EVENT_CLASS_ORDER)}

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from dataset_tools import build_label_viewer
+from data_tools.dataset_tools import build_label_viewer
 
 
 def create_image(path: Path) -> None:

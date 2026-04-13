@@ -5,12 +5,14 @@ from pathlib import Path
 import torch
 from ultralytics import YOLO
 
+from common.ballr_utils import model_path, training_path
+
 
 PRESETS = {
     "custom": {},
     "v4-tune": {
-        "weights": "yolo11n.pt",
-        "data": "dataset_prepared_v4_tune_cleaned/data.yaml",
+        "weights": str(model_path("yolo11n.pt")),
+        "data": str(training_path("dataset_prepared_v4_tune_cleaned", "data.yaml")),
         "epochs": 90,
         "batch": 8,
         "imgsz": 768,
@@ -40,8 +42,8 @@ PRESETS = {
         "workers": 0,
     },
     "v4-final": {
-        "weights": "runs/train/ballr_v4_tune_cleaned/weights/best.pt",
-        "data": "dataset_prepared_v4_all/data.yaml",
+        "weights": str(model_path("ballr_v4_tune_cleaned.pt")),
+        "data": str(training_path("dataset_prepared_v4_all", "data.yaml")),
         "epochs": 15,
         "batch": 8,
         "imgsz": 768,
@@ -148,7 +150,7 @@ def warn_about_dataset_state(data_yaml: str) -> None:
 def parser_defaults(preset_name: str) -> dict:
     defaults = {
         "data": "data.yaml",
-        "weights": "yolo11n.pt",
+        "weights": str(model_path("yolo11n.pt")),
         "epochs": 80,
         "batch": 16,
         "imgsz": 640,
@@ -177,7 +179,7 @@ def main() -> None:
     parser.add_argument(
         "--data",
         default=defaults["data"],
-        help="Dataset yaml. The default tune preset targets dataset_prepared_v4_tune_cleaned/data.yaml.",
+        help="Dataset yaml. The default tune preset targets training/dataset_prepared_v4_tune_cleaned/data.yaml.",
     )
     parser.add_argument("--weights", default=defaults["weights"])
     parser.add_argument("--epochs", type=int, default=defaults["epochs"])
@@ -208,7 +210,7 @@ def main() -> None:
         "batch": args.batch,
         "imgsz": args.imgsz,
         "name": args.name,
-        "project": "runs/train",
+        "project": str(training_path("runs", "train")),
         "device": device,
         "cache": cache,
         "amp": True,
@@ -248,7 +250,7 @@ def main() -> None:
     model.train(**train_kwargs)
 
     print("\nTraining complete.")
-    print(f"Best weights: runs/train/{args.name}/weights/best.pt")
+    print(f"Best weights: {training_path('runs', 'train', args.name, 'weights', 'best.pt')}")
     print("Review validation results before promoting weights to the production model path.")
 
 

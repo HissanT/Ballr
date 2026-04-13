@@ -5,9 +5,10 @@ from typing import Any, Optional
 
 import numpy as np
 
+from common.ballr_utils import model_path
 from ball_tracker_tracking import BallTrack
 
-POSE_MODEL_PATH = "yolo11n-pose.pt"
+POSE_MODEL_PATH = str(model_path("yolo11n-pose.pt"))
 POSE_CONF_THRESHOLD = 0.35
 POSE_IMG_SIZE = 640
 POSE_KEYPOINT_CONF_THRESHOLD = 0.35

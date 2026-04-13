@@ -1,13 +1,12 @@
-from pathlib import Path
-
 import numpy as np
 from PIL import Image
 
+from common.ballr_utils import asset_path
 from ball_tracker import render_target_reference_rgb
 
 
 def load_reference_image(name: str) -> np.ndarray:
-    path = Path(__file__).resolve().parents[1] / name
+    path = asset_path(name)
     return np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
 
 

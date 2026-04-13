@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from review_queue import (
+from data_tools.review_queue import (
     DatasetReviewItem,
     NormalizedBox,
     collect_external_import_specs,
@@ -132,8 +132,8 @@ def test_import_external_yolo_dataset_copies_filtered_files_and_appends_manifest
         def __init__(self, _model_path: str):
             pass
 
-    monkeypatch.setattr("review_queue.load_yolo_model", lambda _model_path: FakeYOLO(_model_path))
-    monkeypatch.setattr("review_queue.load_model_predictions", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("data_tools.review_queue.load_yolo_model", lambda _model_path: FakeYOLO(_model_path))
+    monkeypatch.setattr("data_tools.review_queue.load_model_predictions", lambda *_args, **_kwargs: [])
 
     import_external_yolo_dataset(
         source_root=source_root,

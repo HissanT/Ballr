@@ -5,7 +5,12 @@ from pathlib import Path
 
 import cv2
 
-from ball_tracker_juggle_dataset import LABEL_OPTIONS, load_manifest, manifest_path, save_manifest
+from ball_tracker_juggle_dataset import (
+    LABEL_OPTIONS,
+    load_manifest,
+    manifest_path,
+    save_manifest,
+)
 
 WINDOW_NAME = "Juggle Candidate Review"
 KEY_TO_LABEL = {

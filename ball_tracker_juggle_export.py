@@ -8,7 +8,13 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from ball_tracker_juggle_dataset import JuggleCandidateRecord, load_manifest, manifest_path, save_manifest
+from common.ballr_utils import build_gamma_lut, ensure_dir, parse_source, preprocess_frame, training_path
+from ball_tracker_juggle_dataset import (
+    JuggleCandidateRecord,
+    load_manifest,
+    manifest_path,
+    save_manifest,
+)
 from ball_tracker_juggling import (
     FEATURE_NAMES,
     JUGGLE_LOOKAHEAD_FRAMES,
@@ -17,7 +23,13 @@ from ball_tracker_juggling import (
     load_juggle_event_classifier,
     update_juggle_state,
 )
-from ball_tracker_pose import POSE_CONF_THRESHOLD, POSE_IMG_SIZE, POSE_MODEL_PATH, PoseState, update_pose_state
+from ball_tracker_pose import (
+    POSE_CONF_THRESHOLD,
+    POSE_IMG_SIZE,
+    POSE_MODEL_PATH,
+    PoseState,
+    update_pose_state,
+)
 from ball_tracker_rendering import mirror_frame
 from ball_tracker_tracking import (
     CANDIDATE_CONF_THRESHOLD,
@@ -33,7 +45,6 @@ from ball_tracker_tracking import (
     predict_track,
     update_track,
 )
-from ballr_utils import build_gamma_lut, ensure_dir, parse_source, preprocess_frame
 
 
 def _select_device():
@@ -82,7 +93,11 @@ def _candidate_frames(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export classified juggle reversal candidates")
     parser.add_argument("--source", default="0", help="Webcam index or video file / stream URL")
-    parser.add_argument("--output", default="dataset/juggle_candidates", help="Export root directory")
+    parser.add_argument(
+        "--output",
+        default=str(training_path("dataset", "juggle_candidates")),
+        help="Export root directory",
+    )
     parser.add_argument("--session", help="Optional session name")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
