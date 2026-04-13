@@ -1,0 +1,39 @@
+{
+  "format": "coreml",
+  "task": "object_detection",
+  "weights_path": "/mnt/c/Users/hissa/Desktop/Ballr/models/ballr_v4_tune_cleaned.pt",
+  "package_path": "/mnt/c/Users/hissa/Desktop/Ballr/models/coreml/ballr_v4_tune_cleaned.mlpackage",
+  "input": {
+    "type": "image",
+    "color_layout": "RGB",
+    "shape": [
+      1,
+      3,
+      768,
+      768
+    ],
+    "preprocess": "letterbox_preserve_aspect_ratio"
+  },
+  "output": {
+    "includes_nms": true,
+    "class_labels": {
+      "0": "soccer-ball"
+    },
+    "coordinate_space": "model_canvas"
+  },
+  "ballr_runtime_defaults": {
+    "confidence_threshold": 0.32,
+    "iou_threshold": 0.35,
+    "ball_class_id": 0
+  },
+  "frontend_notes": {
+    "vision_crop_and_scale": "scaleFit",
+    "pass_capture_orientation": true,
+    "mirror_preview_only": true,
+    "map_boxes_back_to_preview": true
+  },
+  "export": {
+    "imgsz": 768,
+    "int8": false
+  }
+}
