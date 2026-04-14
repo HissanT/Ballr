@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import SwiftUI
 import UIKit
@@ -6,13 +7,7 @@ import UIKit
 struct TargetDrillCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
-    @State private var gameState = TargetDrillGameState()
-    @State private var ballFoundStartedAt: Date?
-    @State private var countdownStartedAt: Date?
-    @State private var startPhase: BallrDrillStartPhase = .readiness
-
-    private let requiredBallLockSeconds: TimeInterval = 3.0
-    private let countdownDuration: TimeInterval = 4.0
+    @StateObject private var coordinator = TargetDrillCoordinator()
 
     var body: some View {
         GeometryReader { geometry in
@@ -26,11 +21,7 @@ struct TargetDrillCameraView: View {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
 
-                TargetDrillPlayOverlay(
-                    gameState: gameState,
-                    ballDisplayRect: ballDisplayRect,
-                    overlayState: cameraController.overlayState
-                )
+                TargetDrillRenderSurface(coordinator: coordinator)
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
@@ -53,58 +44,198 @@ struct TargetDrillCameraView: View {
                     )
                 }
 
-                if startPhase == .countdown, let countdownStartedAt {
+                if coordinator.startPhase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
-                } else if startPhase == .readiness && cameraController.errorMessage == nil {
-                    BallrDrillReadinessOverlay(ballFoundStartedAt: ballFoundStartedAt)
+                } else if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
+                    BallrDrillReadinessOverlay(ballFoundStartedAt: coordinator.ballFoundStartedAt)
                 }
             }
             .statusBarHidden(true)
             .onAppear {
-                ballFoundStartedAt = nil
-                countdownStartedAt = nil
-                startPhase = .readiness
                 BallrOrientationController.lockDribblingLandscape()
-                gameState.prepare(in: geometry.size)
+                coordinator.reset(in: geometry.size)
+                cameraController.publishesTrackingFramesToSwiftUI = false
+                cameraController.onTrackingFrame = { [weak coordinator, weak cameraController] frame in
+                    guard let cameraController else {
+                        return
+                    }
+                    coordinator?.handle(frame: frame, cameraController: cameraController)
+                }
                 cameraController.start()
             }
             .onDisappear {
+                cameraController.onTrackingFrame = nil
+                cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
                 BallrOrientationController.restoreDefaultOrientation()
             }
             .onChange(of: geometry.size) { _, newSize in
-                gameState.prepare(in: newSize, forceRespawn: true)
-            }
-            .onReceive(cameraController.$overlayState) { overlayState in
-                let timestamp = Date()
-                updateStartGate(isTracking: overlayState.isTracking, timestamp: timestamp)
-
-                guard startPhase == .live else {
-                    return
-                }
-
-                let event = gameState.step(
-                    overlayState: overlayState,
-                    ballDisplayRect: displayRect(for: overlayState),
-                    in: geometry.size,
-                    timestamp: timestamp
-                )
-                if event == .hit {
-                    TargetDrillSoundPlayer.playScore()
-                }
+                coordinator.prepare(in: newSize, forceRespawn: true)
             }
         }
     }
 
-    private var ballDisplayRect: CGRect? {
-        displayRect(for: cameraController.overlayState)
+    private var topBar: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("LEVEL 3")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .tracking(1.8)
+                    .foregroundStyle(Color.yellow)
+                Text("BALL BLAST")
+                    .font(.system(size: 23, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                TargetDrillHudChip(title: "SCORE", value: "\(coordinator.score)", tint: .yellow)
+                TargetDrillHudChip(title: "STREAK", value: "\(coordinator.hitStreak)", tint: .orange)
+                TargetDrillHudChip(
+                    title: coordinator.trackingStatusText,
+                    value: coordinator.isTracking ? "LIVE" : "SCAN",
+                    tint: coordinator.isTracking ? .green : .white
+                )
+            }
+        }
     }
 
-    private func displayRect(for overlayState: BallTrackerOverlayState) -> CGRect? {
+    private var bottomInstruction: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Hit the target")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                Text("Move the ball through the ring before it fades.")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+
+            Spacer()
+
+            Text(coordinator.lastEventText)
+                .font(.system(size: 17, weight: .black, design: .rounded))
+                .foregroundStyle(coordinator.lastEventIsPositive ? Color.yellow : .white.opacity(0.72))
+                .padding(.horizontal, 14)
+                .frame(height: 38)
+                .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private final class TargetDrillCoordinator: ObservableObject {
+    @Published private(set) var startPhase: BallrDrillStartPhase = .readiness
+    @Published private(set) var ballFoundStartedAt: Date?
+    @Published private(set) var countdownStartedAt: Date?
+    @Published private(set) var score = 0
+    @Published private(set) var hitStreak = 0
+    @Published private(set) var lastEventText = "READY"
+    @Published private(set) var lastEventIsPositive = true
+    @Published private(set) var isTracking = false
+    @Published private(set) var trackingStatusText = "SEARCHING"
+
+    private let requiredBallLockSeconds: TimeInterval = 3.0
+    private let countdownDuration: TimeInterval = 4.0
+
+    private var gameState = TargetDrillGameState()
+    private var size: CGSize = .zero
+    private weak var renderView: TargetDrillRenderView?
+
+    func attach(renderView: TargetDrillRenderView) {
+        self.renderView = renderView
+        renderView.update(
+            ballDisplayRect: nil,
+            isTracking: isTracking,
+            target: gameState.target,
+            scorePopups: gameState.scorePopups
+        )
+    }
+
+    func reset(in size: CGSize) {
+        gameState = TargetDrillGameState()
+        startPhase = .readiness
+        ballFoundStartedAt = nil
+        countdownStartedAt = nil
+        score = 0
+        hitStreak = 0
+        lastEventText = "READY"
+        lastEventIsPositive = true
+        isTracking = false
+        trackingStatusText = "SEARCHING"
+        prepare(in: size, forceRespawn: true)
+    }
+
+    func prepare(in size: CGSize, forceRespawn: Bool = false) {
+        self.size = size
+        gameState.prepare(in: size, forceRespawn: forceRespawn)
+        renderView?.update(
+            ballDisplayRect: nil,
+            isTracking: isTracking,
+            target: gameState.target,
+            scorePopups: gameState.scorePopups
+        )
+    }
+
+    func handle(frame: BallTrackerFrame, cameraController: BallTrackerCameraController) {
+        let overlayState = frame.overlayState
+        let ballDisplayRect = displayRect(for: overlayState, cameraController: cameraController)
+        updateTrackingStatus(from: overlayState)
+        updateStartGate(isTracking: overlayState.isTracking, timestamp: frame.timestamp)
+
+        if startPhase == .live {
+            let event = gameState.step(
+                overlayState: overlayState,
+                ballDisplayRect: ballDisplayRect,
+                in: size,
+                timestamp: frame.timestamp
+            )
+            if event == .hit {
+                TargetDrillSoundPlayer.playScore()
+            }
+            syncHudFromGameState()
+        }
+
+        renderView?.update(
+            ballDisplayRect: ballDisplayRect,
+            isTracking: overlayState.isTracking,
+            target: gameState.target,
+            scorePopups: gameState.scorePopups
+        )
+    }
+
+    private func displayRect(
+        for overlayState: BallTrackerOverlayState,
+        cameraController: BallTrackerCameraController
+    ) -> CGRect? {
         guard let normalizedRect = overlayState.normalizedRect else {
             return nil
         }
         return cameraController.displayRect(for: normalizedRect)
+    }
+
+    private func updateTrackingStatus(from overlayState: BallTrackerOverlayState) {
+        if isTracking != overlayState.isTracking {
+            isTracking = overlayState.isTracking
+        }
+
+        let statusText = overlayState.statusText.uppercased()
+        if trackingStatusText != statusText {
+            trackingStatusText = statusText
+        }
     }
 
     private func updateStartGate(isTracking: Bool, timestamp: Date) {
@@ -136,175 +267,266 @@ struct TargetDrillCameraView: View {
         }
     }
 
-    private var topBar: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LEVEL 3")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(1.8)
-                    .foregroundStyle(Color.yellow)
-                Text("BALL BLAST")
-                    .font(.system(size: 23, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-            }
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                TargetDrillHudChip(title: "SCORE", value: "\(gameState.score)", tint: .yellow)
-                TargetDrillHudChip(title: "STREAK", value: "\(gameState.hitStreak)", tint: .orange)
-                TargetDrillHudChip(
-                    title: cameraController.overlayState.statusText.uppercased(),
-                    value: cameraController.overlayState.isTracking ? "LIVE" : "SCAN",
-                    tint: cameraController.overlayState.isTracking ? .green : .white
-                )
-            }
+    private func syncHudFromGameState() {
+        if score != gameState.score {
+            score = gameState.score
         }
-    }
-
-    private var bottomInstruction: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Hit the target")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Move the ball through the ring before it fades.")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-            }
-
-            Spacer()
-
-            Text(gameState.lastEventText)
-                .font(.system(size: 17, weight: .black, design: .rounded))
-                .foregroundStyle(gameState.lastEventIsPositive ? Color.yellow : .white.opacity(0.72))
-                .padding(.horizontal, 14)
-                .frame(height: 38)
-                .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 8))
+        if hitStreak != gameState.hitStreak {
+            hitStreak = gameState.hitStreak
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 8))
+        if lastEventText != gameState.lastEventText {
+            lastEventText = gameState.lastEventText
+        }
+        if lastEventIsPositive != gameState.lastEventIsPositive {
+            lastEventIsPositive = gameState.lastEventIsPositive
+        }
     }
 }
 
-private struct TargetDrillPlayOverlay: View {
-    let gameState: TargetDrillGameState
-    let ballDisplayRect: CGRect?
-    let overlayState: BallTrackerOverlayState
+private struct TargetDrillRenderSurface: UIViewRepresentable {
+    let coordinator: TargetDrillCoordinator
 
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            ZStack(alignment: .topLeading) {
-                if let target = gameState.target {
-                    TargetRingView(
-                        radius: target.radius,
-                        alpha: gameState.targetAlpha(at: timeline.date),
-                        ageProgress: gameState.targetAgeProgress(at: timeline.date)
-                    )
-                    .frame(width: target.radius * 2, height: target.radius * 2)
-                    .position(target.center)
-                }
+    func makeUIView(context: Context) -> TargetDrillRenderView {
+        let view = TargetDrillRenderView()
+        coordinator.attach(renderView: view)
+        return view
+    }
 
-                ForEach(gameState.scorePopups) { popup in
-                    TargetDrillScorePopupView(popup: popup, timestamp: timeline.date)
-                }
-
-                if let ballDisplayRect {
-                    Circle()
-                        .stroke(Color.white, lineWidth: 2.5)
-                        .frame(width: ballDisplayRect.width, height: ballDisplayRect.height)
-                        .position(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
-                        .shadow(color: .black.opacity(0.45), radius: 6, x: 0, y: 0)
-
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 10, height: 10)
-                        .position(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
-                }
-
-                if !overlayState.isTracking {
-                    Text("Find the ball")
-                        .font(.system(size: 15, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
-                        .position(x: 86, y: 92)
-                }
-            }
-        }
-        .allowsHitTesting(false)
+    func updateUIView(_ uiView: TargetDrillRenderView, context: Context) {
+        coordinator.attach(renderView: uiView)
     }
 }
 
-private struct TargetDrillScorePopupView: View {
-    let popup: TargetDrillScorePopup
-    let timestamp: Date
+private final class TargetDrillRenderView: UIView {
+    private let targetFillLayer = CAShapeLayer()
+    private let targetOuterLayer = CAShapeLayer()
+    private let targetInnerLayer = CAShapeLayer()
+    private let targetProgressLayer = CAShapeLayer()
+    private let ballRingLayer = CAShapeLayer()
+    private let ballCenterLayer = CAShapeLayer()
+    private let promptLabel = UILabel()
 
-    var body: some View {
-        let progress = popup.progress(at: timestamp)
-        let eased = smoothStep(progress)
-        let destination = popup.destination
-        let x = popup.center.x + (destination.x - popup.center.x) * eased
-        let y = popup.center.y + (destination.y - popup.center.y) * eased
+    private var popupLayers: [UUID: CATextLayer] = [:]
+    private var displayLink: CADisplayLink?
+    private var ballDisplayRect: CGRect?
+    private var isTracking = false
+    private var target: TargetDrillTarget?
+    private var scorePopups: [TargetDrillScorePopup] = []
 
-        Text(popup.points > 0 ? "+\(popup.points)" : "\(popup.points)")
-            .font(.system(size: 38, weight: .black, design: .rounded))
-            .foregroundStyle(popup.points > 0 ? Color.yellow : Color.white)
-            .shadow(color: .black.opacity(0.7), radius: 7, x: 0, y: 2)
-            .scaleEffect(1.0 + CGFloat(1.0 - progress) * 0.18)
-            .opacity(1.0 - progress)
-            .position(x: x, y: y)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        configureLayers()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        displayLink?.invalidate()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            displayLink?.invalidate()
+            displayLink = nil
+        } else if displayLink == nil {
+            let displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
+            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 30)
+            displayLink.add(to: .main, forMode: .common)
+            self.displayLink = displayLink
+        }
+    }
+
+    func update(
+        ballDisplayRect: CGRect?,
+        isTracking: Bool,
+        target: TargetDrillTarget?,
+        scorePopups: [TargetDrillScorePopup]
+    ) {
+        self.ballDisplayRect = ballDisplayRect
+        self.isTracking = isTracking
+        self.target = target
+        self.scorePopups = scorePopups
+        render(date: Date())
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        render(date: Date())
+    }
+
+    private func configureLayers() {
+        targetFillLayer.fillColor = UIColor.black.withAlphaComponent(0.22).cgColor
+        targetOuterLayer.fillColor = UIColor.clear.cgColor
+        targetOuterLayer.strokeColor = UIColor.yellow.withAlphaComponent(0.45).cgColor
+        targetOuterLayer.lineWidth = 12
+        targetInnerLayer.fillColor = UIColor.clear.cgColor
+        targetInnerLayer.strokeColor = UIColor.orange.cgColor
+        targetInnerLayer.lineWidth = 5
+        targetProgressLayer.fillColor = UIColor.clear.cgColor
+        targetProgressLayer.strokeColor = UIColor.white.cgColor
+        targetProgressLayer.lineWidth = 5
+        targetProgressLayer.lineCap = .round
+        targetOuterLayer.shadowColor = UIColor.yellow.cgColor
+        targetOuterLayer.shadowOpacity = 0.35
+        targetOuterLayer.shadowRadius = 16
+        targetOuterLayer.shadowOffset = .zero
+
+        ballRingLayer.fillColor = UIColor.clear.cgColor
+        ballRingLayer.strokeColor = UIColor.white.cgColor
+        ballRingLayer.lineWidth = 2.5
+        ballRingLayer.shadowColor = UIColor.black.cgColor
+        ballRingLayer.shadowOpacity = 0.45
+        ballRingLayer.shadowRadius = 6
+        ballRingLayer.shadowOffset = .zero
+        ballCenterLayer.fillColor = UIColor.orange.cgColor
+
+        [
+            targetFillLayer,
+            targetOuterLayer,
+            targetInnerLayer,
+            targetProgressLayer,
+            ballRingLayer,
+            ballCenterLayer
+        ].forEach(layer.addSublayer)
+
+        promptLabel.text = "Find the ball"
+        promptLabel.font = .systemFont(ofSize: 15, weight: .black)
+        promptLabel.textColor = .white
+        promptLabel.textAlignment = .center
+        promptLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        promptLabel.layer.cornerRadius = 8
+        promptLabel.layer.masksToBounds = true
+        addSubview(promptLabel)
+    }
+
+    @objc private func renderFrame() {
+        render(date: Date())
+    }
+
+    private func render(date: Date) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        renderTarget(date: date)
+        renderBall()
+        renderPopups(date: date)
+        promptLabel.isHidden = isTracking
+        promptLabel.frame = CGRect(x: 24, y: 75, width: 124, height: 34)
+        CATransaction.commit()
+    }
+
+    private func renderTarget(date: Date) {
+        guard let target else {
+            [targetFillLayer, targetOuterLayer, targetInnerLayer, targetProgressLayer].forEach {
+                $0.isHidden = true
+                $0.path = nil
+            }
+            return
+        }
+
+        let alpha = CGFloat(1.0 - targetAgeProgress(for: target, at: date))
+        let rect = CGRect(
+            x: target.center.x - target.radius,
+            y: target.center.y - target.radius,
+            width: target.radius * 2,
+            height: target.radius * 2
+        )
+        let innerRect = rect.insetBy(dx: 8, dy: 8)
+        let progressRadius = max(target.radius - 16, 1)
+        let remainingProgress = max(CGFloat(0.02), 1.0 - CGFloat(targetAgeProgress(for: target, at: date)))
+
+        targetFillLayer.isHidden = false
+        targetOuterLayer.isHidden = false
+        targetInnerLayer.isHidden = false
+        targetProgressLayer.isHidden = false
+        targetFillLayer.path = UIBezierPath(ovalIn: rect).cgPath
+        targetOuterLayer.path = UIBezierPath(ovalIn: rect).cgPath
+        targetInnerLayer.path = UIBezierPath(ovalIn: innerRect).cgPath
+        targetProgressLayer.path = UIBezierPath(
+            arcCenter: target.center,
+            radius: progressRadius,
+            startAngle: -.pi / 2,
+            endAngle: -.pi / 2 + (.pi * 2 * remainingProgress),
+            clockwise: true
+        ).cgPath
+        targetFillLayer.opacity = Float(alpha)
+        targetOuterLayer.opacity = Float(alpha)
+        targetInnerLayer.opacity = Float(alpha)
+        targetProgressLayer.opacity = Float(alpha)
+    }
+
+    private func renderBall() {
+        guard let ballDisplayRect else {
+            ballRingLayer.isHidden = true
+            ballCenterLayer.isHidden = true
+            ballRingLayer.path = nil
+            ballCenterLayer.path = nil
+            return
+        }
+
+        ballRingLayer.isHidden = false
+        ballCenterLayer.isHidden = false
+        ballRingLayer.path = UIBezierPath(ovalIn: ballDisplayRect).cgPath
+        ballCenterLayer.path = UIBezierPath(
+            ovalIn: CGRect(
+                x: ballDisplayRect.midX - 5,
+                y: ballDisplayRect.midY - 5,
+                width: 10,
+                height: 10
+            )
+        ).cgPath
+    }
+
+    private func renderPopups(date: Date) {
+        let activePopups = scorePopups.filter { $0.isActive(at: date) }
+        let activeIDs = Set(activePopups.map(\.id))
+        let inactiveIDs = popupLayers.keys.filter { !activeIDs.contains($0) }
+        for id in inactiveIDs {
+            popupLayers[id]?.removeFromSuperlayer()
+            popupLayers[id] = nil
+        }
+
+        for popup in activePopups {
+            let layer = popupLayers[popup.id] ?? makePopupLayer(for: popup)
+            let progress = popup.progress(at: date)
+            let eased = smoothStep(progress)
+            let x = popup.center.x + (popup.destination.x - popup.center.x) * eased
+            let y = popup.center.y + (popup.destination.y - popup.center.y) * eased
+            let scale = 1.0 + CGFloat(1.0 - progress) * 0.18
+            let size = CGSize(width: 120 * scale, height: 54 * scale)
+            layer.frame = CGRect(x: x - size.width * 0.5, y: y - size.height * 0.5, width: size.width, height: size.height)
+            layer.opacity = Float(1.0 - progress)
+        }
+    }
+
+    private func makePopupLayer(for popup: TargetDrillScorePopup) -> CATextLayer {
+        let textLayer = CATextLayer()
+        textLayer.contentsScale = traitCollection.displayScale
+        textLayer.alignmentMode = .center
+        textLayer.string = popup.points > 0 ? "+\(popup.points)" : "\(popup.points)"
+        textLayer.fontSize = 38
+        textLayer.foregroundColor = (popup.points > 0 ? UIColor.yellow : UIColor.white).cgColor
+        textLayer.shadowColor = UIColor.black.cgColor
+        textLayer.shadowOpacity = 0.7
+        textLayer.shadowRadius = 7
+        textLayer.shadowOffset = CGSize(width: 0, height: 2)
+        layer.addSublayer(textLayer)
+        popupLayers[popup.id] = textLayer
+        return textLayer
+    }
+
+    private func targetAgeProgress(for target: TargetDrillTarget, at date: Date) -> Double {
+        min(max(date.timeIntervalSince(target.spawnedAt) / TargetDrillGameState.targetLifetime, 0), 1)
     }
 
     private func smoothStep(_ value: Double) -> CGFloat {
         let clamped = min(max(value, 0), 1)
         return CGFloat(clamped * clamped * (3 - 2 * clamped))
-    }
-}
-
-private struct TargetRingView: View {
-    let radius: CGFloat
-    let alpha: Double
-    let ageProgress: Double
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.black.opacity(0.22 * alpha))
-
-            Circle()
-                .stroke(Color.yellow.opacity(0.45 * alpha), lineWidth: 12)
-
-            Circle()
-                .stroke(Color.orange.opacity(alpha), lineWidth: 5)
-                .padding(8)
-
-            Circle()
-                .trim(from: 0, to: max(0.02, 1.0 - ageProgress))
-                .stroke(
-                    Color.white.opacity(alpha),
-                    style: StrokeStyle(lineWidth: 5, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .padding(16)
-
-            Image(systemName: "scope")
-                .font(.system(size: max(24, radius * 0.58), weight: .black))
-                .foregroundStyle(Color.yellow.opacity(alpha))
-        }
-        .shadow(color: Color.yellow.opacity(0.35 * alpha), radius: 16, x: 0, y: 0)
     }
 }
 
@@ -403,6 +625,8 @@ private struct TargetDrillErrorOverlay: View {
 }
 
 private struct TargetDrillGameState {
+    static let targetLifetime: TimeInterval = 4.0
+
     var target: TargetDrillTarget?
     var scorePopups: [TargetDrillScorePopup] = []
     var score = 0
@@ -411,7 +635,6 @@ private struct TargetDrillGameState {
     var lastEventText = "READY"
     var lastEventIsPositive = true
 
-    private let targetLifetime: TimeInterval = 4.0
     private let fullValueWindow: TimeInterval = 2.0
     private let scoreStep: TimeInterval = 0.4
     private let scoreValue = 5
@@ -442,7 +665,7 @@ private struct TargetDrillGameState {
             return nil
         }
 
-        if targetAge(for: currentTarget, at: timestamp) >= targetLifetime {
+        if targetAge(for: currentTarget, at: timestamp) >= Self.targetLifetime {
             misses += 1
             hitStreak = 0
             lastEventText = "-1"
@@ -518,7 +741,7 @@ private struct TargetDrillGameState {
     }
 
     private func targetAgeProgress(for target: TargetDrillTarget, at timestamp: Date) -> Double {
-        min(max(targetAge(for: target, at: timestamp) / targetLifetime, 0), 1)
+        min(max(targetAge(for: target, at: timestamp) / Self.targetLifetime, 0), 1)
     }
 
     private func targetAge(for target: TargetDrillTarget, at timestamp: Date) -> TimeInterval {

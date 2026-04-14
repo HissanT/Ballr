@@ -5,6 +5,11 @@ import SwiftUI
 import UIKit
 import Vision
 
+struct BallTrackerFrame {
+    let overlayState: BallTrackerOverlayState
+    let timestamp: Date
+}
+
 final class BallTrackerCameraController: NSObject, ObservableObject {
     @Published private(set) var overlayState: BallTrackerOverlayState = .idle
     @Published private(set) var errorMessage: String?
@@ -13,18 +18,29 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
 
     let session = AVCaptureSession()
     let previewLayer: AVCaptureVideoPreviewLayer
+    var onTrackingFrame: ((BallTrackerFrame) -> Void)?
+    var publishesTrackingFramesToSwiftUI = true
 
     private let sessionQueue = DispatchQueue(label: "ballr.dribbling.session")
     private let videoOutputQueue = DispatchQueue(label: "ballr.dribbling.output")
     private let videoOutput = AVCaptureVideoDataOutput()
     private let tracker = BallTrackerEngine()
     private let processingSemaphore = DispatchSemaphore(value: 1)
+    private let throttledTrackingPublishInterval: TimeInterval = 0.15
 
     private var resources: BallTrackerResources?
     private var request: VNCoreMLRequest?
     private var videoInput: AVCaptureDeviceInput?
     private var isConfigured = false
     private var isObservingOrientationChanges = false
+    private var lastTrackingPublishTimestamp = Date.distantPast
+    private var lastPublishedTrackingStatus: Bool?
+    #if DEBUG
+    private var processedFrameCount = 0
+    private var droppedFrameCount = 0
+    private var totalVisionDuration: TimeInterval = 0
+    private var lastDiagnosticsLogTimestamp = Date()
+    #endif
 
     override init() {
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
@@ -91,6 +107,8 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
         publish {
             $0.overlayState = .idle
             $0.isStarting = false
+            $0.onTrackingFrame = nil
+            $0.publishesTrackingFramesToSwiftUI = true
         }
     }
 
@@ -268,11 +286,39 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
         let observations = (request.results as? [VNRecognizedObjectObservation]) ?? []
         let overlayState = tracker.process(observations: observations, config: resources.config)
         logFilteredObservationsIfNeeded(observations, overlayState: overlayState, config: resources.config)
+        let frame = BallTrackerFrame(overlayState: overlayState, timestamp: Date())
+        deliverTrackingFrame(frame)
 
-        publish {
-            $0.errorMessage = nil
-            $0.overlayState = overlayState
+        if shouldPublishTrackingFrameToSwiftUI(frame) {
+            publish {
+                $0.errorMessage = nil
+                $0.overlayState = overlayState
+            }
         }
+    }
+
+    private func deliverTrackingFrame(_ frame: BallTrackerFrame) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onTrackingFrame?(frame)
+        }
+    }
+
+    private func shouldPublishTrackingFrameToSwiftUI(_ frame: BallTrackerFrame) -> Bool {
+        guard !publishesTrackingFramesToSwiftUI else {
+            lastTrackingPublishTimestamp = frame.timestamp
+            lastPublishedTrackingStatus = frame.overlayState.isTracking
+            return true
+        }
+
+        let statusChanged = lastPublishedTrackingStatus != frame.overlayState.isTracking
+        let publishIntervalElapsed = frame.timestamp.timeIntervalSince(lastTrackingPublishTimestamp) >= throttledTrackingPublishInterval
+        guard statusChanged || publishIntervalElapsed else {
+            return false
+        }
+
+        lastTrackingPublishTimestamp = frame.timestamp
+        lastPublishedTrackingStatus = frame.overlayState.isTracking
+        return true
     }
 
     private func startObservingOrientationChanges() {
@@ -363,9 +409,11 @@ extension BallTrackerCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
         }
 
         guard processingSemaphore.wait(timeout: .now()) == .success else {
+            logDroppedFrameIfNeeded()
             return
         }
         defer { processingSemaphore.signal() }
+        let startedAt = Date()
 
         let orientation = resources.config.frontendNotes.passCaptureOrientation
             ? CGImagePropertyOrientation(videoOrientation: connection.videoOrientation)
@@ -378,11 +426,49 @@ extension BallTrackerCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
 
         do {
             try handler.perform([request])
+            logVisionDurationIfNeeded(Date().timeIntervalSince(startedAt))
         } catch {
             publish {
                 $0.errorMessage = "Vision request failed: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func logDroppedFrameIfNeeded() {
+        #if DEBUG
+        droppedFrameCount += 1
+        logTrackingDiagnosticsIfNeeded()
+        #endif
+    }
+
+    private func logVisionDurationIfNeeded(_ duration: TimeInterval) {
+        #if DEBUG
+        processedFrameCount += 1
+        totalVisionDuration += duration
+        logTrackingDiagnosticsIfNeeded()
+        #endif
+    }
+
+    private func logTrackingDiagnosticsIfNeeded() {
+        #if DEBUG
+        let now = Date()
+        guard now.timeIntervalSince(lastDiagnosticsLogTimestamp) >= 3.0 else {
+            return
+        }
+
+        let averageVisionMS = processedFrameCount == 0
+            ? 0
+            : (totalVisionDuration / Double(processedFrameCount)) * 1000
+        print(
+            "BallTracker diagnostics: processed=\(processedFrameCount), " +
+            "dropped=\(droppedFrameCount), avgVisionMS=\(String(format: "%.1f", averageVisionMS)), " +
+            "swiftUIPublishEveryFrame=\(publishesTrackingFramesToSwiftUI)"
+        )
+        processedFrameCount = 0
+        droppedFrameCount = 0
+        totalVisionDuration = 0
+        lastDiagnosticsLogTimestamp = now
+        #endif
     }
 }
 
