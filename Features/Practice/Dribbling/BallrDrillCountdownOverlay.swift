@@ -79,29 +79,43 @@ struct BallrDrillReadinessOverlay: View {
                 Color.black.opacity(0.86)
                     .ignoresSafeArea()
 
-                VStack(spacing: 18) {
-                    Text("Put the phone sideways")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
+                if ballFoundStartedAt == nil {
+                    VStack(spacing: 14) {
+                        Text("Find the ball")
+                            .font(.system(size: 36, weight: .black, design: .rounded))
+                            .foregroundStyle(Color.yellow)
 
-                    Text("Keep the ball in frame.")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.74))
-
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.white.opacity(0.16))
-
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.yellow)
-                            .frame(width: 220 * progress)
+                        Text("Put the phone sideways and keep the ball in frame.")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .multilineTextAlignment(.center)
                     }
-                    .frame(width: 220, height: 12)
+                    .padding(.horizontal, 24)
+                } else {
+                    VStack(spacing: 18) {
+                        Text("Put the phone sideways")
+                            .font(.system(size: 28, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
 
-                    Text(ballFoundStartedAt == nil ? "Find the ball" : "Hold still")
-                        .font(.system(size: 13, weight: .black, design: .rounded))
-                        .tracking(1.6)
-                        .foregroundStyle(Color.yellow)
+                        Text("Keep the ball in frame.")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.74))
+
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.white.opacity(0.16))
+
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.yellow)
+                                .frame(width: 220 * progress)
+                        }
+                        .frame(width: 220, height: 12)
+
+                        Text("Hold still")
+                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .tracking(1.6)
+                            .foregroundStyle(Color.yellow)
+                    }
                 }
             }
             .allowsHitTesting(false)

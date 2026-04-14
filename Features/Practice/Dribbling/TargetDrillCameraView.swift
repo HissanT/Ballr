@@ -8,6 +8,7 @@ struct TargetDrillCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
     @StateObject private var coordinator = TargetDrillCoordinator()
+    @State private var showsQuitConfirmation = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -27,7 +28,6 @@ struct TargetDrillCameraView: View {
                 VStack(spacing: 0) {
                     topBar
                     Spacer()
-                    bottomInstruction
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -72,68 +72,42 @@ struct TargetDrillCameraView: View {
             .onChange(of: geometry.size) { _, newSize in
                 coordinator.prepare(in: newSize, forceRespawn: true)
             }
+            .alert("Are you sure you want to quit the drill?", isPresented: $showsQuitConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Quit", role: .destructive) {
+                    dismiss()
+                }
+            }
         }
     }
 
     private var topBar: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top) {
+            TargetDrillHudChip(
+                title: "STREAK",
+                value: "\(coordinator.hitStreak)",
+                tint: .orange,
+                alignment: .leading
+            )
+            Spacer()
             Button {
-                dismiss()
+                showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 18, weight: .black))
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 46, height: 46)
+                    .background(.black.opacity(0.65), in: Circle())
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LEVEL 3")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(1.8)
-                    .foregroundStyle(Color.yellow)
-                Text("BALL BLAST")
-                    .font(.system(size: 23, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-            }
-
+            .padding(.top, 8)
             Spacer()
-
-            HStack(spacing: 8) {
-                TargetDrillHudChip(title: "SCORE", value: "\(coordinator.score)", tint: .yellow)
-                TargetDrillHudChip(title: "STREAK", value: "\(coordinator.hitStreak)", tint: .orange)
-                TargetDrillHudChip(
-                    title: coordinator.trackingStatusText,
-                    value: coordinator.isTracking ? "LIVE" : "SCAN",
-                    tint: coordinator.isTracking ? .green : .white
-                )
-            }
+            TargetDrillHudChip(
+                title: "SCORE",
+                value: "\(coordinator.score)",
+                tint: .yellow,
+                alignment: .trailing
+            )
         }
-    }
-
-    private var bottomInstruction: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Hit the target")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Move the ball through the ring before it fades.")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-            }
-
-            Spacer()
-
-            Text(coordinator.lastEventText)
-                .font(.system(size: 17, weight: .black, design: .rounded))
-                .foregroundStyle(coordinator.lastEventIsPositive ? Color.yellow : .white.opacity(0.72))
-                .padding(.horizontal, 14)
-                .frame(height: 38)
-                .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -181,7 +155,7 @@ private final class TargetDrillCoordinator: ObservableObject {
 
     func prepare(in size: CGSize, forceRespawn: Bool = false) {
         self.size = size
-        gameState.prepare(in: size, forceRespawn: forceRespawn)
+        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live)
         renderView?.update(
             ballDisplayRect: nil,
             isTracking: isTracking,
@@ -416,7 +390,13 @@ private final class TargetDrillRenderView: UIView {
         renderBall()
         renderPopups(date: date)
         promptLabel.isHidden = isTracking
-        promptLabel.frame = CGRect(x: 24, y: 75, width: 124, height: 34)
+        let promptSize = CGSize(width: 160, height: 42)
+        promptLabel.frame = CGRect(
+            x: bounds.midX - promptSize.width * 0.5,
+            y: bounds.midY - promptSize.height * 0.5,
+            width: promptSize.width,
+            height: promptSize.height
+        )
         CATransaction.commit()
     }
 
@@ -534,22 +514,23 @@ private struct TargetDrillHudChip: View {
     let title: String
     let value: String
     let tint: Color
+    let alignment: HorizontalAlignment
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .foregroundStyle(.white.opacity(0.62))
+                .font(.system(size: 16, weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 15, weight: .black, design: .rounded))
+                .font(.system(size: 36, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
         }
-        .padding(.horizontal, 11)
-        .frame(height: 46)
+        .padding(.horizontal, 18)
+        .frame(minWidth: 138, minHeight: 74, alignment: alignment == .trailing ? .trailing : .leading)
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(tint.opacity(0.86), lineWidth: 1.5)
+                .stroke(tint.opacity(0.86), lineWidth: 2)
         )
     }
 }
@@ -642,8 +623,13 @@ private struct TargetDrillGameState {
     private let lowerYFraction: CGFloat = 0.58
     private let clearance: CGFloat = 20
 
-    mutating func prepare(in size: CGSize, forceRespawn: Bool = false) {
+    mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
         guard size.width > 0, size.height > 0 else {
+            return
+        }
+
+        guard allowSpawn else {
+            target = nil
             return
         }
 
