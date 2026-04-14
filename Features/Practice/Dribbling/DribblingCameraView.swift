@@ -5,6 +5,12 @@ import UIKit
 struct DribblingCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
+    @State private var ballFoundStartedAt: Date?
+    @State private var countdownStartedAt: Date?
+    @State private var startPhase: BallrDrillStartPhase = .readiness
+
+    private let requiredBallLockSeconds: TimeInterval = 3.0
+    private let countdownDuration: TimeInterval = 4.0
 
     var body: some View {
         ZStack {
@@ -20,7 +26,6 @@ struct DribblingCameraView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                bottomInstruction
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -36,15 +41,27 @@ struct DribblingCameraView: View {
                     onDismiss: { dismiss() }
                 )
             }
+
+            if startPhase == .countdown, let countdownStartedAt {
+                BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+            } else if startPhase == .readiness && cameraController.errorMessage == nil {
+                BallrDrillReadinessOverlay(ballFoundStartedAt: ballFoundStartedAt)
+            }
         }
         .statusBarHidden(true)
         .onAppear {
+            ballFoundStartedAt = nil
+            countdownStartedAt = nil
+            startPhase = .readiness
             BallrOrientationController.lockDribblingLandscape()
             cameraController.start()
         }
         .onDisappear {
             cameraController.stop()
             BallrOrientationController.restoreDefaultOrientation()
+        }
+        .onReceive(cameraController.$overlayState) { overlayState in
+            updateStartGate(isTracking: overlayState.isTracking, timestamp: Date())
         }
     }
 
@@ -88,30 +105,41 @@ struct DribblingCameraView: View {
         }
     }
 
-    private var bottomInstruction: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Tracking Only")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Place the phone sideways and keep the ball in frame.")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.74))
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 18))
-    }
-
     private var confidenceText: String {
         guard let confidence = cameraController.overlayState.confidence else {
             return "--"
         }
 
         return String(format: "%.2f", confidence)
+    }
+
+    private func updateStartGate(isTracking: Bool, timestamp: Date) {
+        if startPhase == .live {
+            return
+        }
+
+        if startPhase == .countdown {
+            if
+                let countdownStartedAt,
+                timestamp.timeIntervalSince(countdownStartedAt) >= countdownDuration
+            {
+                startPhase = .live
+            }
+            return
+        }
+
+        guard isTracking else {
+            ballFoundStartedAt = nil
+            return
+        }
+
+        let startedAt = ballFoundStartedAt ?? timestamp
+        ballFoundStartedAt = startedAt
+
+        if timestamp.timeIntervalSince(startedAt) >= requiredBallLockSeconds {
+            countdownStartedAt = timestamp
+            startPhase = .countdown
+        }
     }
 }
 
@@ -135,19 +163,6 @@ private struct BallTrackerDetectionOverlay: View {
                         .fill(Color.orange)
                         .frame(width: 12, height: 12)
                         .position(x: displayRect.midX, y: displayRect.midY)
-
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.black.opacity(0.7))
-                        .frame(width: 110, height: 36)
-                        .overlay {
-                            Text(cameraController.overlayState.statusText.uppercased())
-                                .font(.system(size: 12, weight: .black, design: .rounded))
-                                .foregroundStyle(.white)
-                        }
-                        .position(
-                            x: max(displayRect.midX, 70),
-                            y: max(displayRect.minY - 24, 30)
-                        )
                 }
             }
         }

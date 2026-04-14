@@ -436,7 +436,12 @@ private struct LevelsHomeView: View {
                 }
             }
             .navigationDestination(item: $selectedDrill) { drill in
-                DrillPlaceholderView(drill: drill)
+                if drill.level == 3 {
+                    TargetDrillCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else {
+                    DrillPlaceholderView(drill: drill)
+                }
             }
         }
     }

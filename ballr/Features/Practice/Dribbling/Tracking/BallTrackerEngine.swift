@@ -39,8 +39,8 @@ final class BallTrackerEngine {
     private let initConfidenceThreshold: CGFloat = 0.50
     private let reacquireConfidenceThreshold: CGFloat = 0.70
     private let maxMisses = 4
-    private let centerSmoothing: CGFloat = 0.65
-    private let velocitySmoothing: CGFloat = 0.55
+    private let centerSmoothing: CGFloat = 0.82
+    private let velocitySmoothing: CGFloat = 0.70
     private let sizeSmoothing: CGFloat = 0.60
     private let trackGateRadiusMultiplier: CGFloat = 5.0
     private let trackGateMinRadius: CGFloat = 0.05
