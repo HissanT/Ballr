@@ -2,12 +2,14 @@ import numpy as np
 
 from ball_tracker import (
     BenchmarkAccumulator,
+    GAME_MODE_PRECISION_TARGET,
     LatestValueStore,
     PipelineCounters,
     ProcessedFrame,
     StageTimings,
     TargetState,
 )
+from ball_tracker_precision_target import PrecisionImpact, PrecisionTargetFrame, WallCalibration
 
 
 def test_latest_value_store_returns_newest_item_and_counts_drop():
@@ -121,3 +123,77 @@ def test_benchmark_accumulator_summarizes_juggle_metrics():
     assert summary["juggle_metrics"]["best_streak"] == 3
     assert summary["juggle_metrics"]["ground_suppressed_events"] == 1
     assert summary["juggle_metrics"]["body_part_counts"] == {"Foot": 1, "Knee": 1}
+
+
+def test_benchmark_accumulator_summarizes_precision_target_metrics():
+    accumulator = BenchmarkAccumulator(wall_started_at=3.0, wall_finished_at=4.0)
+    frame = ProcessedFrame(
+        frame_index=1,
+        frame=np.zeros((480, 640, 3), dtype=np.uint8),
+        frame_time=3.5,
+        stage_timings=StageTimings(
+            capture_ms=4.0,
+            preprocess_ms=3.0,
+            inference_ms=10.0,
+            candidate_ms=1.0,
+            tracking_ms=2.0,
+            render_ms=5.0,
+            display_ms=0.5,
+            pipeline_ms=25.5,
+        ),
+        track=None,
+        target=None,
+        score_effects=[],
+        candidates_count=1,
+        primary_candidate_confidence=0.9,
+        counters=PipelineCounters(
+            total_frames=10,
+            matched_frames=8,
+            held_frames=1,
+            active_frames=9,
+            hit_frames=1,
+        ),
+        game_mode=GAME_MODE_PRECISION_TARGET,
+        current_score=5,
+        total_score_events=1,
+        status_label="Hit scored: 5",
+        precision_target=PrecisionTargetFrame(
+            phase="live_precision_target",
+            score=5,
+            status_text="Hit scored: 5",
+            ball_spec_label="Size 5",
+            focal_length_px=2400.0,
+            bullseye_center=np.array((500.0, 400.0), dtype=np.float32),
+            wall_calibration=WallCalibration(
+                wall_distance_m=5.0,
+                impact_pixel_diameter_px=105.6,
+                impact_frame_time=2.0,
+                confidence=0.95,
+            ),
+            current_depth=None,
+            current_relative_depth_m=4.0,
+            zero_reference_depth_m=1.0,
+            last_impact=PrecisionImpact(
+                center=np.array((540.0, 420.0), dtype=np.float32),
+                radial_distance_cm=9.317,
+                dx_cm=8.333,
+                dy_cm=4.167,
+                score=5,
+                frame_time=3.2,
+            ),
+            last_score=5,
+        ),
+    )
+    accumulator.add(frame)
+
+    summary = accumulator.summary(
+        source="clip.mp4",
+        frame_size=(640, 480),
+        mode=GAME_MODE_PRECISION_TARGET,
+    )
+
+    assert summary["mode"] == GAME_MODE_PRECISION_TARGET
+    assert summary["precision_target_metrics"]["score"] == 5
+    assert summary["precision_target_metrics"]["impacts"] == 1
+    assert summary["precision_target_metrics"]["wall_distance_m"] == 5.0
+    assert summary["precision_target_metrics"]["last_score"] == 5

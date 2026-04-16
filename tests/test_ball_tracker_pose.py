@@ -3,6 +3,7 @@ import numpy as np
 from ball_tracker_pose import (
     PoseBackendResults,
     PoseObservation,
+    _hip_line_y,
     _knee_line_y,
     _point_to_segment_distance,
     update_pose_state_from_backends,
@@ -26,6 +27,15 @@ def test_knee_line_switches_to_higher_knee_when_one_leg_is_raised():
     }
 
     assert _knee_line_y(keypoints) == 200.0
+
+
+def test_hip_line_switches_to_higher_hip_when_one_side_is_raised():
+    keypoints = {
+        "left_hip": np.array((320.0, 176.0), dtype=np.float32),
+        "right_hip": np.array((350.0, 210.0), dtype=np.float32),
+    }
+
+    assert _hip_line_y(keypoints) == 176.0
 
 
 def test_point_to_segment_distance_projects_onto_thigh_segment():
@@ -73,6 +83,8 @@ def test_pose_backends_merge_mediapipe_feet_with_yolo_knees_and_hips():
     ball_track = BallTrack(
         center=np.array((320.0, 230.0), dtype=np.float32),
         velocity=np.array((0.0, 0.0), dtype=np.float32),
+        width=40.0,
+        height=40.0,
         radius=20.0,
         confidence=0.9,
         track_id=1,
@@ -93,3 +105,4 @@ def test_pose_backends_merge_mediapipe_feet_with_yolo_knees_and_hips():
     assert "left_ankle" in pose_frame.keypoints
     assert "left_knee" in pose_frame.keypoints
     assert "left_hip" in pose_frame.keypoints
+    assert pose_frame.hip_line_y == 185.5

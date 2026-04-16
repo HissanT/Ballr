@@ -26,6 +26,8 @@ def make_candidate(
         x2=int(x + radius),
         y2=int(y + radius),
         center=np.array((x, y), dtype=np.float32),
+        width=radius * 2.0,
+        height=radius * 2.0,
         radius=radius,
         confidence=confidence,
     )

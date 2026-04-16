@@ -1,5 +1,6 @@
 import argparse
 import json
+import queue
 import threading
 import time
 from collections import deque
@@ -32,6 +33,7 @@ from ball_tracker_juggling import (
     JUGGLE_PROMINENCE_RADIUS_FRACTION,
     JuggleEventPrediction,
     JuggleState,
+    load_juggle_event_classifier,
     update_juggle_state,
 )
 from ball_tracker_pose import (
@@ -48,6 +50,16 @@ from ball_tracker_pose import (
     create_pose_runtime,
     infer_pose_backends,
     update_pose_state_from_backends,
+)
+from ball_tracker_precision_target import (
+    DEFAULT_FOCAL_LENGTH_PX,
+    BallSpec,
+    PrecisionTargetFrame,
+    PrecisionTargetState,
+    draw_precision_target_mode,
+    parse_ball_spec,
+    resolve_effective_focal_length_px,
+    step_precision_target_mode,
 )
 from ball_tracker_target_mode import (
     TargetModeFrame,
@@ -92,6 +104,7 @@ except ImportError:
 
 T = TypeVar("T")
 GAME_MODE_TARGET = "target"
+GAME_MODE_PRECISION_TARGET = "precision_target"
 GAME_MODE_JUGGLE = "juggle"
 
 HUD_BASELINE_Y = 22
@@ -194,6 +207,7 @@ class TrackerRuntimeState:
     track: Optional[BallTrack] = None
     motion: Optional[BallMotionState] = None
     target_mode: TargetModeState = field(default_factory=TargetModeState)
+    precision_target: PrecisionTargetState = field(default_factory=PrecisionTargetState)
     juggle_mode: JuggleState = field(default_factory=JuggleState)
     pose: PoseState = field(default_factory=PoseState)
     next_track_id: int = 1
@@ -226,6 +240,7 @@ class ProcessedFrame:
     counters: PipelineCounters
     game_mode: str = GAME_MODE_TARGET
     target_mode: Optional[TargetModeFrame] = None
+    precision_target: Optional[PrecisionTargetFrame] = None
     pose_frame: Optional[PoseFrame] = None
     juggle_event: Optional[JuggleEventPrediction] = None
     current_score: int = 0
@@ -332,6 +347,25 @@ class BenchmarkAccumulator:
             summary["target_metrics"] = {
                 "score": self.final_frame.current_score,
             }
+        if self.final_frame is not None and mode == GAME_MODE_PRECISION_TARGET:
+            last_impact = self.final_frame.precision_target.last_impact if self.final_frame.precision_target is not None else None
+            wall_calibration = (
+                self.final_frame.precision_target.wall_calibration
+                if self.final_frame.precision_target is not None
+                else None
+            )
+            summary["precision_target_metrics"] = {
+                "score": self.final_frame.current_score,
+                "impacts": self.final_frame.total_score_events,
+                "status": self.final_frame.status_label,
+                "wall_distance_m": (
+                    None if wall_calibration is None else round(wall_calibration.wall_distance_m, 3)
+                ),
+                "last_radial_distance_cm": (
+                    None if last_impact is None else round(last_impact.radial_distance_cm, 3)
+                ),
+                "last_score": None if last_impact is None else last_impact.score,
+            }
         if self.final_frame is not None and mode == GAME_MODE_JUGGLE:
             summary["juggle_metrics"] = {
                 "current_streak": self.final_frame.current_score,
@@ -403,6 +437,39 @@ def _build_pose_predict_kwargs(device: Any, pose_imgsz: int, pose_conf: float) -
     }
 
 
+def _prompt_precision_ball_spec(
+    ball_size: Optional[str],
+    ball_diameter_cm: Optional[float],
+) -> BallSpec:
+    if ball_diameter_cm is not None:
+        return parse_ball_spec(ball_size, ball_diameter_cm)
+    if ball_size is not None and ball_size != "custom":
+        return parse_ball_spec(ball_size, None)
+
+    while True:
+        selected = (ball_size or input("Select ball size [3/4/5/custom]: ")).strip().lower()
+        if selected in {"3", "4", "5"}:
+            return parse_ball_spec(selected, None)
+        if selected == "custom":
+            custom_value = input("Enter ball diameter in cm: ").strip()
+            try:
+                return parse_ball_spec("custom", float(custom_value))
+            except ValueError as error:
+                print(f"Invalid custom diameter: {error}")
+                ball_size = None
+                continue
+        print("Unsupported selection. Enter 3, 4, 5, or custom.")
+        ball_size = None
+
+
+def _precision_initial_bullseye(args: argparse.Namespace) -> Optional[np.ndarray]:
+    if args.bullseye_x is None and args.bullseye_y is None:
+        return None
+    if args.bullseye_x is None or args.bullseye_y is None:
+        raise ValueError("Both --bullseye-x and --bullseye-y are required together.")
+    return np.array((float(args.bullseye_x), float(args.bullseye_y)), dtype=np.float32)
+
+
 def _warmup_detector(model, predict_kwargs: dict[str, Any], width: int, height: int) -> None:
     warmup_frame = np.zeros((height, width, 3), dtype=np.uint8)
     model.predict(warmup_frame, **predict_kwargs)
@@ -420,6 +487,10 @@ def process_capture_packet(
     render_cache: RenderCache,
     *,
     game_mode: str = GAME_MODE_TARGET,
+    precision_ball_spec: Optional[BallSpec] = None,
+    precision_focal_length_px: float = DEFAULT_FOCAL_LENGTH_PX,
+    precision_bullseye_click: Optional[np.ndarray] = None,
+    juggle_classifier=None,
     juggle_count_threshold: float = JUGGLE_COUNT_THRESHOLD,
     juggle_lookahead_frames: int = JUGGLE_LOOKAHEAD_FRAMES,
     juggle_prominence_radius_fraction: float = JUGGLE_PROMINENCE_RADIUS_FRACTION,
@@ -469,6 +540,8 @@ def process_capture_packet(
 
     target_mode_state = state.target_mode
     target_mode_frame: Optional[TargetModeFrame] = None
+    precision_target_state = state.precision_target
+    precision_target_frame: Optional[PrecisionTargetFrame] = None
     juggle_mode_state = state.juggle_mode
     pose_state = state.pose
     pose_frame: Optional[PoseFrame] = None
@@ -501,6 +574,30 @@ def process_capture_packet(
         current_score = target_mode_frame.score
         total_score_events = counters.hit_frames
         status_label = "Target"
+    elif game_mode == GAME_MODE_PRECISION_TARGET:
+        if precision_ball_spec is None:
+            raise ValueError("precision_target mode requires a configured ball spec.")
+        precision_effective_focal_length_px = resolve_effective_focal_length_px(
+            precision_focal_length_px,
+            packet.frame.shape[1],
+        )
+        precision_target_state, precision_target_frame, precision_scored = step_precision_target_mode(
+            state.precision_target,
+            track,
+            primary_candidate,
+            packet.frame.shape[:2],
+            frame_time,
+            ball_spec=precision_ball_spec,
+            focal_length_px=precision_effective_focal_length_px,
+            bullseye_click=precision_bullseye_click,
+        )
+        if precision_scored and precision_target_frame.last_score > 0:
+            counters.hit_frames += 1
+            if on_score is not None:
+                on_score(precision_target_frame.score)
+        current_score = precision_target_frame.score
+        total_score_events = precision_target_state.scored_throws
+        status_label = precision_target_frame.status_text
     elif game_mode == GAME_MODE_JUGGLE:
         pose_state, pose_frame = update_pose_state_from_backends(
             state.pose,
@@ -520,6 +617,7 @@ def process_capture_packet(
             frame_time,
             packet.frame.shape[:2],
             frame_index=packet.frame_index,
+            classifier=juggle_classifier,
             count_threshold=juggle_count_threshold,
             lookahead_frames=juggle_lookahead_frames,
             prominence_radius_fraction=juggle_prominence_radius_fraction,
@@ -561,6 +659,7 @@ def process_capture_packet(
         track=track,
         motion=motion,
         target_mode=target_mode_state,
+        precision_target=precision_target_state,
         juggle_mode=juggle_mode_state,
         pose=pose_state,
         next_track_id=next_track_id,
@@ -576,6 +675,7 @@ def process_capture_packet(
         score_effects=target_mode_frame.score_effects if target_mode_frame is not None else [],
         game_mode=game_mode,
         target_mode=target_mode_frame,
+        precision_target=precision_target_frame,
         pose_frame=pose_frame,
         juggle_event=juggle_event,
         candidates_count=len(candidates),
@@ -611,6 +711,11 @@ def render_processed_frame(
         draw_track(frame, frame_result.track)
     if frame_result.game_mode == GAME_MODE_JUGGLE:
         draw_pose_overlay(frame, frame_result.pose_frame)
+    elif frame_result.precision_target is not None:
+        draw_precision_target_mode(
+            frame,
+            frame_result.precision_target,
+        )
     elif frame_result.target_mode is not None:
         draw_target_mode(
             frame,
@@ -676,6 +781,15 @@ def render_processed_frame(
             f"Score: {frame_result.current_score}",
             8,
             HUD_BASELINE_Y,
+            font_scale=HUD_FONT_SCALE,
+            thickness=HUD_FONT_THICKNESS,
+        )
+    elif frame_result.game_mode == GAME_MODE_PRECISION_TARGET:
+        draw_label_right(
+            frame,
+            f"Impacts: {frame_result.total_score_events}",
+            8,
+            HUD_BASELINE_Y + HUD_LINE_HEIGHT * 7,
             font_scale=HUD_FONT_SCALE,
             thickness=HUD_FONT_THICKNESS,
         )
@@ -756,10 +870,14 @@ def run_benchmark(
     model,
     predict_kwargs: dict[str, Any],
     pose_runtime: Optional[PoseRuntimeContext],
+    juggle_classifier,
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
+    precision_ball_spec: Optional[BallSpec],
+    precision_focal_length_px: float,
+    precision_initial_bullseye: Optional[np.ndarray],
     juggle_count_threshold: float,
     juggle_lookahead_frames: int,
     juggle_prominence_radius_fraction: float,
@@ -773,6 +891,9 @@ def run_benchmark(
     previous_frame_time: Optional[float] = None
 
     frame_index = 0
+    pending_precision_click = (
+        None if precision_initial_bullseye is None else precision_initial_bullseye.copy()
+    )
     while True:
         if max_frames is not None and frame_index >= max_frames:
             break
@@ -802,11 +923,16 @@ def run_benchmark(
             rng,
             render_cache,
             game_mode=game_mode,
+            precision_ball_spec=precision_ball_spec,
+            precision_focal_length_px=precision_focal_length_px,
+            precision_bullseye_click=pending_precision_click,
+            juggle_classifier=juggle_classifier,
             juggle_count_threshold=juggle_count_threshold,
             juggle_lookahead_frames=juggle_lookahead_frames,
             juggle_prominence_radius_fraction=juggle_prominence_radius_fraction,
             juggle_ground_margin_radius_fraction=juggle_ground_margin_radius_fraction,
         )
+        pending_precision_click = None
 
         if previous_frame_time is not None:
             fps_history.append(1.0 / max(frame_result.frame_time - previous_frame_time, 1e-6))
@@ -874,10 +1000,15 @@ def _inference_worker(
     model,
     predict_kwargs: dict[str, Any],
     pose_runtime: Optional[PoseRuntimeContext],
+    juggle_classifier,
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
+    precision_ball_spec: Optional[BallSpec],
+    precision_focal_length_px: float,
+    precision_click_queue: Optional[queue.SimpleQueue],
+    precision_initial_bullseye: Optional[np.ndarray],
     juggle_count_threshold: float,
     juggle_lookahead_frames: int,
     juggle_prominence_radius_fraction: float,
@@ -886,6 +1017,9 @@ def _inference_worker(
 ) -> None:
     runtime_state = TrackerRuntimeState()
     last_version = 0
+    pending_precision_click = (
+        None if precision_initial_bullseye is None else precision_initial_bullseye.copy()
+    )
     try:
         while not stop_event.is_set():
             last_version, packet = frame_store.get_latest(last_version, timeout_s=0.1)
@@ -893,6 +1027,13 @@ def _inference_worker(
                 if frame_store.closed:
                     break
                 continue
+
+            if precision_click_queue is not None:
+                try:
+                    while True:
+                        pending_precision_click = precision_click_queue.get_nowait()
+                except queue.Empty:
+                    pass
 
             runtime_state, frame_result = process_capture_packet(
                 packet,
@@ -905,12 +1046,17 @@ def _inference_worker(
                 rng,
                 render_cache,
                 game_mode=game_mode,
+                precision_ball_spec=precision_ball_spec,
+                precision_focal_length_px=precision_focal_length_px,
+                precision_bullseye_click=pending_precision_click,
+                juggle_classifier=juggle_classifier,
                 juggle_count_threshold=juggle_count_threshold,
                 juggle_lookahead_frames=juggle_lookahead_frames,
                 juggle_prominence_radius_fraction=juggle_prominence_radius_fraction,
                 juggle_ground_margin_radius_fraction=juggle_ground_margin_radius_fraction,
                 on_score=on_score,
             )
+            pending_precision_click = None
             result_store.put(frame_result)
     finally:
         result_store.close()
@@ -924,10 +1070,14 @@ def run_live_tracker(
     model,
     predict_kwargs: dict[str, Any],
     pose_runtime: Optional[PoseRuntimeContext],
+    juggle_classifier,
     gamma_lut: np.ndarray,
     clahe: cv2.CLAHE,
     rng: np.random.Generator,
     render_cache: RenderCache,
+    precision_ball_spec: Optional[BallSpec],
+    precision_focal_length_px: float,
+    precision_initial_bullseye: Optional[np.ndarray],
     juggle_count_threshold: float,
     juggle_lookahead_frames: int,
     juggle_prominence_radius_fraction: float,
@@ -938,6 +1088,9 @@ def run_live_tracker(
     frame_store: LatestValueStore[CapturePacket] = LatestValueStore()
     result_store: LatestValueStore[ProcessedFrame] = LatestValueStore()
     stop_event = threading.Event()
+    precision_click_queue: Optional[queue.SimpleQueue] = (
+        queue.SimpleQueue() if game_mode == GAME_MODE_PRECISION_TARGET and display else None
+    )
     capture_thread = threading.Thread(
         target=_capture_worker,
         args=(cap, frame_store, stop_event, max_frames),
@@ -951,16 +1104,23 @@ def run_live_tracker(
             "model": model,
             "predict_kwargs": predict_kwargs,
             "pose_runtime": pose_runtime,
+            "juggle_classifier": juggle_classifier,
             "gamma_lut": gamma_lut,
             "clahe": clahe,
             "rng": rng,
             "render_cache": render_cache,
+            "precision_ball_spec": precision_ball_spec,
+            "precision_focal_length_px": precision_focal_length_px,
+            "precision_click_queue": precision_click_queue,
+            "precision_initial_bullseye": precision_initial_bullseye,
             "juggle_count_threshold": juggle_count_threshold,
             "juggle_lookahead_frames": juggle_lookahead_frames,
             "juggle_prominence_radius_fraction": juggle_prominence_radius_fraction,
             "juggle_ground_margin_radius_fraction": juggle_ground_margin_radius_fraction,
             "on_score": (
-                play_target_score_sound if game_mode == GAME_MODE_TARGET else None
+                play_target_score_sound
+                if game_mode in {GAME_MODE_TARGET, GAME_MODE_PRECISION_TARGET}
+                else None
             ),
         },
         daemon=True,
@@ -968,6 +1128,12 @@ def run_live_tracker(
 
     if display:
         cv2.namedWindow("Ball Tracker", cv2.WINDOW_NORMAL)
+        if game_mode == GAME_MODE_PRECISION_TARGET and precision_click_queue is not None:
+            def _handle_precision_click(event, x, y, _flags, _userdata) -> None:
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    precision_click_queue.put(np.array((x, y), dtype=np.float32))
+
+            cv2.setMouseCallback("Ball Tracker", _handle_precision_click)
 
     capture_thread.start()
     inference_thread.start()
@@ -1019,7 +1185,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Real-time single-ball tracker")
     parser.add_argument(
         "--mode",
-        choices=(GAME_MODE_TARGET, GAME_MODE_JUGGLE),
+        choices=(GAME_MODE_TARGET, GAME_MODE_PRECISION_TARGET, GAME_MODE_JUGGLE),
         default=GAME_MODE_TARGET,
         help="Gameplay mode to run",
     )
@@ -1036,7 +1202,26 @@ def main() -> None:
     parser.add_argument("--benchmark-output", help="Optional JSON file path for benchmark metrics")
     parser.add_argument("--max-frames", type=int, help="Optional processing cap for live runs or benchmarks")
     parser.add_argument("--no-display", action="store_true", help="Disable the OpenCV preview window")
+    parser.add_argument(
+        "--ball-size",
+        choices=("3", "4", "5", "custom"),
+        help="Precision target ball size preset",
+    )
+    parser.add_argument(
+        "--ball-diameter-cm",
+        type=float,
+        help="Explicit precision target ball diameter in centimeters",
+    )
+    parser.add_argument(
+        "--focal-length-px",
+        type=float,
+        default=DEFAULT_FOCAL_LENGTH_PX,
+        help="Capture-space focal length in pixels for precision target mode",
+    )
+    parser.add_argument("--bullseye-x", type=float, help="Initial bullseye center x coordinate")
+    parser.add_argument("--bullseye-y", type=float, help="Initial bullseye center y coordinate")
     parser.add_argument("--pose-model", default=POSE_MODEL_PATH, help="Pose model path for juggle mode")
+    parser.add_argument("--event-model", help="Optional trained juggle event classifier checkpoint")
     parser.add_argument(
         "--pose-backend",
         choices=POSE_BACKEND_CHOICES,
@@ -1081,11 +1266,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    precision_ball_spec: Optional[BallSpec] = None
+    precision_initial_bullseye: Optional[np.ndarray] = None
+    if args.mode == GAME_MODE_PRECISION_TARGET:
+        try:
+            precision_ball_spec = _prompt_precision_ball_spec(args.ball_size, args.ball_diameter_cm)
+            precision_initial_bullseye = _precision_initial_bullseye(args)
+        except ValueError as error:
+            print(f"ERROR: {error}")
+            return
+
+        if (args.benchmark or args.no_display) and precision_initial_bullseye is None:
+            print(
+                "ERROR: precision_target benchmark or no-display runs require "
+                "--bullseye-x and --bullseye-y."
+            )
+            return
+
     model = YOLO(MODEL_PATH)
     predict_kwargs, device_name = _build_predict_kwargs(args.width, args.height)
     pose_model = None
     pose_predict_kwargs: Optional[dict[str, Any]] = None
     pose_runtime: Optional[PoseRuntimeContext] = None
+    juggle_classifier = None
     if args.mode == GAME_MODE_JUGGLE:
         if args.pose_backend in {POSE_BACKEND_AUTO, "yolo"}:
             pose_model = YOLO(args.pose_model)
@@ -1099,6 +1302,9 @@ def main() -> None:
             yolo_model=pose_model,
             yolo_predict_kwargs=pose_predict_kwargs,
         )
+        classifier_device = predict_kwargs["device"]
+        classifier_device_name = "cpu" if classifier_device == "cpu" else str(classifier_device)
+        juggle_classifier = load_juggle_event_classifier(args.event_model, device=classifier_device_name)
     _warmup_detector(model, predict_kwargs, args.width, args.height)
     if pose_model is not None and pose_predict_kwargs is not None:
         _warmup_detector(pose_model, pose_predict_kwargs, args.width, args.height)
@@ -1127,6 +1333,11 @@ def main() -> None:
         f"Tracking started on device: {device_name} "
         f"({args.mode} mode, camera backend: {backend_name})"
     )
+    if args.mode == GAME_MODE_PRECISION_TARGET and precision_ball_spec is not None:
+        print(
+            f"Precision target configured for {precision_ball_spec.label} "
+            f"({precision_ball_spec.diameter_cm:.1f} cm) at focal length {args.focal_length_px:.1f}px"
+        )
 
     try:
         if args.benchmark:
@@ -1137,10 +1348,14 @@ def main() -> None:
                 model=model,
                 predict_kwargs=predict_kwargs,
                 pose_runtime=pose_runtime,
+                juggle_classifier=juggle_classifier,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
                 render_cache=render_cache,
+                precision_ball_spec=precision_ball_spec,
+                precision_focal_length_px=args.focal_length_px,
+                precision_initial_bullseye=precision_initial_bullseye,
                 juggle_count_threshold=args.juggle_proof_threshold,
                 juggle_lookahead_frames=args.juggle_lookahead_frames,
                 juggle_prominence_radius_fraction=args.juggle_prominence_radius_fraction,
@@ -1156,10 +1371,14 @@ def main() -> None:
                 model=model,
                 predict_kwargs=predict_kwargs,
                 pose_runtime=pose_runtime,
+                juggle_classifier=juggle_classifier,
                 gamma_lut=gamma_lut,
                 clahe=clahe,
                 rng=rng,
                 render_cache=render_cache,
+                precision_ball_spec=precision_ball_spec,
+                precision_focal_length_px=args.focal_length_px,
+                precision_initial_bullseye=precision_initial_bullseye,
                 juggle_count_threshold=args.juggle_proof_threshold,
                 juggle_lookahead_frames=args.juggle_lookahead_frames,
                 juggle_prominence_radius_fraction=args.juggle_prominence_radius_fraction,

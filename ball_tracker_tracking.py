@@ -51,6 +51,8 @@ class DetectionCandidate:
     x2: int
     y2: int
     center: np.ndarray
+    width: float
+    height: float
     radius: float
     confidence: float
 
@@ -59,6 +61,8 @@ class DetectionCandidate:
 class BallTrack:
     center: np.ndarray
     velocity: np.ndarray
+    width: float
+    height: float
     radius: float
     confidence: float
     track_id: int
@@ -113,7 +117,9 @@ def extract_candidates(results) -> list[DetectionCandidate]:
     for box in results[0].boxes:
         x1, y1, x2, y2 = (int(value) for value in box.xyxy[0])
         center = np.array(((x1 + x2) / 2.0, (y1 + y2) / 2.0), dtype=np.float32)
-        radius = max((x2 - x1), (y2 - y1)) / 2.0
+        width = float(max(x2 - x1, 1))
+        height = float(max(y2 - y1, 1))
+        radius = max(width, height) / 2.0
         candidates.append(
             DetectionCandidate(
                 x1=x1,
@@ -121,6 +127,8 @@ def extract_candidates(results) -> list[DetectionCandidate]:
                 x2=x2,
                 y2=y2,
                 center=center,
+                width=width,
+                height=height,
                 radius=radius,
                 confidence=float(box.conf[0]),
             )
@@ -184,6 +192,8 @@ def predict_track(
         motion = _bootstrap_motion_state(track, frame_time)
         return _track_from_motion_state(
             motion.state,
+            width=track.width,
+            height=track.height,
             radius=track.radius,
             confidence=track.confidence,
             track_id=track.track_id,
@@ -242,6 +252,8 @@ def predict_track(
 
     predicted_track = _track_from_motion_state(
         motion.state,
+        width=track.width,
+        height=track.height,
         radius=track.radius,
         confidence=track.confidence,
         track_id=track.track_id,
@@ -278,6 +290,8 @@ def update_track(
             BallTrack(
                 center=candidate.center.copy(),
                 velocity=np.zeros(2, dtype=np.float32),
+                width=candidate.width,
+                height=candidate.height,
                 radius=candidate.radius,
                 confidence=candidate.confidence,
                 track_id=next_track_id,
@@ -308,6 +322,8 @@ def update_track(
         residual_transform @ motion.covariance @ residual_transform.T
         + kalman_gain @ MEASUREMENT_COVARIANCE @ kalman_gain.T
     )
+    blended_width = track.width * (1.0 - RADIUS_SMOOTHING) + candidate.width * RADIUS_SMOOTHING
+    blended_height = track.height * (1.0 - RADIUS_SMOOTHING) + candidate.height * RADIUS_SMOOTHING
     blended_radius = track.radius * (1.0 - RADIUS_SMOOTHING) + candidate.radius * RADIUS_SMOOTHING
     vy_raw = motion.vy_raw
     if motion.last_measurement is not None and motion.last_measurement_time is not None:
@@ -330,6 +346,8 @@ def update_track(
     return (
         _track_from_motion_state(
             updated_motion.state,
+            width=blended_width,
+            height=blended_height,
             radius=blended_radius,
             confidence=candidate.confidence,
             track_id=track.track_id,
@@ -356,6 +374,8 @@ def advance_track(
 
     return _track_from_motion_state(
         motion.state,
+        width=track.width,
+        height=track.height,
         radius=track.radius,
         confidence=max(track.confidence * 0.92, 0.0),
         track_id=track.track_id,
@@ -439,6 +459,8 @@ def _copy_measurement(measurement: Optional[np.ndarray]) -> Optional[np.ndarray]
 def _track_from_motion_state(
     state: np.ndarray,
     *,
+    width: float,
+    height: float,
     radius: float,
     confidence: float,
     track_id: int,
@@ -450,6 +472,8 @@ def _track_from_motion_state(
     return BallTrack(
         center=np.array(state[:2], dtype=np.float32),
         velocity=np.array(state[2:], dtype=np.float32),
+        width=float(width),
+        height=float(height),
         radius=float(radius),
         confidence=float(confidence),
         track_id=track_id,

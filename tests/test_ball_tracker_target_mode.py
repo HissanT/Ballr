@@ -21,6 +21,8 @@ def make_track(
     return BallTrack(
         center=np.array(center, dtype=np.float32),
         velocity=np.zeros(2, dtype=np.float32),
+        width=radius * 2.0,
+        height=radius * 2.0,
         radius=radius,
         confidence=0.9,
         track_id=1,
