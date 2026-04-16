@@ -450,6 +450,7 @@ private struct LevelsHomeView: View {
 private struct PracticeHomeView: View {
     @State private var selectedDrill: Drill?
     @State private var isShowingDribbling = false
+    @State private var isShowingBallBlast = false
 
     private let drills = [
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
@@ -482,6 +483,8 @@ private struct PracticeHomeView: View {
                             Button {
                                 if drill.title == "Dribbling" {
                                     isShowingDribbling = true
+                                } else if drill.title == "Ball Blast" {
+                                    isShowingBallBlast = true
                                 } else {
                                     selectedDrill = drill
                                 }
@@ -501,6 +504,9 @@ private struct PracticeHomeView: View {
             }
             .fullScreenCover(isPresented: $isShowingDribbling) {
                 DribblingCameraView()
+            }
+            .fullScreenCover(isPresented: $isShowingBallBlast) {
+                BallBlastRockDropCameraView()
             }
         }
     }
@@ -1460,11 +1466,11 @@ private struct PracticeDrillStyle {
             symbol = "play.fill"
             playOpacity = 0.28
         case 2:
-            iconColor = Color.white.opacity(0.10)
-            iconForeground = Color.white.opacity(0.38)
-            accentColor = Color.white.opacity(0.32)
-            symbol = "circle"
-            playOpacity = 0.18
+            iconColor = .orange
+            iconForeground = .white
+            accentColor = .orange
+            symbol = "play.fill"
+            playOpacity = 0.28
         default:
             iconColor = Color.white.opacity(0.10)
             iconForeground = Color.white.opacity(0.38)
