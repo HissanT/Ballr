@@ -1,16 +1,31 @@
 import SwiftUI
 
 struct ContentView: View {
+    @AppStorage("selectedAvatarID") private var selectedAvatarID = AvatarOption.defaultOptions[0].id
     @State private var hasCompletedOnboarding = false
 
     var body: some View {
         Group {
             if hasCompletedOnboarding {
-                MainBallrView()
+                MainBallrView(selectedAvatar: selectedAvatar)
             } else {
-                OnboardingFlowView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                OnboardingFlowView(
+                    hasCompletedOnboarding: $hasCompletedOnboarding,
+                    selectedAvatar: selectedAvatarBinding
+                )
             }
         }
+    }
+
+    private var selectedAvatar: AvatarOption {
+        AvatarOption.option(for: selectedAvatarID)
+    }
+
+    private var selectedAvatarBinding: Binding<AvatarOption> {
+        Binding(
+            get: { selectedAvatar },
+            set: { selectedAvatarID = $0.id }
+        )
     }
 }
 
@@ -26,10 +41,33 @@ private enum OnboardingStep {
 }
 
 private struct AvatarOption: Identifiable, Hashable {
-    let id = UUID()
+    let id: Int
     let title: String
-    let symbol: String
-    let tint: Color
+    let centerX: CGFloat
+    let centerY: CGFloat
+
+    static let defaultOptions = [
+        AvatarOption(id: 0, title: "Keeper", centerX: 0.1944, centerY: 0.1433),
+        AvatarOption(id: 1, title: "Captain", centerX: 0.3981, centerY: 0.1433),
+        AvatarOption(id: 2, title: "Playmaker", centerX: 0.6019, centerY: 0.1433),
+        AvatarOption(id: 3, title: "Striker", centerX: 0.8056, centerY: 0.1433),
+        AvatarOption(id: 4, title: "Dribbler", centerX: 0.1944, centerY: 0.3822),
+        AvatarOption(id: 5, title: "Creator", centerX: 0.3981, centerY: 0.3822),
+        AvatarOption(id: 6, title: "Sprinter", centerX: 0.6019, centerY: 0.3822),
+        AvatarOption(id: 7, title: "Defender", centerX: 0.8056, centerY: 0.3822),
+        AvatarOption(id: 8, title: "Speedster", centerX: 0.1944, centerY: 0.6267),
+        AvatarOption(id: 9, title: "Blaster", centerX: 0.3981, centerY: 0.6267),
+        AvatarOption(id: 10, title: "Builder", centerX: 0.6019, centerY: 0.6267),
+        AvatarOption(id: 11, title: "Chef", centerX: 0.8056, centerY: 0.6267),
+        AvatarOption(id: 12, title: "Rookie", centerX: 0.1944, centerY: 0.8567),
+        AvatarOption(id: 13, title: "Scholar", centerX: 0.3981, centerY: 0.8567),
+        AvatarOption(id: 14, title: "Ace", centerX: 0.6019, centerY: 0.8567),
+        AvatarOption(id: 15, title: "Artist", centerX: 0.8056, centerY: 0.8567)
+    ]
+
+    static func option(for id: Int) -> AvatarOption {
+        defaultOptions.first { $0.id == id } ?? defaultOptions[0]
+    }
 }
 
 private struct Drill: Identifiable, Hashable {
@@ -52,28 +90,8 @@ private extension Color {
 
 private struct OnboardingFlowView: View {
     @Binding var hasCompletedOnboarding: Bool
+    @Binding var selectedAvatar: AvatarOption
     @State private var step: OnboardingStep = .start
-    @State private var selectedBody = AvatarOption(title: "Body", symbol: "figure.soccer", tint: Color.ballrOrange)
-    @State private var selectedFace = AvatarOption(title: "Face", symbol: "face.smiling", tint: Color.ballrYellow)
-    @State private var selectedAccessory = AvatarOption(title: "Cap", symbol: "baseball.cap", tint: Color.ballrBlack)
-
-    private let bodyOptions = [
-        AvatarOption(title: "Body", symbol: "figure.soccer", tint: Color.ballrOrange),
-        AvatarOption(title: "Fast", symbol: "bolt.fill", tint: Color.ballrYellow),
-        AvatarOption(title: "Strong", symbol: "figure.strengthtraining.traditional", tint: .red)
-    ]
-
-    private let faceOptions = [
-        AvatarOption(title: "Smile", symbol: "face.smiling", tint: Color.ballrYellow),
-        AvatarOption(title: "Cool", symbol: "face.dashed", tint: Color.ballrOrange),
-        AvatarOption(title: "Focus", symbol: "eye.fill", tint: Color.ballrBlack)
-    ]
-
-    private let accessoryOptions = [
-        AvatarOption(title: "Cap", symbol: "baseball.cap", tint: Color.ballrBlack),
-        AvatarOption(title: "Star", symbol: "star.fill", tint: Color.ballrYellow),
-        AvatarOption(title: "Shades", symbol: "sunglasses", tint: Color.ballrOrange)
-    ]
 
     var body: some View {
         ZStack {
@@ -86,12 +104,8 @@ private struct OnboardingFlowView: View {
                 }
             case .avatar:
                 BuildAvatarView(
-                    selectedBody: $selectedBody,
-                    selectedFace: $selectedFace,
-                    selectedAccessory: $selectedAccessory,
-                    bodyOptions: bodyOptions,
-                    faceOptions: faceOptions,
-                    accessoryOptions: accessoryOptions
+                    selectedAvatar: $selectedAvatar,
+                    avatarOptions: AvatarOption.defaultOptions
                 ) {
                     hasCompletedOnboarding = true
                 }
@@ -103,6 +117,7 @@ private struct OnboardingFlowView: View {
 
 private struct MainBallrView: View {
     @State private var selectedTab: BallrTab = .levels
+    let selectedAvatar: AvatarOption
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -118,7 +133,7 @@ private struct MainBallrView: View {
                 }
                 .tag(BallrTab.practice)
 
-            ProfileHomeView()
+            ProfileHomeView(selectedAvatar: selectedAvatar)
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.shield.fill")
                 }
@@ -191,16 +206,12 @@ private struct StartPageView: View {
 }
 
 private struct BuildAvatarView: View {
-    @Binding var selectedBody: AvatarOption
-    @Binding var selectedFace: AvatarOption
-    @Binding var selectedAccessory: AvatarOption
+    @Binding var selectedAvatar: AvatarOption
 
-    let bodyOptions: [AvatarOption]
-    let faceOptions: [AvatarOption]
-    let accessoryOptions: [AvatarOption]
+    let avatarOptions: [AvatarOption]
     let onContinue: () -> Void
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
 
     var body: some View {
         ZStack {
@@ -213,28 +224,21 @@ private struct BuildAvatarView: View {
                     .foregroundStyle(Color.yellow)
                     .padding(.top, 28)
 
-                AvatarPreview(
-                    bodyOption: selectedBody,
-                    faceOption: selectedFace,
-                    accessoryOption: selectedAccessory
-                )
+                AvatarPreview(avatar: selectedAvatar)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
 
-                Text("CHOOSE YOUR LOOK")
+                Text("CHOOSE YOUR PLAYER")
                     .font(.system(size: 16, weight: .black, design: .rounded))
                     .tracking(1)
                     .foregroundStyle(.white.opacity(0.38))
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 18)
+                .padding(.top, 18)
 
-                AvatarStyleGrid(
-                    selectedBody: $selectedBody,
-                    selectedFace: $selectedFace,
-                    selectedAccessory: $selectedAccessory,
-                    bodyOptions: bodyOptions,
-                    faceOptions: faceOptions,
-                    accessoryOptions: accessoryOptions
+                AvatarChoiceGrid(
+                    selectedAvatar: $selectedAvatar,
+                    avatarOptions: avatarOptions,
+                    columns: columns
                 )
                 .padding(.top, 18)
 
@@ -255,84 +259,56 @@ private struct BuildAvatarView: View {
     }
 }
 
-private struct AvatarStyleGrid: View {
-    @Binding var selectedBody: AvatarOption
-    @Binding var selectedFace: AvatarOption
-    @Binding var selectedAccessory: AvatarOption
+private struct AvatarChoiceGrid: View {
+    @Binding var selectedAvatar: AvatarOption
 
-    let bodyOptions: [AvatarOption]
-    let faceOptions: [AvatarOption]
-    let accessoryOptions: [AvatarOption]
+    let avatarOptions: [AvatarOption]
+    let columns: [GridItem]
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
-            AvatarStyleTile(
-                title: "SKIN",
-                colors: [Color(red: 0.95, green: 0.68, blue: 0.67), Color(red: 0.78, green: 0.50, blue: 0.26), Color(red: 0.45, green: 0.25, blue: 0.11)],
-                isSelected: selectedFace.id == faceOptions[1].id
-            ) {
-                selectedFace = faceOptions[1]
-            }
-
-            AvatarStyleTile(
-                title: "HAIR",
-                colors: [.clear, Color(red: 0.53, green: 0.28, blue: 0.11), .yellow],
-                isSelected: selectedAccessory.id == accessoryOptions[1].id
-            ) {
-                selectedAccessory = accessoryOptions[1]
-            }
-
-            AvatarStyleTile(
-                title: "KIT",
-                colors: [.yellow, .orange, .white],
-                isSelected: selectedBody.id == bodyOptions[0].id
-            ) {
-                selectedBody = bodyOptions[0]
-            }
-
-            AvatarStyleTile(
-                title: "BOOTS",
-                colors: [.yellow, .white, .orange],
-                isSelected: selectedAccessory.id == accessoryOptions[2].id
-            ) {
-                selectedAccessory = accessoryOptions[2]
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(avatarOptions) { avatar in
+                AvatarChoiceTile(
+                    avatar: avatar,
+                    isSelected: selectedAvatar.id == avatar.id
+                ) {
+                    selectedAvatar = avatar
+                }
             }
         }
     }
 }
 
-private struct AvatarStyleTile: View {
-    let title: String
-    let colors: [Color]
+private struct AvatarChoiceTile: View {
+    let avatar: AvatarOption
     let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 14) {
-                Text(title)
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.42))
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.yellow.opacity(0.22) : Color.white.opacity(0.07))
 
-                HStack(spacing: 10) {
-                    ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
-                        Circle()
-                            .fill(color)
-                            .frame(width: 20, height: 20)
-                            .overlay(
-                                Circle()
-                                    .stroke(color == .clear ? .white.opacity(0.35) : .clear, lineWidth: 2)
-                            )
-                    }
+                VStack(spacing: 6) {
+                    AvatarSheetCrop(avatar: avatar)
+                        .frame(width: 62, height: 62)
+                        .clipShape(Circle())
+
+                    Text(avatar.title)
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .foregroundStyle(isSelected ? Color.yellow : .white.opacity(0.68))
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 78)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+            .frame(height: 92)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(isSelected ? Color.yellow : .clear, lineWidth: 2)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
@@ -347,7 +323,16 @@ private struct LevelsHomeView: View {
     private let levelDrills = (1...20).map { level in
         Drill(
             title: "Level \(level)",
-            subtitle: ["Juggling", "Dribbling", "Ball Blast", "Dribble Tiles"][(level - 1) % 4],
+            subtitle: {
+                switch level {
+                case 19:
+                    return "Ball Blast"
+                case 20:
+                    return "The Hunter"
+                default:
+                    return ["Juggling", "Dribbling", "First Touch", "Dribble Tiles"][(level - 1) % 4]
+                }
+            }(),
             level: level
         )
     }
@@ -418,11 +403,11 @@ private struct LevelsHomeView: View {
                         }
                     }
                     .onAppear {
-                        proxy.scrollTo(3, anchor: .center)
+                        proxy.scrollTo(10, anchor: .center)
                     }
                     .onChange(of: playerName) { _, _ in
                         if !isShowingSettings {
-                            proxy.scrollTo(3, anchor: .center)
+                            proxy.scrollTo(10, anchor: .center)
                         }
                     }
                 }
@@ -436,8 +421,11 @@ private struct LevelsHomeView: View {
                 }
             }
             .navigationDestination(item: $selectedDrill) { drill in
-                if drill.level == 3 {
+                if drill.level == 19 {
                     TargetDrillCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 20 {
+                    HunterCameraView()
                         .navigationBarBackButtonHidden(true)
                 } else {
                     DrillPlaceholderView(drill: drill)
@@ -451,11 +439,17 @@ private struct PracticeHomeView: View {
     @State private var selectedDrill: Drill?
     @State private var isShowingDribbling = false
     @State private var isShowingBallBlast = false
+    @State private var isShowingPrecisionTargets = false
+    @State private var isShowingPassingGates = false
+    @State private var isShowingPianoTiles = false
 
     private let drills = [
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
         Drill(title: "Dribbling", subtitle: "Weave through targets", level: nil),
         Drill(title: "Ball Blast", subtitle: "Hit targets fast", level: nil),
+        Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
+        Drill(title: "Passing Gates", subtitle: "Pass through the gate", level: nil),
+        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil),
         Drill(title: "Dribble\nTiles", subtitle: "Navigate the grid", level: nil)
     ]
 
@@ -485,6 +479,12 @@ private struct PracticeHomeView: View {
                                     isShowingDribbling = true
                                 } else if drill.title == "Ball Blast" {
                                     isShowingBallBlast = true
+                                } else if drill.title == "Precision Targets" {
+                                    isShowingPrecisionTargets = true
+                                } else if drill.title == "Passing Gates" {
+                                    isShowingPassingGates = true
+                                } else if drill.title == "Piano Tiles" {
+                                    isShowingPianoTiles = true
                                 } else {
                                     selectedDrill = drill
                                 }
@@ -508,11 +508,21 @@ private struct PracticeHomeView: View {
             .fullScreenCover(isPresented: $isShowingBallBlast) {
                 BallBlastRockDropCameraView()
             }
+            .fullScreenCover(isPresented: $isShowingPrecisionTargets) {
+                PrecisionTargetCameraView()
+            }
+            .fullScreenCover(isPresented: $isShowingPassingGates) {
+                PassingGateCameraView()
+            }
+            .fullScreenCover(isPresented: $isShowingPianoTiles) {
+                PianoTilesCameraView()
+            }
         }
     }
 }
 
 private struct ProfileHomeView: View {
+    let selectedAvatar: AvatarOption
     private let slots = (0..<5).map { _ in AchievementSlot() }
 
     var body: some View {
@@ -539,7 +549,7 @@ private struct ProfileHomeView: View {
                         }
                         .padding(.bottom, 28)
 
-                        ProfilePlayerCard()
+                        ProfilePlayerCard(selectedAvatar: selectedAvatar)
 
                         HStack(spacing: 12) {
                             ProfileStatCard(value: "47", label: "BEST\nJUGGLES", valueColor: Color.yellow)
@@ -609,20 +619,20 @@ private struct BallrWordmark: View {
 }
 
 private struct ProfilePlayerCard: View {
+    let selectedAvatar: AvatarOption
+
     var body: some View {
         HStack(spacing: 20) {
             Circle()
-                .fill(Color.yellow)
                 .frame(width: 86, height: 86)
+                .overlay {
+                    AvatarSheetCrop(avatar: selectedAvatar)
+                        .clipShape(Circle())
+                }
                 .overlay(
                     Circle()
                         .stroke(Color.orange, lineWidth: 4)
                 )
-                .overlay {
-                    Text("B")
-                        .font(.system(size: 30, weight: .black, design: .rounded))
-                        .foregroundStyle(Color.ballrBlack)
-                }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Bishoy")
@@ -1313,13 +1323,14 @@ private struct SoccerFieldBackground: View {
 
 private struct LevelNodeView: View {
     let level: Int
+    private let unlockedLevelCount = 10
 
     private var status: String? {
-        if level < 3 {
+        if level < unlockedLevelCount {
             "DONE"
-        } else if level == 3 {
+        } else if level == unlockedLevelCount {
             "CURRENT"
-        } else if level <= 5 {
+        } else if level == unlockedLevelCount + 1 {
             "LOCKED"
         } else {
             nil
@@ -1327,13 +1338,13 @@ private struct LevelNodeView: View {
     }
 
     private var isLocked: Bool {
-        level > 3
+        level > unlockedLevelCount
     }
 
     private var fillColor: Color {
         if isLocked {
             Color(red: 0.03, green: 0.12, blue: 0.04)
-        } else if level == 3 {
+        } else if level == unlockedLevelCount {
             Color.orange
         } else {
             Color.yellow
@@ -1345,12 +1356,12 @@ private struct LevelNodeView: View {
             if let status {
                 Text(status)
                     .font(.system(size: 13, weight: .black, design: .rounded))
-                    .foregroundStyle(level == 3 ? Color.ballrBlack : (isLocked ? .white.opacity(0.2) : Color.yellow))
+                    .foregroundStyle(level == unlockedLevelCount ? Color.ballrBlack : (isLocked ? .white.opacity(0.2) : Color.yellow))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 6)
                     .background(
                         Group {
-                            if level == 3 {
+                            if level == unlockedLevelCount {
                                 Capsule().fill(Color.yellow)
                             } else {
                                 Capsule().fill(.clear)
@@ -1364,19 +1375,19 @@ private struct LevelNodeView: View {
             ZStack {
                 Circle()
                     .stroke(Color.yellow.opacity(isLocked ? 0.08 : 0.24), lineWidth: 14)
-                    .frame(width: level == 3 ? 90 : 76, height: level == 3 ? 90 : 76)
+                    .frame(width: level == unlockedLevelCount ? 90 : 76, height: level == unlockedLevelCount ? 90 : 76)
 
                 Circle()
                     .fill(fillColor.opacity(isLocked ? 0.16 : 1))
-                    .frame(width: level == 3 ? 58 : 50, height: level == 3 ? 58 : 50)
+                    .frame(width: level == unlockedLevelCount ? 58 : 50, height: level == unlockedLevelCount ? 58 : 50)
                     .overlay(
                         Circle()
                             .stroke(Color.orange.opacity(isLocked ? 0.08 : 1), lineWidth: 4)
                     )
 
                 Text("\(level)")
-                    .font(.system(size: level == 3 ? 22 : 18, weight: .black, design: .rounded))
-                    .foregroundStyle(isLocked ? .white.opacity(0.14) : (level == 3 ? .white : Color.ballrBlack))
+                    .font(.system(size: level == unlockedLevelCount ? 22 : 18, weight: .black, design: .rounded))
+                    .foregroundStyle(isLocked ? .white.opacity(0.14) : (level == unlockedLevelCount ? .white : Color.ballrBlack))
             }
         }
     }
@@ -1470,6 +1481,18 @@ private struct PracticeDrillStyle {
             iconForeground = .white
             accentColor = .orange
             symbol = "play.fill"
+            playOpacity = 0.28
+        case 3:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "scope"
+            playOpacity = 0.28
+        case 4:
+            iconColor = Color(red: 0.55, green: 0.95, blue: 0.70)
+            iconForeground = Color.ballrBlack
+            accentColor = Color(red: 0.55, green: 0.95, blue: 0.70)
+            symbol = "pianokeys"
             playOpacity = 0.28
         default:
             iconColor = Color.white.opacity(0.10)
@@ -1642,82 +1665,61 @@ private struct BallrLogo: View {
 }
 
 private struct AvatarPreview: View {
-    let bodyOption: AvatarOption
-    let faceOption: AvatarOption
-    let accessoryOption: AvatarOption
+    let avatar: AvatarOption
 
     var body: some View {
         ZStack {
             Circle()
+                .fill(Color.yellow.opacity(0.18))
+                .frame(width: 176, height: 176)
+
+            Circle()
                 .stroke(Color.yellow, lineWidth: 4)
-                .frame(width: 158, height: 158)
+                .frame(width: 176, height: 176)
 
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(faceOption.tint)
-                    .frame(width: 50, height: 50)
-                    .overlay {
-                        Image(systemName: accessoryOption.symbol)
-                            .font(.system(size: 18, weight: .black))
-                            .foregroundStyle(Color.ballrBlack.opacity(0.85))
-                            .offset(y: -28)
-                    }
+            AvatarSheetCrop(avatar: avatar)
+                .frame(width: 156, height: 156)
+                .clipShape(Circle())
 
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(bodyOption.tint)
-                    .frame(width: 92, height: 70)
-                    .overlay {
-                        Image(systemName: bodyOption.symbol)
-                            .font(.system(size: 30, weight: .black))
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
+            VStack {
+                Spacer()
+
+                Text(avatar.title.uppercased())
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.ballrBlack)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(Color.yellow, in: Capsule())
+                    .offset(y: 10)
             }
         }
         .frame(height: 180)
     }
 }
 
-private struct AvatarOptionSection: View {
-    let title: String
-    let options: [AvatarOption]
-    @Binding var selection: AvatarOption
-    let columns: [GridItem]
+private struct AvatarSheetCrop: View {
+    let avatar: AvatarOption
+
+    private let sheetSize: CGFloat = 900
+    private let cropSize: CGFloat = 168
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased())
-                .font(.system(size: 14, weight: .black, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
-
-            LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(options, id: \.id) { option in
-                    Button {
-                        selection = option
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: option.symbol)
-                                .font(.title2)
-                                .foregroundStyle(option.tint)
-
-                            Text(option.title)
-                                .font(.footnote.weight(.bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            selection.id == option.id ? Color.yellow.opacity(0.18) : .white.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 18)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18)
-                                .stroke(selection.id == option.id ? Color.yellow : .white.opacity(0.1), lineWidth: 2)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+        GeometryReader { geometry in
+            let side = min(geometry.size.width, geometry.size.height)
+            let scale = side / cropSize
+            let imageSize = sheetSize * scale
+            Image("AvatarSheet")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: imageSize, height: imageSize)
+                .offset(
+                    x: side * 0.5 - avatar.centerX * imageSize,
+                    y: side * 0.5 - avatar.centerY * imageSize
+                )
         }
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
     }
 }
 

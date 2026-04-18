@@ -1,13 +1,12 @@
-import AVFoundation
 import Combine
 import Foundation
 import SwiftUI
 import UIKit
 
-struct BallBlastRockDropCameraView: View {
+struct HunterCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
-    @StateObject private var coordinator = BallBlastRockDropCoordinator()
+    @StateObject private var coordinator = HunterCoordinator()
 
     var body: some View {
         GeometryReader { geometry in
@@ -18,11 +17,11 @@ struct BallBlastRockDropCameraView: View {
                 BallTrackerPreviewLayerView(previewLayer: cameraController.previewLayer)
                     .ignoresSafeArea()
 
-                Color.black.opacity(0.16)
+                Color.black.opacity(0.18)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
 
-                BallBlastRockDropRenderSurface(coordinator: coordinator)
+                HunterRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
@@ -32,11 +31,11 @@ struct BallBlastRockDropCameraView: View {
                 .padding(.vertical, 14)
 
                 if cameraController.isStarting {
-                    BallBlastRockDropLoadingOverlay()
+                    HunterLoadingOverlay()
                 }
 
                 if let errorMessage = cameraController.errorMessage {
-                    BallBlastRockDropErrorOverlay(
+                    HunterErrorOverlay(
                         message: errorMessage,
                         permissionDenied: cameraController.permissionDenied,
                         onDismiss: { dismiss() }
@@ -50,9 +49,9 @@ struct BallBlastRockDropCameraView: View {
                 }
 
                 if coordinator.phase == .gameOver {
-                    BallBlastRockDropFinishedOverlay(
-                        title: "GAME OVER",
-                        subtitle: "A rock hit the ball.",
+                    HunterFinishedOverlay(
+                        title: "CAUGHT",
+                        subtitle: "The hunter touched the ball.",
                         timeText: coordinator.survivedTimeText,
                         primaryTitle: "PLAY AGAIN",
                         onPrimary: { coordinator.reset(in: geometry.size) },
@@ -61,8 +60,8 @@ struct BallBlastRockDropCameraView: View {
                 }
 
                 if coordinator.phase == .won {
-                    BallBlastRockDropFinishedOverlay(
-                        title: "YOU SURVIVED",
+                    HunterFinishedOverlay(
+                        title: "ESCAPED",
                         subtitle: "Clean run.",
                         timeText: "60s",
                         primaryTitle: "PLAY AGAIN",
@@ -100,13 +99,13 @@ struct BallBlastRockDropCameraView: View {
         HStack {
             Spacer()
 
-            BallBlastRockDropHudChip(title: "TIME", value: coordinator.timerText, tint: .orange)
+            HunterHudChip(title: "TIME", value: coordinator.timerText, tint: .red)
                 .padding(.top, 8)
         }
     }
 }
 
-private enum BallBlastRockDropPhase {
+private enum HunterPhase {
     case readiness
     case countdown
     case live
@@ -114,17 +113,12 @@ private enum BallBlastRockDropPhase {
     case won
 }
 
-private final class BallBlastRockDropCoordinator: ObservableObject {
-    @Published private(set) var phase: BallBlastRockDropPhase = .readiness
+private final class HunterCoordinator: ObservableObject {
+    @Published private(set) var phase: HunterPhase = .readiness
     @Published private(set) var ballFoundStartedAt: Date?
     @Published private(set) var countdownStartedAt: Date?
-    @Published private(set) var isTracking = false
-    @Published private(set) var trackingStatusText = "SEARCHING"
-    @Published private(set) var confidenceText = "--"
     @Published private(set) var timerText = "60"
     @Published private(set) var survivedTimeText = "0s"
-    @Published private(set) var activeRockCount = 0
-    @Published private(set) var modeText = "READY"
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
@@ -136,15 +130,16 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     private var lastStepAt: Date?
     private var lostBallFrameCount = 0
     private var heldBallDisplayRect: CGRect?
-    private var gameState = BallBlastRockDropGameState()
-    private weak var renderView: BallBlastRockDropRenderView?
+    private var isTracking = false
+    private var gameState = HunterGameState()
+    private weak var renderView: HunterRenderView?
 
-    func attach(renderView: BallBlastRockDropRenderView) {
+    func attach(renderView: HunterRenderView) {
         self.renderView = renderView
         renderView.update(
-            rocks: gameState.rocks,
+            hunter: gameState.hunter,
             ballDisplayRect: nil,
-            isTracking: isTracking,
+            isTracking: false,
             prompt: promptText
         )
     }
@@ -154,20 +149,16 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         phase = .readiness
         ballFoundStartedAt = nil
         countdownStartedAt = nil
-        isTracking = false
-        trackingStatusText = "SEARCHING"
-        confidenceText = "--"
         timerText = "60"
         survivedTimeText = "0s"
-        activeRockCount = 0
-        modeText = "READY"
         liveElapsed = 0
         lastStepAt = nil
         lostBallFrameCount = 0
         heldBallDisplayRect = nil
+        isTracking = false
         gameState.reset()
         renderView?.update(
-            rocks: gameState.rocks,
+            hunter: gameState.hunter,
             ballDisplayRect: nil,
             isTracking: false,
             prompt: promptText
@@ -177,8 +168,8 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     func prepare(in size: CGSize) {
         self.size = size
         renderView?.update(
-            rocks: gameState.rocks,
-            ballDisplayRect: nil,
+            hunter: gameState.hunter,
+            ballDisplayRect: heldBallDisplayRect,
             isTracking: isTracking,
             prompt: promptText
         )
@@ -193,12 +184,10 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         )
         let effectiveIsTracking = effectiveBallDisplayRect != nil
         isTracking = effectiveIsTracking
-        trackingStatusText = statusText(for: overlayState.statusText, isHoldingBall: isHoldingBall)
-        confidenceText = overlayState.confidence.map { String(format: "%.2f", $0) } ?? "--"
 
         guard phase != .gameOver, phase != .won else {
             renderView?.update(
-                rocks: gameState.rocks,
+                hunter: gameState.hunter,
                 ballDisplayRect: effectiveBallDisplayRect,
                 isTracking: effectiveIsTracking,
                 prompt: promptText
@@ -216,18 +205,12 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
             )
         }
 
-        activeRockCount = gameState.rocks.count
-        modeText = modeText(for: effectiveIsTracking)
         renderView?.update(
-            rocks: gameState.rocks,
+            hunter: gameState.hunter,
             ballDisplayRect: effectiveBallDisplayRect,
             isTracking: effectiveIsTracking,
             prompt: promptText
         )
-    }
-
-    private var isHoldingBall: Bool {
-        heldBallDisplayRect != nil && lostBallFrameCount > 0 && lostBallFrameCount < lostBallPromptFrameThreshold
     }
 
     private func resolvedBallDisplayRect(
@@ -253,10 +236,6 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         return nil
     }
 
-    private func statusText(for rawStatusText: String, isHoldingBall: Bool) -> String {
-        isHoldingBall ? "HOLDING" : rawStatusText.uppercased()
-    }
-
     private func displayRect(
         for overlayState: BallTrackerOverlayState,
         cameraController: BallTrackerCameraController
@@ -278,7 +257,6 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
                 timestamp.timeIntervalSince(countdownStartedAt) >= countdownDuration
             {
                 phase = .live
-                modeText = "DODGE"
                 lastStepAt = nil
             }
             return
@@ -295,7 +273,6 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
 
         let startedAt = ballFoundStartedAt ?? timestamp
         ballFoundStartedAt = startedAt
-
         if timestamp.timeIntervalSince(startedAt) >= requiredBallLockSeconds {
             countdownStartedAt = timestamp
             phase = .countdown
@@ -309,7 +286,6 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     ) {
         guard isTracking, let ballDisplayRect else {
             lastStepAt = nil
-            modeText = "PAUSED"
             return
         }
 
@@ -328,17 +304,13 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         )
 
         switch event {
-        case .collision:
+        case .caught:
             phase = .gameOver
-            modeText = "HIT"
         case .none:
             if liveElapsed >= roundDuration {
                 phase = .won
                 timerText = "0"
                 survivedTimeText = "60s"
-                modeText = "CLEAR"
-            } else {
-                modeText = "DODGE"
             }
         }
     }
@@ -352,46 +324,35 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         case .gameOver:
             return "Game over"
         case .won:
-            return "You survived"
-        }
-    }
-
-    private func modeText(for tracking: Bool) -> String {
-        switch phase {
-        case .readiness:
-            return "READY"
-        case .countdown:
-            return "SET"
-        case .live:
-            return tracking ? "DODGE" : "PAUSED"
-        case .gameOver:
-            return "HIT"
-        case .won:
-            return "CLEAR"
+            return "Escaped"
         }
     }
 }
 
-private struct BallBlastRockDropRenderSurface: UIViewRepresentable {
-    let coordinator: BallBlastRockDropCoordinator
+private struct HunterRenderSurface: UIViewRepresentable {
+    let coordinator: HunterCoordinator
 
-    func makeUIView(context: Context) -> BallBlastRockDropRenderView {
-        let view = BallBlastRockDropRenderView()
+    func makeUIView(context: Context) -> HunterRenderView {
+        let view = HunterRenderView()
         coordinator.attach(renderView: view)
         return view
     }
 
-    func updateUIView(_ uiView: BallBlastRockDropRenderView, context: Context) {
+    func updateUIView(_ uiView: HunterRenderView, context: Context) {
     }
 }
 
-private final class BallBlastRockDropRenderView: UIView {
+private final class HunterRenderView: UIView {
+    private let hunterGlowLayer = CAShapeLayer()
+    private let hunterFillLayer = CAShapeLayer()
+    private let hunterStrokeLayer = CAShapeLayer()
+    private let hunterTickLayer = CAShapeLayer()
+    private let hunterImpactLayer = CAShapeLayer()
     private let ballRingLayer = CAShapeLayer()
     private let ballCenterLayer = CAShapeLayer()
     private let promptLabel = UILabel()
 
-    private var rockLayers: [UUID: BallBlastRockLayerSet] = [:]
-    private var rocks: [BallBlastRock] = []
+    private var hunter: HunterZone?
     private var ballDisplayRect: CGRect?
     private var isTracking = false
     private var prompt: String?
@@ -409,12 +370,12 @@ private final class BallBlastRockDropRenderView: UIView {
     }
 
     func update(
-        rocks: [BallBlastRock],
+        hunter: HunterZone?,
         ballDisplayRect: CGRect?,
         isTracking: Bool,
         prompt: String?
     ) {
-        self.rocks = rocks
+        self.hunter = hunter
         self.ballDisplayRect = ballDisplayRect
         self.isTracking = isTracking
         self.prompt = prompt
@@ -427,6 +388,35 @@ private final class BallBlastRockDropRenderView: UIView {
     }
 
     private func configureLayers() {
+        hunterGlowLayer.fillColor = UIColor.clear.cgColor
+        hunterGlowLayer.strokeColor = UIColor.red.withAlphaComponent(0.26).cgColor
+        hunterGlowLayer.lineWidth = 20
+        hunterGlowLayer.shadowColor = UIColor.red.cgColor
+        hunterGlowLayer.shadowOpacity = 0.72
+        hunterGlowLayer.shadowRadius = 18
+        hunterGlowLayer.shadowOffset = .zero
+        layer.addSublayer(hunterGlowLayer)
+
+        hunterFillLayer.fillColor = UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.17).cgColor
+        layer.addSublayer(hunterFillLayer)
+
+        hunterStrokeLayer.fillColor = UIColor.clear.cgColor
+        hunterStrokeLayer.strokeColor = UIColor(red: 1.0, green: 0.06, blue: 0.03, alpha: 0.92).cgColor
+        hunterStrokeLayer.lineWidth = 5
+        layer.addSublayer(hunterStrokeLayer)
+
+        hunterTickLayer.fillColor = UIColor.clear.cgColor
+        hunterTickLayer.strokeColor = UIColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 0.88).cgColor
+        hunterTickLayer.lineWidth = 4
+        hunterTickLayer.lineCap = .round
+        hunterTickLayer.lineJoin = .round
+        layer.addSublayer(hunterTickLayer)
+
+        hunterImpactLayer.fillColor = UIColor.clear.cgColor
+        hunterImpactLayer.strokeColor = UIColor(red: 1.0, green: 0.08, blue: 0.02, alpha: 0.48).cgColor
+        hunterImpactLayer.lineWidth = 5
+        layer.addSublayer(hunterImpactLayer)
+
         ballRingLayer.fillColor = UIColor.clear.cgColor
         ballRingLayer.strokeColor = UIColor.white.cgColor
         ballRingLayer.lineWidth = 3
@@ -434,8 +424,9 @@ private final class BallBlastRockDropRenderView: UIView {
         ballRingLayer.shadowOpacity = 0.45
         ballRingLayer.shadowRadius = 6
         ballRingLayer.shadowOffset = .zero
-        ballCenterLayer.fillColor = UIColor.orange.cgColor
         layer.addSublayer(ballRingLayer)
+
+        ballCenterLayer.fillColor = UIColor.yellow.cgColor
         layer.addSublayer(ballCenterLayer)
 
         promptLabel.font = .systemFont(ofSize: 17, weight: .black)
@@ -450,123 +441,108 @@ private final class BallBlastRockDropRenderView: UIView {
     private func render() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        renderRocks()
+        renderHunter()
         renderBall()
         renderPrompt()
         CATransaction.commit()
     }
 
-    private func renderRocks() {
-        let activeIDs = Set(rocks.map(\.id))
-        let inactiveIDs = rockLayers.keys.filter { !activeIDs.contains($0) }
-        for id in inactiveIDs {
-            rockLayers[id]?.container.removeFromSuperlayer()
-            rockLayers[id] = nil
+    private func renderHunter() {
+        guard let hunter else {
+            hunterGlowLayer.isHidden = true
+            hunterFillLayer.isHidden = true
+            hunterStrokeLayer.isHidden = true
+            hunterTickLayer.isHidden = true
+            hunterImpactLayer.isHidden = true
+            return
         }
 
-        for rock in rocks {
-            let layerSet = rockLayers[rock.id] ?? makeRockLayerSet(for: rock)
-            update(layerSet: layerSet, with: rock)
+        hunterGlowLayer.isHidden = false
+        hunterFillLayer.isHidden = false
+        hunterStrokeLayer.isHidden = false
+        hunterTickLayer.isHidden = false
+        hunterImpactLayer.isHidden = hunter.phase != .impact
+
+        let pulse = 0.5 + 0.5 * sin(hunter.pulsePhase)
+        let pulseInset = hunter.radius * CGFloat(0.08 * pulse)
+        let ringRect = CGRect(
+            x: hunter.center.x - hunter.radius - pulseInset,
+            y: hunter.center.y - hunter.radius - pulseInset,
+            width: (hunter.radius + pulseInset) * 2,
+            height: (hunter.radius + pulseInset) * 2
+        )
+        let coreRect = CGRect(
+            x: hunter.center.x - hunter.radius,
+            y: hunter.center.y - hunter.radius,
+            width: hunter.radius * 2,
+            height: hunter.radius * 2
+        )
+
+        hunterGlowLayer.path = UIBezierPath(ovalIn: ringRect).cgPath
+        hunterGlowLayer.lineWidth = hunter.phase == .diving ? 18 + pulse * 13 : 12 + pulse * 8
+        hunterGlowLayer.opacity = Float((hunter.phase == .recovering ? 0.28 : 0.48) + pulse * 0.28)
+
+        hunterFillLayer.path = UIBezierPath(ovalIn: coreRect).cgPath
+        hunterFillLayer.fillColor = fillColor(for: hunter).cgColor
+        hunterStrokeLayer.path = UIBezierPath(ovalIn: coreRect).cgPath
+        hunterStrokeLayer.strokeColor = strokeColor(for: hunter).cgColor
+        hunterTickLayer.path = makeTickPath(for: hunter).cgPath
+        hunterImpactLayer.path = impactPath(for: hunter).cgPath
+        hunterImpactLayer.opacity = Float(max(0, 1 - hunter.phaseElapsed / 0.22))
+    }
+
+    private func fillColor(for hunter: HunterZone) -> UIColor {
+        switch hunter.phase {
+        case .aiming:
+            return UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.14)
+        case .diving:
+            return UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.24)
+        case .impact:
+            return UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.30)
+        case .recovering:
+            return UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.10)
         }
     }
 
-    private func makeRockLayerSet(for rock: BallBlastRock) -> BallBlastRockLayerSet {
-        let container = CALayer()
-        container.shadowColor = UIColor.black.cgColor
-        container.shadowOpacity = 0.36
-        container.shadowRadius = 8
-        container.shadowOffset = CGSize(width: 0, height: 4)
-
-        let body = CAShapeLayer()
-        body.lineJoin = .round
-        body.lineCap = .round
-        body.fillColor = UIColor(red: 0.45, green: 0.47, blue: 0.50, alpha: 1).cgColor
-        body.strokeColor = UIColor(red: 0.12, green: 0.13, blue: 0.14, alpha: 1).cgColor
-        body.lineWidth = 4
-
-        let highlight = CAShapeLayer()
-        highlight.fillColor = UIColor.white.withAlphaComponent(0.28).cgColor
-
-        let crack = CAShapeLayer()
-        crack.fillColor = UIColor.clear.cgColor
-        crack.strokeColor = UIColor(red: 0.18, green: 0.19, blue: 0.21, alpha: 0.82).cgColor
-        crack.lineWidth = 3
-        crack.lineCap = .round
-        crack.lineJoin = .round
-
-        container.addSublayer(body)
-        container.addSublayer(highlight)
-        container.addSublayer(crack)
-        layer.insertSublayer(container, below: ballRingLayer)
-
-        let set = BallBlastRockLayerSet(
-            container: container,
-            body: body,
-            highlight: highlight,
-            crack: crack
-        )
-        rockLayers[rock.id] = set
-        return set
+    private func strokeColor(for hunter: HunterZone) -> UIColor {
+        switch hunter.phase {
+        case .aiming:
+            return UIColor(red: 1.0, green: 0.10, blue: 0.04, alpha: 0.78)
+        case .diving, .impact:
+            return UIColor(red: 1.0, green: 0.04, blue: 0.02, alpha: 0.96)
+        case .recovering:
+            return UIColor(red: 1.0, green: 0.24, blue: 0.12, alpha: 0.48)
+        }
     }
 
-    private func update(layerSet: BallBlastRockLayerSet, with rock: BallBlastRock) {
-        let side = rock.radius * 2.35
-        let bounds = CGRect(x: 0, y: 0, width: side, height: side)
-        layerSet.container.bounds = bounds
-        layerSet.container.position = rock.center
-        layerSet.container.setAffineTransform(CGAffineTransform(rotationAngle: rock.rotation))
-
-        let rockRect = bounds.insetBy(dx: side * 0.12, dy: side * 0.14)
-        let rockPath = makeRockPath(in: rockRect, seed: rock.seed)
-        layerSet.body.frame = bounds
-        layerSet.body.path = rockPath.cgPath
-
-        let highlightRect = CGRect(
-            x: bounds.width * 0.33,
-            y: bounds.height * 0.24,
-            width: bounds.width * 0.24,
-            height: bounds.height * 0.15
+    private func impactPath(for hunter: HunterZone) -> UIBezierPath {
+        let radius = hunter.radius * (1.15 + min(hunter.phaseElapsed / 0.22, 1) * 0.65)
+        let rect = CGRect(
+            x: hunter.center.x - radius,
+            y: hunter.center.y - radius,
+            width: radius * 2,
+            height: radius * 2
         )
-        layerSet.highlight.frame = bounds
-        layerSet.highlight.path = UIBezierPath(ovalIn: highlightRect).cgPath
-
-        layerSet.crack.frame = bounds
-        layerSet.crack.path = makeCrackPath(in: bounds, seed: rock.seed).cgPath
+        return UIBezierPath(ovalIn: rect)
     }
 
-    private func makeRockPath(in rect: CGRect, seed: CGFloat) -> UIBezierPath {
+    private func makeTickPath(for hunter: HunterZone) -> UIBezierPath {
         let path = UIBezierPath()
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let pointCount = 11
-        for index in 0..<pointCount {
-            let angle = (CGFloat(index) / CGFloat(pointCount)) * .pi * 2
-            let wobble = 0.84
-                + 0.12 * sin(seed * 1.7 + CGFloat(index) * 1.31)
-                + 0.08 * cos(seed * 0.9 + CGFloat(index) * 2.11)
-            let xRadius = rect.width * 0.5 * wobble
-            let yRadius = rect.height * 0.5 * (0.92 + 0.10 * cos(seed + CGFloat(index)))
-            let point = CGPoint(
-                x: center.x + cos(angle) * xRadius,
-                y: center.y + sin(angle) * yRadius
+        let angles: [CGFloat] = [-.pi / 2, 0, .pi / 2, .pi]
+        for angle in angles {
+            let inner = hunter.radius * 0.70
+            let outer = hunter.radius * 1.10
+            let start = CGPoint(
+                x: hunter.center.x + cos(angle) * inner,
+                y: hunter.center.y + sin(angle) * inner
             )
-            if index == 0 {
-                path.move(to: point)
-            } else {
-                path.addLine(to: point)
-            }
+            let end = CGPoint(
+                x: hunter.center.x + cos(angle) * outer,
+                y: hunter.center.y + sin(angle) * outer
+            )
+            path.move(to: start)
+            path.addLine(to: end)
         }
-        path.close()
-        return path
-    }
-
-    private func makeCrackPath(in bounds: CGRect, seed: CGFloat) -> UIBezierPath {
-        let path = UIBezierPath()
-        let start = CGPoint(x: bounds.midX + sin(seed) * bounds.width * 0.08, y: bounds.height * 0.34)
-        path.move(to: start)
-        path.addLine(to: CGPoint(x: bounds.midX - bounds.width * 0.06, y: bounds.midY))
-        path.addLine(to: CGPoint(x: bounds.midX + bounds.width * 0.05, y: bounds.midY + bounds.height * 0.14))
-        path.move(to: CGPoint(x: bounds.midX - bounds.width * 0.05, y: bounds.midY))
-        path.addLine(to: CGPoint(x: bounds.midX - bounds.width * 0.18, y: bounds.midY + bounds.height * 0.05))
         return path
     }
 
@@ -581,6 +557,7 @@ private final class BallBlastRockDropRenderView: UIView {
 
         ballRingLayer.isHidden = false
         ballCenterLayer.isHidden = false
+        ballRingLayer.strokeColor = (isTracking ? UIColor.white : UIColor.systemOrange).cgColor
         ballRingLayer.path = UIBezierPath(ovalIn: ballDisplayRect).cgPath
         ballCenterLayer.path = UIBezierPath(
             ovalIn: CGRect(
@@ -605,25 +582,11 @@ private final class BallBlastRockDropRenderView: UIView {
     }
 }
 
-private struct BallBlastRockLayerSet {
-    let container: CALayer
-    let body: CAShapeLayer
-    let highlight: CAShapeLayer
-    let crack: CAShapeLayer
-}
-
-private struct BallBlastRockDropGameState {
-    var rocks: [BallBlastRock] = []
-
-    private var nextSpawnElapsed: TimeInterval = 0.35
-    private var lastSpawnX: CGFloat?
-    private var recentBallCenters: [CGPoint] = []
+private struct HunterGameState {
+    private(set) var hunter: HunterZone?
 
     mutating func reset() {
-        rocks = []
-        nextSpawnElapsed = 0.35
-        lastSpawnX = nil
-        recentBallCenters.removeAll()
+        hunter = nil
     }
 
     mutating func step(
@@ -631,162 +594,179 @@ private struct BallBlastRockDropGameState {
         in size: CGSize,
         elapsed: TimeInterval,
         delta: TimeInterval
-    ) -> BallBlastRockDropEvent? {
+    ) -> HunterEvent? {
         guard size.width > 0, size.height > 0 else {
             return nil
         }
 
-        let progress = min(max(elapsed / 60.0, 0), 1)
-        recordBallCenter(from: ballDisplayRect)
-        for index in rocks.indices {
-            rocks[index].advance(delta: delta)
+        if hunter == nil {
+            hunter = makeHunter(awayFrom: ballDisplayRect, in: size)
         }
-        rocks.removeAll { $0.center.y - $0.radius > size.height + 80 }
 
-        spawnRocksIfNeeded(in: size, elapsed: elapsed, progress: progress)
-
-        guard collides(with: ballDisplayRect) else {
+        guard var activeHunter = hunter else {
             return nil
         }
-        return .collision
+
+        let progress = min(max(elapsed / 60.0, 0), 1)
+        let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
+        activeHunter.advance(
+            toward: ballCenter,
+            in: size,
+            progress: progress,
+            delta: delta
+        )
+        hunter = activeHunter
+
+        return activeHunter.collides(with: ballDisplayRect) ? .caught : nil
     }
 
-    private mutating func spawnRocksIfNeeded(
-        in size: CGSize,
-        elapsed: TimeInterval,
-        progress: Double
-    ) {
-        let maxRocks = Int(5 + progress * 12)
-        while elapsed >= nextSpawnElapsed, rocks.count < maxRocks {
-            spawnRock(in: size, progress: progress)
-            let interval = Double.random(in: spawnIntervalRange(progress: progress))
-            nextSpawnElapsed = elapsed + interval
-        }
-    }
-
-    private mutating func spawnRock(in size: CGSize, progress: Double) {
+    private func makeHunter(awayFrom ballDisplayRect: CGRect, in size: CGSize) -> HunterZone {
         let minDimension = min(size.width, size.height)
-        let radius = CGFloat.random(in: max(22, minDimension * 0.042)...max(34, minDimension * 0.085))
-        let xBounds = (radius + 10)...(size.width - radius - 10)
-        var x = spawnX(in: xBounds, radius: radius, progress: progress)
-        if
-            !shouldTargetRecentBall(progress: progress),
-            let lastSpawnX,
-            abs(x - lastSpawnX) < radius * 2.5
-        {
-            x = min(max(x + radius * 3.2, xBounds.lowerBound), xBounds.upperBound)
-        }
-        lastSpawnX = x
+        let radius = min(max(minDimension * 0.09, 40), 62)
+        let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
+        let topY = radius + max(18, size.height * 0.045)
+        let spawnPoints = [
+            CGPoint(x: radius + 24, y: topY),
+            CGPoint(x: size.width - radius - 24, y: topY),
+            CGPoint(x: size.width * 0.5, y: topY)
+        ]
+        let spawn = spawnPoints.max {
+            hypot($0.x - ballCenter.x, $0.y - ballCenter.y) < hypot($1.x - ballCenter.x, $1.y - ballCenter.y)
+        } ?? CGPoint(x: radius + 24, y: topY)
+        return HunterZone(
+            center: spawn,
+            target: spawn,
+            radius: radius,
+            pulsePhase: 0,
+            phase: .aiming,
+            phaseElapsed: 0
+        )
+    }
+}
 
-        let baseSpeed = CGFloat(125 + progress * 185) * CGFloat(1.0 + progress * 0.10)
-        let speed = baseSpeed * CGFloat.random(in: 0.72...1.38)
-        let radiusPadding = CGFloat.random(in: 0...80)
-        rocks.append(
-            BallBlastRock(
-                center: CGPoint(x: x, y: -radius - radiusPadding),
-                radius: radius,
-                speed: speed,
-                rotation: CGFloat.random(in: -.pi ... .pi),
-                rotationSpeed: CGFloat.random(in: -1.6...1.6),
-                seed: CGFloat.random(in: 0.1...20)
+private enum HunterAttackPhase {
+    case aiming
+    case diving
+    case impact
+    case recovering
+}
+
+private struct HunterZone {
+    var center: CGPoint
+    var target: CGPoint
+    let radius: CGFloat
+    var pulsePhase: CGFloat
+    var phase: HunterAttackPhase
+    var phaseElapsed: TimeInterval
+
+    mutating func advance(
+        toward target: CGPoint,
+        in size: CGSize,
+        progress: Double,
+        delta: TimeInterval
+    ) {
+        pulsePhase += CGFloat(delta) * (phase == .diving ? 9.0 : 6.0)
+        phaseElapsed += delta
+
+        let easedProgress = pow(progress, 1.35)
+        let minDimension = min(size.width, size.height)
+
+        switch phase {
+        case .aiming:
+            let topY = topLine(in: size)
+            let xSpeed = minDimension * CGFloat(0.64 + easedProgress * 0.34)
+            moveToward(
+                CGPoint(x: target.x, y: topY),
+                speed: xSpeed,
+                delta: delta,
+                in: size
             )
+
+            let aimDuration = max(0.38, 0.82 - progress * 0.30)
+            if phaseElapsed >= aimDuration {
+                self.target = impactTarget(for: target, in: size)
+                phase = .diving
+                phaseElapsed = 0
+            }
+
+        case .diving:
+            let diveSpeed = minDimension * CGFloat(0.78 + easedProgress * 0.62)
+            moveToward(self.target, speed: diveSpeed, delta: delta, in: size)
+            if distance(to: self.target) <= max(8, radius * 0.18) || center.y >= lowerLimit(in: size) {
+                phase = .impact
+                phaseElapsed = 0
+            }
+
+        case .impact:
+            if phaseElapsed >= max(0.13, 0.22 - progress * 0.06) {
+                let topY = topLine(in: size)
+                self.target = CGPoint(x: center.x, y: topY)
+                phase = .recovering
+                phaseElapsed = 0
+            }
+
+        case .recovering:
+            let recoverSpeed = minDimension * CGFloat(0.88 + easedProgress * 0.42)
+            moveToward(self.target, speed: recoverSpeed, delta: delta, in: size)
+            if distance(to: self.target) <= max(8, radius * 0.18) {
+                phase = .aiming
+                phaseElapsed = 0
+            }
+        }
+
+        center.x = min(max(center.x, radius), size.width - radius)
+        center.y = min(max(center.y, radius), size.height - radius)
+    }
+
+    func collides(with ballDisplayRect: CGRect) -> Bool {
+        guard phase == .diving || phase == .impact else {
+            return false
+        }
+        let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
+        let ballRadius = max(ballDisplayRect.width, ballDisplayRect.height) * 0.5 * 0.72
+        let distance = hypot(ballCenter.x - center.x, ballCenter.y - center.y)
+        return distance <= radius + ballRadius
+    }
+
+    private mutating func moveToward(
+        _ destination: CGPoint,
+        speed: CGFloat,
+        delta: TimeInterval,
+        in size: CGSize
+    ) {
+        let dx = destination.x - center.x
+        let dy = destination.y - center.y
+        let distance = max(hypot(dx, dy), 0.001)
+        let step = min(speed * CGFloat(delta), distance)
+        center.x += dx / distance * step
+        center.y += dy / distance * step
+    }
+
+    private func impactTarget(for ballCenter: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(
+            x: min(max(ballCenter.x, radius), size.width - radius),
+            y: min(max(ballCenter.y, size.height * 0.46), lowerLimit(in: size))
         )
     }
 
-    private func collides(with ballDisplayRect: CGRect) -> Bool {
-        let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
-        let ballRadius = max(ballDisplayRect.width, ballDisplayRect.height) * 0.5 * 0.74
-
-        return rocks.contains { rock in
-            let distance = hypot(ballCenter.x - rock.center.x, ballCenter.y - rock.center.y)
-            return distance <= ballRadius + rock.collisionRadius
-        }
+    private func topLine(in size: CGSize) -> CGFloat {
+        radius + max(18, size.height * 0.045)
     }
 
-    private func spawnIntervalRange(progress: Double) -> ClosedRange<Double> {
-        let minimum = max(0.20, 0.78 - progress * 0.46)
-        let maximum = max(minimum + 0.08, 1.24 - progress * 0.74)
-        return minimum...maximum
+    private func lowerLimit(in size: CGSize) -> CGFloat {
+        size.height - radius - max(10, size.height * 0.03)
     }
 
-    private mutating func recordBallCenter(from ballDisplayRect: CGRect) {
-        recentBallCenters.append(CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY))
-        if recentBallCenters.count > 36 {
-            recentBallCenters.removeFirst(recentBallCenters.count - 36)
-        }
-    }
-
-    private func spawnX(
-        in bounds: ClosedRange<CGFloat>,
-        radius: CGFloat,
-        progress: Double
-    ) -> CGFloat {
-        if shouldTargetRecentBall(progress: progress), let targetX = targetedSpawnX(in: bounds, radius: radius) {
-            return targetX
-        }
-        return CGFloat.random(in: bounds)
-    }
-
-    private func shouldTargetRecentBall(progress: Double) -> Bool {
-        guard recentBallCenters.count >= 8 else {
-            return false
-        }
-        let chance = min(0.64, 0.26 + progress * 0.28)
-        return Double.random(in: 0...1) < chance
-    }
-
-    private func targetedSpawnX(in bounds: ClosedRange<CGFloat>, radius: CGFloat) -> CGFloat? {
-        guard let clusterCenterX = recentStandingClusterX() else {
-            return nil
-        }
-
-        let jitter = CGFloat.random(in: -radius * 1.15...radius * 1.15)
-        return min(max(clusterCenterX + jitter, bounds.lowerBound), bounds.upperBound)
-    }
-
-    private func recentStandingClusterX() -> CGFloat? {
-        let recent = recentBallCenters.suffix(18)
-        guard recent.count >= 8 else {
-            return nil
-        }
-
-        let averageX = recent.reduce(CGFloat.zero) { $0 + $1.x } / CGFloat(recent.count)
-        let averageY = recent.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(recent.count)
-        let spread = recent.reduce(CGFloat.zero) { partial, point in
-            partial + hypot(point.x - averageX, point.y - averageY)
-        } / CGFloat(recent.count)
-
-        guard spread <= 95 else {
-            return nil
-        }
-        return averageX
+    private func distance(to point: CGPoint) -> CGFloat {
+        hypot(center.x - point.x, center.y - point.y)
     }
 }
 
-private struct BallBlastRock: Identifiable {
-    let id = UUID()
-    var center: CGPoint
-    let radius: CGFloat
-    let speed: CGFloat
-    var rotation: CGFloat
-    let rotationSpeed: CGFloat
-    let seed: CGFloat
-
-    var collisionRadius: CGFloat {
-        radius * 0.78
-    }
-
-    mutating func advance(delta: TimeInterval) {
-        center.y += speed * CGFloat(delta)
-        rotation += rotationSpeed * CGFloat(delta)
-    }
+private enum HunterEvent {
+    case caught
 }
 
-private enum BallBlastRockDropEvent {
-    case collision
-}
-
-private struct BallBlastRockDropHudChip: View {
+private struct HunterHudChip: View {
     let title: String
     let value: String
     let tint: Color
@@ -806,47 +786,17 @@ private struct BallBlastRockDropHudChip: View {
         .background(.black.opacity(0.44), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(tint.opacity(0.48), lineWidth: 1.5)
+                .stroke(tint.opacity(0.58), lineWidth: 1.5)
         )
     }
 }
 
-private struct BallBlastRockDropMiniHudChip: View {
-    let title: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 9, weight: .black, design: .rounded))
-                .tracking(1.2)
-                .foregroundStyle(.white.opacity(0.56))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-
-            Text(value)
-                .font(.system(size: 12, weight: .black, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .frame(width: 72, height: 40, alignment: .leading)
-        .padding(.horizontal, 9)
-        .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(tint.opacity(0.76), lineWidth: 1.2)
-        )
-    }
-}
-
-private struct BallBlastRockDropLoadingOverlay: View {
+private struct HunterLoadingOverlay: View {
     var body: some View {
         VStack(spacing: 14) {
             ProgressView()
                 .tint(.white)
-            Text("Starting Rock Drop...")
+            Text("Starting The Hunter...")
                 .font(.system(size: 16, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
         }
@@ -856,7 +806,7 @@ private struct BallBlastRockDropLoadingOverlay: View {
     }
 }
 
-private struct BallBlastRockDropErrorOverlay: View {
+private struct HunterErrorOverlay: View {
     let message: String
     let permissionDenied: Bool
     let onDismiss: () -> Void
@@ -911,7 +861,7 @@ private struct BallBlastRockDropErrorOverlay: View {
     }
 }
 
-private struct BallBlastRockDropFinishedOverlay: View {
+private struct HunterFinishedOverlay: View {
     let title: String
     let subtitle: String
     let timeText: String

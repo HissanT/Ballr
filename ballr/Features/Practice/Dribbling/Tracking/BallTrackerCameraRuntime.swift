@@ -8,6 +8,7 @@ import Vision
 struct BallTrackerFrame {
     let overlayState: BallTrackerOverlayState
     let timestamp: Date
+    let framePixelSize: CGSize
 }
 
 final class BallTrackerCameraController: NSObject, ObservableObject {
@@ -35,6 +36,7 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
     private var isObservingOrientationChanges = false
     private var lastTrackingPublishTimestamp = Date.distantPast
     private var lastPublishedTrackingStatus: Bool?
+    private var currentFramePixelSize: CGSize = .zero
     #if DEBUG
     private var processedFrameCount = 0
     private var droppedFrameCount = 0
@@ -127,6 +129,47 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
             return nil
         }
         return displayRect
+    }
+
+    func displayPoint(forTrackerPoint point: CGPoint) -> CGPoint? {
+        let rect = CGRect(
+            x: point.x - 0.0005,
+            y: point.y - 0.0005,
+            width: 0.001,
+            height: 0.001
+        )
+        guard let displayRect = displayRect(for: rect) else {
+            return nil
+        }
+        return CGPoint(x: displayRect.midX, y: displayRect.midY)
+    }
+
+    func trackerPoint(forDisplayPoint point: CGPoint) -> CGPoint? {
+        guard !previewLayer.bounds.isEmpty else {
+            return nil
+        }
+
+        let probeRect = CGRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)
+        var metadataRect = previewLayer.metadataOutputRectConverted(fromLayerRect: probeRect)
+            .standardized
+            .intersection(unitRect)
+        guard !metadataRect.isNull, !metadataRect.isEmpty else {
+            return nil
+        }
+
+        var normalizedPoint = CGPoint(x: metadataRect.midX, y: metadataRect.midY)
+        if
+            resources?.config.frontendNotes.mirrorPreviewOnly == true,
+            previewLayer.connection?.isVideoMirrored == true
+        {
+            normalizedPoint.x = 1.0 - normalizedPoint.x
+            metadataRect.origin.x = 1.0 - metadataRect.origin.x - metadataRect.width
+        }
+
+        guard unitRect.contains(normalizedPoint) else {
+            return nil
+        }
+        return normalizedPoint
     }
 
     private func previewMetadataRect(fromTrackerRect trackerRect: CGRect) -> CGRect {
@@ -284,9 +327,20 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
         }
 
         let observations = (request.results as? [VNRecognizedObjectObservation]) ?? []
-        let overlayState = tracker.process(observations: observations, config: resources.config)
+        let timestamp = Date()
+        let framePixelSize = currentFramePixelSize
+        let overlayState = tracker.process(
+            observations: observations,
+            frameSize: framePixelSize,
+            timestamp: timestamp,
+            config: resources.config
+        )
         logFilteredObservationsIfNeeded(observations, overlayState: overlayState, config: resources.config)
-        let frame = BallTrackerFrame(overlayState: overlayState, timestamp: Date())
+        let frame = BallTrackerFrame(
+            overlayState: overlayState,
+            timestamp: timestamp,
+            framePixelSize: framePixelSize
+        )
         deliverTrackingFrame(frame)
 
         if shouldPublishTrackingFrameToSwiftUI(frame) {
@@ -418,6 +472,7 @@ extension BallTrackerCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
         let orientation = resources.config.frontendNotes.passCaptureOrientation
             ? CGImagePropertyOrientation(videoOrientation: connection.videoOrientation)
             : .up
+        currentFramePixelSize = framePixelSize(from: sampleBuffer, videoOrientation: connection.videoOrientation)
         let handler = VNImageRequestHandler(
             cmSampleBuffer: sampleBuffer,
             orientation: orientation,
@@ -431,6 +486,26 @@ extension BallTrackerCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
             publish {
                 $0.errorMessage = "Vision request failed: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func framePixelSize(
+        from sampleBuffer: CMSampleBuffer,
+        videoOrientation: AVCaptureVideoOrientation
+    ) -> CGSize {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return .zero
+        }
+
+        let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+        let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+        switch videoOrientation {
+        case .portrait, .portraitUpsideDown:
+            return CGSize(width: height, height: width)
+        case .landscapeLeft, .landscapeRight:
+            return CGSize(width: width, height: height)
+        @unknown default:
+            return CGSize(width: width, height: height)
         }
     }
 
