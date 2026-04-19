@@ -4,50 +4,50 @@ import Foundation
 import UIKit
 import Vision
 
-struct HandPoseFrame {
-    let overlayState: HandPoseOverlayState
+struct FootPoseFrame {
+    let overlayState: FootPoseOverlayState
     let timestamp: Date
     let framePixelSize: CGSize
 }
 
-struct HandOverlayState: Identifiable {
+struct FootOverlayState: Identifiable {
     let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
     let confidence: Double
 }
 
-struct HandPoseOverlayState {
-    let hands: [HandOverlayState]
+struct FootPoseOverlayState {
+    let feet: [FootOverlayState]
     let statusText: String
     let isTracking: Bool
     let candidateCount: Int
 
-    static let idle = HandPoseOverlayState(
-        hands: [],
+    static let idle = FootPoseOverlayState(
+        feet: [],
         statusText: "Searching",
         isTracking: false,
         candidateCount: 0
     )
 }
 
-final class HandPoseCameraController: NSObject, ObservableObject {
-    @Published private(set) var overlayState: HandPoseOverlayState = .idle
+final class FootPoseCameraController: NSObject, ObservableObject {
+    @Published private(set) var overlayState: FootPoseOverlayState = .idle
     @Published private(set) var errorMessage: String?
     @Published private(set) var permissionDenied = false
     @Published private(set) var isStarting = true
 
     let session = AVCaptureSession()
     let previewLayer: AVCaptureVideoPreviewLayer
-    var onTrackingFrame: ((HandPoseFrame) -> Void)?
+    var onTrackingFrame: ((FootPoseFrame) -> Void)?
     var publishesTrackingFramesToSwiftUI = true
 
-    private let sessionQueue = DispatchQueue(label: "ballr.hand-target.session")
-    private let videoOutputQueue = DispatchQueue(label: "ballr.hand-target.output")
+    private let sessionQueue = DispatchQueue(label: "ballr.foot-target.session")
+    private let videoOutputQueue = DispatchQueue(label: "ballr.foot-target.output")
     private let videoOutput = AVCaptureVideoDataOutput()
     private let processingSemaphore = DispatchSemaphore(value: 1)
     private let throttledTrackingPublishInterval: TimeInterval = 0.15
-    private let request = VNDetectHumanHandPoseRequest()
+    private let request = VNDetectHumanBodyPoseRequest()
 
     private var videoInput: AVCaptureDeviceInput?
     private var isConfigured = false
@@ -55,20 +55,16 @@ final class HandPoseCameraController: NSObject, ObservableObject {
     private var lastTrackingPublishTimestamp = Date.distantPast
     private var lastPublishedTrackingStatus: Bool?
     private var currentFramePixelSize: CGSize = .zero
-    private var trackedHands: [TrackedHand] = []
-    private var nextHandID = 0
+    private var trackedFeet: [TrackedFoot] = []
 
     private let minPointConfidence: VNConfidence = 0.25
-    private let minRequiredPoints = 4
-    private let maxTrackedHandMisses = 1
-    private let matchDistanceThreshold: CGFloat = 0.22
+    private let maxTrackedFootMisses = 1
     private let rectBlendAmount: CGFloat = 0.42
 
     override init() {
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         super.init()
         previewLayer.videoGravity = .resizeAspectFill
-        request.maximumHandCount = 2
     }
 
     deinit {
@@ -94,7 +90,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
                 } else {
                     self.publish {
                         $0.permissionDenied = true
-                        $0.errorMessage = HandPoseCameraError.cameraPermissionDenied.localizedDescription
+                        $0.errorMessage = FootPoseCameraError.cameraPermissionDenied.localizedDescription
                         $0.isStarting = false
                     }
                 }
@@ -102,7 +98,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         case .denied, .restricted:
             publish {
                 $0.permissionDenied = true
-                $0.errorMessage = HandPoseCameraError.cameraPermissionDenied.localizedDescription
+                $0.errorMessage = FootPoseCameraError.cameraPermissionDenied.localizedDescription
                 $0.isStarting = false
             }
         @unknown default:
@@ -124,7 +120,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
             if session.isRunning {
                 session.stopRunning()
             }
-            trackedHands = []
+            trackedFeet = []
         }
 
         publish {
@@ -227,12 +223,12 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         guard
             let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
         else {
-            throw HandPoseCameraError.cameraUnavailable
+            throw FootPoseCameraError.cameraUnavailable
         }
 
         let input = try AVCaptureDeviceInput(device: camera)
         guard session.canAddInput(input) else {
-            throw HandPoseCameraError.configurationFailed("Unable to add the front camera input.")
+            throw FootPoseCameraError.configurationFailed("Unable to add the front camera input.")
         }
         session.addInput(input)
         videoInput = input
@@ -244,7 +240,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         videoOutput.setSampleBufferDelegate(self, queue: videoOutputQueue)
 
         guard session.canAddOutput(videoOutput) else {
-            throw HandPoseCameraError.configurationFailed("Unable to add the video output.")
+            throw FootPoseCameraError.configurationFailed("Unable to add the video output.")
         }
         session.addOutput(videoOutput)
 
@@ -291,11 +287,11 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func handleHandPoseResults(_ observations: [VNHumanHandPoseObservation]) {
+    private func handleBodyPoseResults(_ observations: [VNHumanBodyPoseObservation]) {
         let timestamp = Date()
         let framePixelSize = currentFramePixelSize
         let overlayState = process(observations: observations)
-        let frame = HandPoseFrame(
+        let frame = FootPoseFrame(
             overlayState: overlayState,
             timestamp: timestamp,
             framePixelSize: framePixelSize
@@ -310,46 +306,40 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func process(observations: [VNHumanHandPoseObservation]) -> HandPoseOverlayState {
-        let candidates = observations
-            .compactMap(handCandidate(from:))
-            .sorted(by: { $0.confidence > $1.confidence })
-            .prefix(2)
+    private func process(observations: [VNHumanBodyPoseObservation]) -> FootPoseOverlayState {
+        let candidates = observations.compactMap(bodyCandidate(from:))
+        let strongestFeet = candidates.max(by: { $0.confidence < $1.confidence })?.feet ?? []
 
-        var unmatchedPrevious = trackedHands
-        var resolvedHands: [TrackedHand] = []
+        var previousByID = Dictionary(uniqueKeysWithValues: trackedFeet.map { ($0.id, $0) })
+        var resolvedFeet: [TrackedFoot] = []
 
-        for candidate in candidates {
-            if let matchIndex = bestMatchIndex(for: candidate, in: unmatchedPrevious) {
-                let previous = unmatchedPrevious.remove(at: matchIndex)
-                let blendedRect = blendRect(from: previous.normalizedRect, to: candidate.normalizedRect, amount: rectBlendAmount)
-                let blendedConfidence = Double(previous.confidence * Double(1 - rectBlendAmount) + candidate.confidence * Double(rectBlendAmount))
-                resolvedHands.append(
-                    TrackedHand(
-                        id: previous.id,
-                        normalizedRect: blendedRect,
-                        normalizedPoints: candidate.normalizedPoints,
-                        confidence: blendedConfidence,
+        for candidate in strongestFeet {
+            if let previous = previousByID.removeValue(forKey: candidate.id) {
+                resolvedFeet.append(
+                    TrackedFoot(
+                        id: candidate.id,
+                        normalizedRect: blendRect(from: previous.normalizedRect, to: candidate.normalizedRect, amount: rectBlendAmount),
+                        normalizedPoints: blendPoints(from: previous.normalizedPoints, to: candidate.normalizedPoints, amount: rectBlendAmount),
+                        confidence: previous.confidence * Double(1 - rectBlendAmount) + candidate.confidence * Double(rectBlendAmount),
                         misses: 0
                     )
                 )
             } else {
-                resolvedHands.append(
-                    TrackedHand(
-                        id: nextHandID,
+                resolvedFeet.append(
+                    TrackedFoot(
+                        id: candidate.id,
                         normalizedRect: candidate.normalizedRect,
                         normalizedPoints: candidate.normalizedPoints,
                         confidence: candidate.confidence,
                         misses: 0
                     )
                 )
-                nextHandID += 1
             }
         }
 
-        for previous in unmatchedPrevious where previous.misses < maxTrackedHandMisses {
-            resolvedHands.append(
-                TrackedHand(
+        for previous in previousByID.values where previous.misses < maxTrackedFootMisses {
+            resolvedFeet.append(
+                TrackedFoot(
                     id: previous.id,
                     normalizedRect: previous.normalizedRect,
                     normalizedPoints: previous.normalizedPoints,
@@ -359,14 +349,10 @@ final class HandPoseCameraController: NSObject, ObservableObject {
             )
         }
 
-        trackedHands = Array(
-            resolvedHands
-                .sorted(by: { $0.confidence > $1.confidence })
-                .prefix(2)
-        )
+        trackedFeet = resolvedFeet.sorted(by: { $0.confidence > $1.confidence })
 
-        let hands = trackedHands.map {
-            HandOverlayState(
+        let feet = trackedFeet.map {
+            FootOverlayState(
                 id: $0.id,
                 normalizedRect: $0.normalizedRect,
                 normalizedPoints: $0.normalizedPoints,
@@ -375,114 +361,102 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         }
 
         let statusText: String
-        if hands.isEmpty {
+        if feet.isEmpty {
             statusText = "Searching"
-        } else if hands.count == 1 {
-            statusText = "Hand Found"
+        } else if feet.count == 1 {
+            statusText = "Foot Found"
         } else {
-            statusText = "Hands Found"
+            statusText = "Feet Found"
         }
 
-        return HandPoseOverlayState(
-            hands: hands,
+        return FootPoseOverlayState(
+            feet: feet,
             statusText: statusText,
-            isTracking: !hands.isEmpty,
-            candidateCount: candidates.count
+            isTracking: !feet.isEmpty,
+            candidateCount: strongestFeet.count
         )
     }
 
-    private func handCandidate(from observation: VNHumanHandPoseObservation) -> HandCandidate? {
-        guard let points = try? observation.recognizedPoints(.all) else {
+    private func bodyCandidate(from observation: VNHumanBodyPoseObservation) -> BodyCandidate? {
+        let feet = FootSide.allCases.compactMap { footCandidate(for: $0, observation: observation) }
+        guard !feet.isEmpty else {
+            return nil
+        }
+        let confidence = feet.reduce(0.0) { $0 + $1.confidence } / Double(feet.count)
+        return BodyCandidate(feet: feet, confidence: confidence)
+    }
+
+    private func footCandidate(for side: FootSide, observation: VNHumanBodyPoseObservation) -> FootCandidate? {
+        guard
+            let knee = recognizedPoint(for: side.kneeJoint, observation: observation),
+            let ankle = recognizedPoint(for: side.ankleJoint, observation: observation)
+        else {
             return nil
         }
 
-        let jointNames: [VNHumanHandPoseObservation.JointName] = [
-            .wrist,
-            .thumbCMC,
-            .thumbMP,
-            .thumbIP,
-            .thumbTip,
-            .indexMCP,
-            .indexPIP,
-            .indexDIP,
-            .indexTip,
-            .middleMCP,
-            .middlePIP,
-            .middleDIP,
-            .middleTip,
-            .ringMCP,
-            .ringPIP,
-            .ringDIP,
-            .ringTip,
-            .littleMCP,
-            .littlePIP,
-            .littleDIP,
-            .littleTip,
-        ]
+        let kneePoint = swiftUINormalizedPoint(fromVisionPoint: knee.location)
+        let anklePoint = swiftUINormalizedPoint(fromVisionPoint: ankle.location)
 
-        let validPoints = jointNames.compactMap { jointName -> VNRecognizedPoint? in
-            guard let point = points[jointName], point.confidence >= minPointConfidence else {
-                return nil
-            }
-            return point
-        }
-
-        guard validPoints.count >= minRequiredPoints else {
+        let dx = anklePoint.x - kneePoint.x
+        let dy = anklePoint.y - kneePoint.y
+        let shinLength = hypot(dx, dy)
+        guard shinLength > 0.015 else {
             return nil
         }
 
-        let normalizedPoints = validPoints.map { swiftUINormalizedPoint(fromVisionPoint: $0.location) }
+        let direction = CGPoint(x: dx / shinLength, y: dy / shinLength)
+        let perpendicular = CGPoint(x: -direction.y, y: direction.x)
 
-        let minX = normalizedPoints.map(\.x).min() ?? 0
-        let maxX = normalizedPoints.map(\.x).max() ?? 0
-        let minY = normalizedPoints.map(\.y).min() ?? 0
-        let maxY = normalizedPoints.map(\.y).max() ?? 0
-        let averageConfidence = validPoints.reduce(0.0) { $0 + Double($1.confidence) } / Double(validPoints.count)
-
-        let rawWidth = max(maxX - minX, 0.035)
-        let rawHeight = max(maxY - minY, 0.045)
-        let horizontalPadding = max(rawWidth * 0.10, 0.018)
-        let verticalPadding = max(rawHeight * 0.10, 0.018)
-
-        let paddedRect = CGRect(
-            x: minX - horizontalPadding,
-            y: minY - verticalPadding,
-            width: rawWidth + horizontalPadding * 2,
-            height: rawHeight + verticalPadding * 2
+        let footLength = clamp(shinLength * 0.58, minValue: 0.055, maxValue: 0.14)
+        let footWidth = clamp(shinLength * 0.26, minValue: 0.03, maxValue: 0.075)
+        let center = CGPoint(
+            x: anklePoint.x + direction.x * footLength * 0.22,
+            y: anklePoint.y + direction.y * footLength * 0.22
         )
+        let halfLength = footLength * 0.5
+        let halfWidth = footWidth * 0.5
+
+        let polygon = [
+            CGPoint(x: center.x + direction.x * halfLength + perpendicular.x * halfWidth, y: center.y + direction.y * halfLength + perpendicular.y * halfWidth),
+            CGPoint(x: center.x + direction.x * halfLength - perpendicular.x * halfWidth, y: center.y + direction.y * halfLength - perpendicular.y * halfWidth),
+            CGPoint(x: center.x - direction.x * halfLength - perpendicular.x * halfWidth, y: center.y - direction.y * halfLength - perpendicular.y * halfWidth),
+            CGPoint(x: center.x - direction.x * halfLength + perpendicular.x * halfWidth, y: center.y - direction.y * halfLength + perpendicular.y * halfWidth)
+        ]
+        .map(clampToUnitPoint)
+
+        guard let boundingRect = boundingRect(for: polygon) else {
+            return nil
+        }
 
         let normalizedRect = expandedToMinimumSize(
-            rect: paddedRect.standardized.intersection(unitRect),
-            minimumWidth: 0.075,
-            minimumHeight: 0.09
+            rect: boundingRect.standardized.intersection(unitRect),
+            minimumWidth: 0.06,
+            minimumHeight: 0.04
         )
 
         guard !normalizedRect.isNull, !normalizedRect.isEmpty else {
             return nil
         }
 
-        return HandCandidate(
+        return FootCandidate(
+            id: side.id,
             normalizedRect: normalizedRect,
-            normalizedPoints: normalizedPoints,
-            confidence: averageConfidence
+            normalizedPoints: polygon,
+            confidence: Double(knee.confidence + ankle.confidence) * 0.5
         )
     }
 
-    private func bestMatchIndex(for candidate: HandCandidate, in previousHands: [TrackedHand]) -> Int? {
-        let candidateCenter = CGPoint(x: candidate.normalizedRect.midX, y: candidate.normalizedRect.midY)
-
-        return previousHands.enumerated()
-            .filter { _, previous in
-                let previousCenter = CGPoint(x: previous.normalizedRect.midX, y: previous.normalizedRect.midY)
-                return hypot(previousCenter.x - candidateCenter.x, previousCenter.y - candidateCenter.y) <= matchDistanceThreshold
-            }
-            .min { lhs, rhs in
-                let lhsCenter = CGPoint(x: lhs.element.normalizedRect.midX, y: lhs.element.normalizedRect.midY)
-                let rhsCenter = CGPoint(x: rhs.element.normalizedRect.midX, y: rhs.element.normalizedRect.midY)
-                return hypot(lhsCenter.x - candidateCenter.x, lhsCenter.y - candidateCenter.y)
-                    < hypot(rhsCenter.x - candidateCenter.x, rhsCenter.y - candidateCenter.y)
-            }?
-            .offset
+    private func recognizedPoint(
+        for jointName: VNHumanBodyPoseObservation.JointName,
+        observation: VNHumanBodyPoseObservation
+    ) -> VNRecognizedPoint? {
+        guard
+            let point = try? observation.recognizedPoint(jointName),
+            point.confidence >= minPointConfidence
+        else {
+            return nil
+        }
+        return point
     }
 
     private func blendRect(from previous: CGRect, to current: CGRect, amount: CGFloat) -> CGRect {
@@ -494,6 +468,19 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         )
         .standardized
         .intersection(unitRect)
+    }
+
+    private func blendPoints(from previous: [CGPoint], to current: [CGPoint], amount: CGFloat) -> [CGPoint] {
+        guard previous.count == current.count else {
+            return current
+        }
+
+        return zip(previous, current).map { previousPoint, currentPoint in
+            CGPoint(
+                x: previousPoint.x + (currentPoint.x - previousPoint.x) * amount,
+                y: previousPoint.y + (currentPoint.y - previousPoint.y) * amount
+            )
+        }
     }
 
     private func expandedToMinimumSize(
@@ -516,6 +503,30 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         return adjustedRect.standardized.intersection(unitRect)
     }
 
+    private func boundingRect(for points: [CGPoint]) -> CGRect? {
+        guard
+            let minX = points.map(\.x).min(),
+            let maxX = points.map(\.x).max(),
+            let minY = points.map(\.y).min(),
+            let maxY = points.map(\.y).max()
+        else {
+            return nil
+        }
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private func clamp(_ value: CGFloat, minValue: CGFloat, maxValue: CGFloat) -> CGFloat {
+        min(max(value, minValue), maxValue)
+    }
+
+    private func clampToUnitPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 0), 1),
+            y: min(max(point.y, 0), 1)
+        )
+    }
+
     private func swiftUINormalizedPoint(fromVisionPoint point: CGPoint) -> CGPoint {
         CGPoint(
             x: min(max(point.x, 0), 1),
@@ -523,13 +534,13 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         )
     }
 
-    private func deliverTrackingFrame(_ frame: HandPoseFrame) {
+    private func deliverTrackingFrame(_ frame: FootPoseFrame) {
         DispatchQueue.main.async { [weak self] in
             self?.onTrackingFrame?(frame)
         }
     }
 
-    private func shouldPublishTrackingFrameToSwiftUI(_ frame: HandPoseFrame) -> Bool {
+    private func shouldPublishTrackingFrameToSwiftUI(_ frame: FootPoseFrame) -> Bool {
         guard !publishesTrackingFramesToSwiftUI else {
             lastTrackingPublishTimestamp = frame.timestamp
             lastPublishedTrackingStatus = frame.overlayState.isTracking
@@ -580,7 +591,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func publish(_ updates: @escaping (HandPoseCameraController) -> Void) {
+    private func publish(_ updates: @escaping (FootPoseCameraController) -> Void) {
         if Thread.isMainThread {
             updates(self)
             return
@@ -632,7 +643,7 @@ final class HandPoseCameraController: NSObject, ObservableObject {
     }
 }
 
-extension HandPoseCameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension FootPoseCameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
@@ -653,11 +664,11 @@ extension HandPoseCameraController: AVCaptureVideoDataOutputSampleBufferDelegate
 
         do {
             try handler.perform([request])
-            let observations = (request.results as? [VNHumanHandPoseObservation]) ?? []
-            handleHandPoseResults(observations)
+            let observations = (request.results as? [VNHumanBodyPoseObservation]) ?? []
+            handleBodyPoseResults(observations)
         } catch {
             publish {
-                $0.errorMessage = "Hand tracking failed: \(error.localizedDescription)"
+                $0.errorMessage = "Foot tracking failed: \(error.localizedDescription)"
             }
         }
     }
@@ -683,13 +694,19 @@ extension HandPoseCameraController: AVCaptureVideoDataOutputSampleBufferDelegate
     }
 }
 
-struct HandCandidate {
+private struct BodyCandidate {
+    let feet: [FootCandidate]
+    let confidence: Double
+}
+
+private struct FootCandidate {
+    let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
     let confidence: Double
 }
 
-private struct TrackedHand {
+private struct TrackedFoot {
     let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
@@ -697,7 +714,39 @@ private struct TrackedHand {
     let misses: Int
 }
 
-private enum HandPoseCameraError: LocalizedError {
+private enum FootSide: CaseIterable {
+    case left
+    case right
+
+    var id: Int {
+        switch self {
+        case .left:
+            return 0
+        case .right:
+            return 1
+        }
+    }
+
+    var kneeJoint: VNHumanBodyPoseObservation.JointName {
+        switch self {
+        case .left:
+            return .leftKnee
+        case .right:
+            return .rightKnee
+        }
+    }
+
+    var ankleJoint: VNHumanBodyPoseObservation.JointName {
+        switch self {
+        case .left:
+            return .leftAnkle
+        case .right:
+            return .rightAnkle
+        }
+    }
+}
+
+private enum FootPoseCameraError: LocalizedError {
     case cameraPermissionDenied
     case cameraUnavailable
     case configurationFailed(String)
@@ -705,7 +754,7 @@ private enum HandPoseCameraError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cameraPermissionDenied:
-            return "Camera access is required to test hand targets."
+            return "Camera access is required to test foot targets."
         case .cameraUnavailable:
             return "The front camera is unavailable on this device."
         case .configurationFailed(let message):

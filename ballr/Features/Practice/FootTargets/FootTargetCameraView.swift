@@ -4,67 +4,21 @@ import SwiftUI
 import UIKit
 import Combine
 
-enum HandTargetNextDestination {
-    case footTargets
-    case levelEight
+enum FootTargetNextDestination {
+    case levelFour
+    case levelNine
 }
 
-struct HandTargetConfiguration {
-    let requiredHandLockSeconds: TimeInterval
-    let requiredSuccessfulHits: Int
-    let targetLifetime: TimeInterval?
-    let allowedMisses: Int?
-    let targetRadiusScale: CGFloat
-    let fullValueWindow: TimeInterval
-    let scoreStep: TimeInterval
-    let scoreValue: Int
-    let comboStreakStep: Int
-    let spawnTopFraction: CGFloat
-    let previousTargetDistanceMultiplier: CGFloat
-
-    static let levelTwo = HandTargetConfiguration(
-        requiredHandLockSeconds: 3.0,
-        requiredSuccessfulHits: 20,
-        targetLifetime: nil,
-        allowedMisses: nil,
-        targetRadiusScale: 1.0,
-        fullValueWindow: 2.0,
-        scoreStep: 0.4,
-        scoreValue: 5,
-        comboStreakStep: 10,
-        spawnTopFraction: 0.20,
-        previousTargetDistanceMultiplier: 4.0
-    )
-
-    static let levelSevenTimed = HandTargetConfiguration(
-        requiredHandLockSeconds: 2.0,
-        requiredSuccessfulHits: 25,
-        targetLifetime: 3.0,
-        allowedMisses: 5,
-        targetRadiusScale: 0.82,
-        fullValueWindow: 1.0,
-        scoreStep: 0.32,
-        scoreValue: 5,
-        comboStreakStep: 8,
-        spawnTopFraction: 0.16,
-        previousTargetDistanceMultiplier: 4.6
-    )
-}
-
-struct HandTargetCameraView: View {
+struct FootTargetCameraView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var cameraController = HandPoseCameraController()
-    @StateObject private var coordinator: HandTargetCoordinator
+    @StateObject private var cameraController = FootPoseCameraController()
+    @StateObject private var coordinator = FootTargetCoordinator()
     @State private var showsQuitConfirmation = false
     @State private var showsNextLevel = false
-    private let nextDestination: HandTargetNextDestination
+    private let nextDestination: FootTargetNextDestination
 
-    init(
-        nextDestination: HandTargetNextDestination = .footTargets,
-        configuration: HandTargetConfiguration = .levelTwo
-    ) {
+    init(nextDestination: FootTargetNextDestination = .levelFour) {
         self.nextDestination = nextDestination
-        _coordinator = StateObject(wrappedValue: HandTargetCoordinator(configuration: configuration))
     }
 
     var body: some View {
@@ -79,10 +33,10 @@ struct HandTargetCameraView: View {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
 
-                HandTargetRenderSurface(coordinator: coordinator)
+                FootTargetRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                if !coordinator.hasEnded {
+                if !coordinator.isCompleted {
                     VStack(spacing: 0) {
                         topBar
                         Spacer()
@@ -92,11 +46,11 @@ struct HandTargetCameraView: View {
                 }
 
                 if cameraController.isStarting {
-                    HandTargetLoadingOverlay()
+                    FootTargetLoadingOverlay()
                 }
 
                 if let errorMessage = cameraController.errorMessage {
-                    HandTargetErrorOverlay(
+                    FootTargetErrorOverlay(
                         message: errorMessage,
                         permissionDenied: cameraController.permissionDenied,
                         onDismiss: { dismiss() }
@@ -104,18 +58,13 @@ struct HandTargetCameraView: View {
                 }
 
                 if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
-                    HandTargetReadinessOverlay(
-                        handFoundStartedAt: coordinator.handFoundStartedAt,
-                        requiredLockSeconds: coordinator.requiredHandLockSeconds
-                    )
+                    FootTargetReadinessOverlay(footFoundStartedAt: coordinator.footFoundStartedAt)
                 }
 
-                if coordinator.hasEnded {
+                if coordinator.isCompleted {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.completionStartedAt,
                         buttonsVisible: coordinator.showsCompletionButtons,
-                        title: coordinator.finishTitle,
-                        showsNextLevelButton: coordinator.didComplete,
                         onNextLevel: { showsNextLevel = true },
                         onTryAgain: { coordinator.reset(in: geometry.size) },
                         onBackToLevels: { dismiss() }
@@ -125,11 +74,11 @@ struct HandTargetCameraView: View {
             .statusBarHidden(true)
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
-                case .footTargets:
-                    FootTargetCameraView()
+                case .levelFour:
+                    LevelFourCameraView()
                         .navigationBarBackButtonHidden(true)
-                case .levelEight:
-                    LevelEightCameraView()
+                case .levelNine:
+                    LevelNineCameraView()
                         .navigationBarBackButtonHidden(true)
                 }
             }
@@ -163,7 +112,7 @@ struct HandTargetCameraView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            HandTargetHudChip(
+            FootTargetHudChip(
                 title: "STREAK",
                 value: "\(coordinator.hitStreak)",
                 tint: .orange,
@@ -185,9 +134,9 @@ struct HandTargetCameraView: View {
 
             Spacer()
 
-            HandTargetHudChip(
+            FootTargetHudChip(
                 title: "HITS",
-                value: "\(coordinator.successfulHits)/\(coordinator.requiredSuccessfulHits)",
+                value: "\(coordinator.successfulHits)/20",
                 tint: .yellow,
                 alignment: .trailing
             )
@@ -195,71 +144,35 @@ struct HandTargetCameraView: View {
     }
 }
 
-private final class HandTargetCoordinator: ObservableObject {
-    enum FinishState {
-        case none
-        case completed
-        case failed
-    }
-
+private final class FootTargetCoordinator: ObservableObject {
     @Published private(set) var startPhase: BallrDrillStartPhase = .readiness
-    @Published private(set) var handFoundStartedAt: Date?
+    @Published private(set) var footFoundStartedAt: Date?
     @Published private(set) var score = 0
     @Published private(set) var hitStreak = 0
     @Published private(set) var successfulHits = 0
-    @Published private(set) var misses = 0
     @Published private(set) var lastEventText = "READY"
     @Published private(set) var lastEventIsPositive = true
     @Published private(set) var isTracking = false
     @Published private(set) var trackingStatusText = "SEARCHING"
     @Published private(set) var completionStartedAt: Date?
     @Published private(set) var showsCompletionButtons = false
-    @Published private(set) var finishState: FinishState = .none
 
+    private let requiredFootLockSeconds: TimeInterval = 3.0
+    private let requiredSuccessfulHits = 20
     private let completionAnimationDuration: TimeInterval = 1.2
     private let completionButtonRevealDelay: TimeInterval = 0.28
-    private let configuration: HandTargetConfiguration
 
-    private var gameState: HandTargetGameState
+    private var gameState = FootTargetGameState()
     private var size: CGSize = .zero
-    private weak var renderView: HandTargetRenderView?
-    private var lastDetectedHands: [HandTargetDetectedHand] = []
+    private weak var renderView: FootTargetRenderView?
+    private var lastDetectedFeet: [FootTargetDetectedFoot] = []
     private var completionWorkItem: DispatchWorkItem?
 
-    init(configuration: HandTargetConfiguration = .levelTwo) {
-        self.configuration = configuration
-        gameState = HandTargetGameState(configuration: configuration)
-    }
-
     var isCompleted: Bool {
-        finishState == .completed
+        completionStartedAt != nil
     }
 
-    var hasEnded: Bool {
-        finishState != .none
-    }
-
-    var didComplete: Bool {
-        finishState == .completed
-    }
-
-    var finishTitle: String {
-        didComplete ? "DONE" : "TRY AGAIN"
-    }
-
-    var requiredSuccessfulHits: Int {
-        configuration.requiredSuccessfulHits
-    }
-
-    private var allowedMisses: Int? {
-        configuration.allowedMisses
-    }
-
-    var requiredHandLockSeconds: TimeInterval {
-        configuration.requiredHandLockSeconds
-    }
-
-    func attach(renderView: HandTargetRenderView) {
+    func attach(renderView: FootTargetRenderView) {
         if self.renderView !== renderView {
             self.renderView = renderView
             renderView.onBoundsChange = { [weak self] size in
@@ -273,7 +186,7 @@ private final class HandTargetCoordinator: ObservableObject {
         }
 
         renderView.update(
-            hands: lastDetectedHands,
+            feet: lastDetectedFeet,
             isTracking: isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
@@ -281,21 +194,19 @@ private final class HandTargetCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
-        gameState = HandTargetGameState(configuration: configuration)
+        gameState = FootTargetGameState()
         startPhase = .readiness
-        handFoundStartedAt = nil
+        footFoundStartedAt = nil
         score = 0
         hitStreak = 0
         successfulHits = 0
-        misses = 0
         lastEventText = "READY"
         lastEventIsPositive = true
         isTracking = false
         trackingStatusText = "SEARCHING"
         completionStartedAt = nil
         showsCompletionButtons = false
-        finishState = .none
-        lastDetectedHands = []
+        lastDetectedFeet = []
         cancelCompletionWorkItem()
         prepare(in: size, forceRespawn: true)
     }
@@ -310,65 +221,57 @@ private final class HandTargetCoordinator: ObservableObject {
         }
 
         self.size = resolvedGameplaySize(fallback: size)
-        gameState.prepare(in: self.size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live && !hasEnded)
+        gameState.prepare(in: self.size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live && !isCompleted)
         renderView?.update(
-            hands: lastDetectedHands,
+            feet: lastDetectedFeet,
             isTracking: isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
         )
     }
 
-    func handle(frame: HandPoseFrame, cameraController: HandPoseCameraController) {
-        let detectedHands = frame.overlayState.hands.compactMap { handState -> HandTargetDetectedHand? in
-            guard let displayRect = cameraController.displayRect(for: handState.normalizedRect) else {
+    func handle(frame: FootPoseFrame, cameraController: FootPoseCameraController) {
+        let detectedFeet = frame.overlayState.feet.compactMap { footState -> FootTargetDetectedFoot? in
+            guard let displayRect = cameraController.displayRect(for: footState.normalizedRect) else {
                 return nil
             }
-            let displayPoints = handState.normalizedPoints.compactMap {
+            let displayPoints = footState.normalizedPoints.compactMap {
                 cameraController.displayPoint(for: $0)
             }
-            return HandTargetDetectedHand(
-                id: handState.id,
+            return FootTargetDetectedFoot(
+                id: footState.id,
                 rect: displayRect,
-                collisionPolygon: HandTargetDetectedHand.collisionPolygon(
+                collisionPolygon: FootTargetDetectedFoot.collisionPolygon(
                     from: displayPoints,
                     fallbackRect: displayRect
                 ),
-                confidence: CGFloat(handState.confidence)
+                confidence: CGFloat(footState.confidence)
             )
         }
-        lastDetectedHands = detectedHands
+        lastDetectedFeet = detectedFeet
 
         updateTrackingStatus(from: frame.overlayState)
         updateStartGate(isTracking: frame.overlayState.isTracking, timestamp: frame.timestamp)
 
-        if startPhase == .live, !hasEnded {
+        if startPhase == .live, !isCompleted {
             let event = gameState.step(
-                hands: detectedHands,
+                feet: detectedFeet,
                 isTracking: frame.overlayState.isTracking,
                 in: size,
                 timestamp: frame.timestamp
             )
-            switch event {
-            case .hit:
-                HandTargetSoundPlayer.playScore()
+            if event == .hit {
+                FootTargetSoundPlayer.playScore()
                 successfulHits += 1
-                if successfulHits >= configuration.requiredSuccessfulHits {
-                    finish(.completed, at: frame.timestamp)
+                if successfulHits >= requiredSuccessfulHits {
+                    completeLevel(at: frame.timestamp)
                 }
-            case .miss:
-                misses = gameState.misses
-                if let allowedMisses, misses >= allowedMisses {
-                    finish(.failed, at: frame.timestamp)
-                }
-            case nil:
-                break
             }
             syncHudFromGameState()
         }
 
         renderView?.update(
-            hands: detectedHands,
+            feet: detectedFeet,
             isTracking: frame.overlayState.isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
@@ -387,7 +290,7 @@ private final class HandTargetCoordinator: ObservableObject {
         return renderSize
     }
 
-    private func updateTrackingStatus(from overlayState: HandPoseOverlayState) {
+    private func updateTrackingStatus(from overlayState: FootPoseOverlayState) {
         if isTracking != overlayState.isTracking {
             isTracking = overlayState.isTracking
         }
@@ -404,14 +307,14 @@ private final class HandTargetCoordinator: ObservableObject {
         }
 
         guard isTracking else {
-            handFoundStartedAt = nil
+            footFoundStartedAt = nil
             return
         }
 
-        let startedAt = handFoundStartedAt ?? timestamp
-        handFoundStartedAt = startedAt
+        let startedAt = footFoundStartedAt ?? timestamp
+        footFoundStartedAt = startedAt
 
-        if timestamp.timeIntervalSince(startedAt) >= requiredHandLockSeconds {
+        if timestamp.timeIntervalSince(startedAt) >= requiredFootLockSeconds {
             startPhase = .live
             lastEventText = "GO"
             lastEventIsPositive = true
@@ -425,9 +328,6 @@ private final class HandTargetCoordinator: ObservableObject {
         if hitStreak != gameState.hitStreak {
             hitStreak = gameState.hitStreak
         }
-        if misses != gameState.misses {
-            misses = gameState.misses
-        }
         if lastEventText != gameState.lastEventText {
             lastEventText = gameState.lastEventText
         }
@@ -436,17 +336,16 @@ private final class HandTargetCoordinator: ObservableObject {
         }
     }
 
-    private func finish(_ state: FinishState, at timestamp: Date) {
-        guard finishState == .none else {
+    private func completeLevel(at timestamp: Date) {
+        guard completionStartedAt == nil else {
             return
         }
 
-        finishState = state
         completionStartedAt = timestamp
         showsCompletionButtons = false
         gameState.finish()
         renderView?.update(
-            hands: lastDetectedHands,
+            feet: lastDetectedFeet,
             isTracking: isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
@@ -468,21 +367,21 @@ private final class HandTargetCoordinator: ObservableObject {
     }
 }
 
-private struct HandTargetRenderSurface: UIViewRepresentable {
-    let coordinator: HandTargetCoordinator
+private struct FootTargetRenderSurface: UIViewRepresentable {
+    let coordinator: FootTargetCoordinator
 
-    func makeUIView(context: Context) -> HandTargetRenderView {
-        let view = HandTargetRenderView()
+    func makeUIView(context: Context) -> FootTargetRenderView {
+        let view = FootTargetRenderView()
         coordinator.attach(renderView: view)
         return view
     }
 
-    func updateUIView(_ uiView: HandTargetRenderView, context: Context) {
+    func updateUIView(_ uiView: FootTargetRenderView, context: Context) {
         coordinator.attach(renderView: uiView)
     }
 }
 
-private final class HandTargetRenderView: UIView {
+private final class FootTargetRenderView: UIView {
     private let targetFillLayer = CAShapeLayer()
     private let targetOuterLayer = CAShapeLayer()
     private let targetInnerLayer = CAShapeLayer()
@@ -491,14 +390,14 @@ private final class HandTargetRenderView: UIView {
 
     private var popupLayers: [UUID: CATextLayer] = [:]
     private var displayLink: CADisplayLink?
-    private var hands: [HandTargetDetectedHand] = []
+    private var feet: [FootTargetDetectedFoot] = []
     private var isTracking = false
-    private var target: HandTargetTarget?
-    private var scorePopups: [HandTargetScorePopup] = []
-    private var missingHandFrameCount = 0
+    private var target: FootTargetTarget?
+    private var scorePopups: [FootTargetScorePopup] = []
+    private var missingFootFrameCount = 0
     var onBoundsChange: ((CGSize) -> Void)?
     private var lastReportedBoundsSize: CGSize = .zero
-    private let missingHandPromptFrameThreshold = 12
+    private let missingFootPromptFrameThreshold = 12
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -530,16 +429,16 @@ private final class HandTargetRenderView: UIView {
     }
 
     func update(
-        hands: [HandTargetDetectedHand],
+        feet: [FootTargetDetectedFoot],
         isTracking: Bool,
-        target: HandTargetTarget?,
-        scorePopups: [HandTargetScorePopup]
+        target: FootTargetTarget?,
+        scorePopups: [FootTargetScorePopup]
     ) {
-        self.hands = hands
+        self.feet = feet
         self.isTracking = isTracking
         self.target = target
         self.scorePopups = scorePopups
-        missingHandFrameCount = isTracking ? 0 : missingHandFrameCount + 1
+        missingFootFrameCount = isTracking ? 0 : missingFootFrameCount + 1
         render(date: Date())
     }
 
@@ -569,11 +468,10 @@ private final class HandTargetRenderView: UIView {
         [
             targetFillLayer,
             targetOuterLayer,
-            targetInnerLayer,
-            targetProgressLayer
+            targetInnerLayer
         ].forEach(layer.addSublayer)
 
-        promptLabel.text = "Find your hand"
+        promptLabel.text = "Find your foot"
         promptLabel.font = .systemFont(ofSize: 15, weight: .black)
         promptLabel.textColor = .white
         promptLabel.textAlignment = .center
@@ -603,9 +501,9 @@ private final class HandTargetRenderView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         renderTarget(date: date)
-        renderHands()
+        renderFeet()
         renderPopups(date: date)
-        promptLabel.isHidden = isTracking || missingHandFrameCount < missingHandPromptFrameThreshold || target == nil
+        promptLabel.isHidden = isTracking || missingFootFrameCount < missingFootPromptFrameThreshold || target == nil
         let promptSize = CGSize(width: 180, height: 42)
         promptLabel.frame = CGRect(
             x: bounds.midX - promptSize.width * 0.5,
@@ -632,9 +530,6 @@ private final class HandTargetRenderView: UIView {
             height: target.radius * 2
         )
         let innerRect = rect.insetBy(dx: 8, dy: 8)
-        let targetProgress = targetAgeProgress(for: target, at: date)
-        let progressRadius = max(target.radius - 16, 1)
-        let remainingProgress = max(CGFloat(0.02), 1.0 - CGFloat(targetProgress))
 
         targetFillLayer.isHidden = false
         targetOuterLayer.isHidden = false
@@ -645,25 +540,9 @@ private final class HandTargetRenderView: UIView {
         targetFillLayer.opacity = 1
         targetOuterLayer.opacity = 1
         targetInnerLayer.opacity = 1
-
-        if target.lifetime == nil {
-            targetProgressLayer.isHidden = true
-            targetProgressLayer.path = nil
-            targetProgressLayer.opacity = 0
-        } else {
-            targetProgressLayer.isHidden = false
-            targetProgressLayer.path = UIBezierPath(
-                arcCenter: target.center,
-                radius: progressRadius,
-                startAngle: -.pi / 2,
-                endAngle: -.pi / 2 + (.pi * 2 * remainingProgress),
-                clockwise: true
-            ).cgPath
-            targetProgressLayer.opacity = Float(1.0 - targetProgress)
-        }
     }
 
-    private func renderHands() {
+    private func renderFeet() {
     }
 
     private func renderPopups(date: Date) {
@@ -688,7 +567,7 @@ private final class HandTargetRenderView: UIView {
         }
     }
 
-    private func makePopupLayer(for popup: HandTargetScorePopup) -> CATextLayer {
+    private func makePopupLayer(for popup: FootTargetScorePopup) -> CATextLayer {
         let textLayer = CATextLayer()
         textLayer.contentsScale = traitCollection.displayScale
         textLayer.alignmentMode = .center
@@ -708,80 +587,30 @@ private final class HandTargetRenderView: UIView {
         let clamped = min(max(value, 0), 1)
         return CGFloat(clamped * clamped * (3 - 2 * clamped))
     }
-
-    private func targetAgeProgress(for target: HandTargetTarget, at date: Date) -> Double {
-        guard let lifetime = target.lifetime else {
-            return 0
-        }
-        return min(max(date.timeIntervalSince(target.spawnedAt) / lifetime, 0), 1)
-    }
 }
 
-private struct HandTargetDetectedHand: Identifiable {
+private struct FootTargetDetectedFoot: Identifiable {
     let id: Int
     let rect: CGRect
     let collisionPolygon: [CGPoint]
     let confidence: CGFloat
 
     var collisionBounds: CGRect {
-        Self.boundingRect(for: collisionPolygon) ?? rect.insetBy(dx: rect.width * 0.22, dy: rect.height * 0.22)
+        Self.boundingRect(for: collisionPolygon) ?? rect.insetBy(dx: rect.width * 0.18, dy: rect.height * 0.18)
     }
 
     static func collisionPolygon(from points: [CGPoint], fallbackRect: CGRect) -> [CGPoint] {
-        let hull = convexHull(points)
-        if hull.count >= 3 {
-            return scaled(points: hull, factor: 0.86)
+        guard points.count >= 4 else {
+            let fallback = fallbackRect.insetBy(dx: fallbackRect.width * 0.18, dy: fallbackRect.height * 0.18)
+            return [
+                CGPoint(x: fallback.minX, y: fallback.minY),
+                CGPoint(x: fallback.maxX, y: fallback.minY),
+                CGPoint(x: fallback.maxX, y: fallback.maxY),
+                CGPoint(x: fallback.minX, y: fallback.maxY)
+            ]
         }
 
-        let fallback = fallbackRect.insetBy(dx: fallbackRect.width * 0.22, dy: fallbackRect.height * 0.22)
-        return [
-            CGPoint(x: fallback.minX, y: fallback.minY),
-            CGPoint(x: fallback.maxX, y: fallback.minY),
-            CGPoint(x: fallback.maxX, y: fallback.maxY),
-            CGPoint(x: fallback.minX, y: fallback.maxY)
-        ]
-    }
-
-    private static func convexHull(_ points: [CGPoint]) -> [CGPoint] {
-        let sortedPoints = points
-            .sorted {
-                if abs($0.x - $1.x) > 0.001 {
-                    return $0.x < $1.x
-                }
-                return $0.y < $1.y
-            }
-            .reduce(into: [CGPoint]()) { result, point in
-                guard !result.contains(where: { hypot($0.x - point.x, $0.y - point.y) < 0.5 }) else {
-                    return
-                }
-                result.append(point)
-            }
-
-        guard sortedPoints.count > 2 else {
-            return sortedPoints
-        }
-
-        var lower: [CGPoint] = []
-        for point in sortedPoints {
-            while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], point) <= 0 {
-                lower.removeLast()
-            }
-            lower.append(point)
-        }
-
-        var upper: [CGPoint] = []
-        for point in sortedPoints.reversed() {
-            while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], point) <= 0 {
-                upper.removeLast()
-            }
-            upper.append(point)
-        }
-
-        return Array(lower.dropLast()) + Array(upper.dropLast())
-    }
-
-    private static func cross(_ origin: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
-        (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x)
+        return scaled(points: points, factor: 0.9)
     }
 
     private static func scaled(points: [CGPoint], factor: CGFloat) -> [CGPoint] {
@@ -819,7 +648,7 @@ private struct HandTargetDetectedHand: Identifiable {
     }
 }
 
-private struct HandTargetHudChip: View {
+private struct FootTargetHudChip: View {
     let title: String
     let value: String
     let tint: Color
@@ -844,15 +673,10 @@ private struct HandTargetHudChip: View {
     }
 }
 
-private struct HandTargetReadinessOverlay: View {
-    let handFoundStartedAt: Date?
+private struct FootTargetReadinessOverlay: View {
+    let footFoundStartedAt: Date?
 
-    private let requiredLockSeconds: TimeInterval
-
-    init(handFoundStartedAt: Date?, requiredLockSeconds: TimeInterval = 3.0) {
-        self.handFoundStartedAt = handFoundStartedAt
-        self.requiredLockSeconds = requiredLockSeconds
-    }
+    private let requiredLockSeconds: TimeInterval = 3.0
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -863,11 +687,11 @@ private struct HandTargetReadinessOverlay: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 16) {
-                    Text(handFoundStartedAt == nil ? "Find your hand" : "Hold your hand still")
+                    Text(footFoundStartedAt == nil ? "Find your foot" : "Hold your foot still")
                         .font(.system(size: 34, weight: .black, design: .rounded))
-                        .foregroundStyle(handFoundStartedAt == nil ? Color.yellow : .white)
+                        .foregroundStyle(footFoundStartedAt == nil ? Color.yellow : .white)
 
-                    Text(handFoundStartedAt == nil ? "Put your hand in frame to start." : "Starting in \(remainingText(at: timeline.date))")
+                    Text(footFoundStartedAt == nil ? "Put your foot in frame to start." : "Starting in \(remainingText(at: timeline.date))")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
@@ -881,7 +705,7 @@ private struct HandTargetReadinessOverlay: View {
                             .frame(width: 220 * progress)
                     }
                     .frame(width: 220, height: 12)
-                    .opacity(handFoundStartedAt == nil ? 0 : 1)
+                    .opacity(footFoundStartedAt == nil ? 0 : 1)
                 }
                 .padding(.horizontal, 24)
             }
@@ -890,27 +714,27 @@ private struct HandTargetReadinessOverlay: View {
     }
 
     private func readinessProgress(at date: Date) -> CGFloat {
-        guard let handFoundStartedAt else {
+        guard let footFoundStartedAt else {
             return 0
         }
-        return CGFloat(min(max(date.timeIntervalSince(handFoundStartedAt) / requiredLockSeconds, 0), 1))
+        return CGFloat(min(max(date.timeIntervalSince(footFoundStartedAt) / requiredLockSeconds, 0), 1))
     }
 
     private func remainingText(at date: Date) -> String {
-        guard let handFoundStartedAt else {
+        guard let footFoundStartedAt else {
             return "3"
         }
-        let remaining = max(ceil(requiredLockSeconds - date.timeIntervalSince(handFoundStartedAt)), 0)
+        let remaining = max(ceil(requiredLockSeconds - date.timeIntervalSince(footFoundStartedAt)), 0)
         return "\(Int(remaining))"
     }
 }
 
-private struct HandTargetLoadingOverlay: View {
+private struct FootTargetLoadingOverlay: View {
     var body: some View {
         VStack(spacing: 14) {
             ProgressView()
                 .tint(.white)
-            Text("Starting hand targets...")
+            Text("Starting foot targets...")
                 .font(.system(size: 16, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
         }
@@ -920,7 +744,7 @@ private struct HandTargetLoadingOverlay: View {
     }
 }
 
-private struct HandTargetErrorOverlay: View {
+private struct FootTargetErrorOverlay: View {
     let message: String
     let permissionDenied: Bool
     let onDismiss: () -> Void
@@ -975,21 +799,22 @@ private struct HandTargetErrorOverlay: View {
     }
 }
 
-private struct HandTargetGameState {
-    let configuration: HandTargetConfiguration
-    var target: HandTargetTarget?
-    var scorePopups: [HandTargetScorePopup] = []
+private struct FootTargetGameState {
+    var target: FootTargetTarget?
+    var scorePopups: [FootTargetScorePopup] = []
     var score = 0
     var hitStreak = 0
     var misses = 0
     var lastEventText = "READY"
     var lastEventIsPositive = true
 
+    private let fullValueWindow: TimeInterval = 2.0
+    private let scoreStep: TimeInterval = 0.4
+    private let scoreValue = 5
+    private let comboStreakStep = 10
+    private let spawnTopFraction: CGFloat = 0.75
+    private let previousTargetDistanceMultiplier: CGFloat = 4.0
     private let baseClearance: CGFloat = 24
-
-    init(configuration: HandTargetConfiguration = .levelTwo) {
-        self.configuration = configuration
-    }
 
     mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
         guard size.width > 0, size.height > 0 else {
@@ -1006,16 +831,12 @@ private struct HandTargetGameState {
         }
     }
 
-    mutating func finish() {
-        target = nil
-    }
-
     mutating func step(
-        hands: [HandTargetDetectedHand],
+        feet: [FootTargetDetectedFoot],
         isTracking: Bool,
         in size: CGSize,
         timestamp: Date
-    ) -> HandTargetStepEvent? {
+    ) -> FootTargetStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
         prepare(in: size)
 
@@ -1023,79 +844,59 @@ private struct HandTargetGameState {
             return nil
         }
 
-        if hasExpired(currentTarget, at: timestamp) {
-            misses += 1
-            hitStreak = 0
-            lastEventText = "MISS"
-            lastEventIsPositive = false
-            scorePopups.append(
-                HandTargetScorePopup(
-                    points: -1,
-                    center: currentTarget.center,
-                    destination: CGPoint(x: 104, y: 40),
-                    startedAt: timestamp
-                )
-            )
-            spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: hands)
-            return .miss
-        }
-
-        guard isTracking, !hands.isEmpty else {
+        guard isTracking, !feet.isEmpty else {
             return nil
         }
 
-        if hands.contains(where: { handIntersectsTarget($0, target: currentTarget) }) {
+        if feet.contains(where: { footIntersectsTarget($0, target: currentTarget) }) {
             let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
             score += points
             hitStreak += 1
             lastEventText = "+\(points)"
             lastEventIsPositive = true
             scorePopups.append(
-                HandTargetScorePopup(
+                FootTargetScorePopup(
                     points: points,
                     center: currentTarget.center,
                     destination: CGPoint(x: max(size.width - 104, 40), y: 40),
                     startedAt: timestamp
                 )
             )
-            spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: hands)
+            spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: feet)
             return .hit
         }
 
         return nil
     }
 
+    mutating func finish() {
+        target = nil
+    }
+
     private var comboMultiplier: Int {
-        1 + max(hitStreak, 0) / configuration.comboStreakStep
+        1 + max(hitStreak, 0) / comboStreakStep
     }
 
-    private func basePoints(for target: HandTargetTarget, at timestamp: Date) -> Int {
+    private func basePoints(for target: FootTargetTarget, at timestamp: Date) -> Int {
         let age = targetAge(for: target, at: timestamp)
-        guard age > configuration.fullValueWindow else {
-            return configuration.scoreValue
+        guard age > fullValueWindow else {
+            return scoreValue
         }
 
-        let elapsedAfterFullValue = age - configuration.fullValueWindow
-        let steps = Int(floor(elapsedAfterFullValue / configuration.scoreStep)) + 1
-        return max(1, configuration.scoreValue - steps)
+        let elapsedAfterFullValue = age - fullValueWindow
+        let steps = Int(floor(elapsedAfterFullValue / scoreStep)) + 1
+        return max(1, scoreValue - steps)
     }
 
-    private func targetAge(for target: HandTargetTarget, at timestamp: Date) -> TimeInterval {
+    private func targetAge(for target: FootTargetTarget, at timestamp: Date) -> TimeInterval {
         max(0, timestamp.timeIntervalSince(target.spawnedAt))
-    }
-
-    private func hasExpired(_ target: HandTargetTarget, at timestamp: Date) -> Bool {
-        guard let lifetime = target.lifetime else {
-            return false
-        }
-        return targetAge(for: target, at: timestamp) >= lifetime
     }
 
     private mutating func spawnTarget(
         in size: CGSize,
         timestamp: Date,
         previousCenter: CGPoint? = nil,
-        avoiding hands: [HandTargetDetectedHand] = []
+        avoiding feet: [FootTargetDetectedFoot] = []
     ) {
         let radius = targetRadius(for: size)
         let bounds = spawnBounds(in: size, radius: radius)
@@ -1111,7 +912,7 @@ private struct HandTargetGameState {
             let quality = candidateQuality(
                 candidate,
                 previousCenter: previousCenter,
-                hands: hands,
+                feet: feet,
                 targetRadius: radius
             )
             if quality > bestQuality {
@@ -1121,34 +922,24 @@ private struct HandTargetGameState {
             if isCandidateValid(
                 candidate,
                 previousCenter: previousCenter,
-                hands: hands,
+                feet: feet,
                 targetRadius: radius
             ) {
-                target = HandTargetTarget(
-                    center: candidate,
-                    radius: radius,
-                    spawnedAt: timestamp,
-                    lifetime: configuration.targetLifetime
-                )
+                target = FootTargetTarget(center: candidate, radius: radius, spawnedAt: timestamp)
                 return
             }
         }
 
-        target = HandTargetTarget(
-            center: bestCandidate,
-            radius: radius,
-            spawnedAt: timestamp,
-            lifetime: configuration.targetLifetime
-        )
+        target = FootTargetTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
     }
 
     private func targetRadius(for size: CGSize) -> CGFloat {
-        min(max(min(size.width, size.height) * 0.091 * configuration.targetRadiusScale, 30), 62)
+        min(max(min(size.width, size.height) * 0.091, 36), 62)
     }
 
     private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
         let horizontalPadding = radius + 26
-        let top = max(size.height * configuration.spawnTopFraction + radius, radius + 86)
+        let top = max(size.height * spawnTopFraction + radius, radius + 86)
         let bottom = max(top, size.height - radius - 58)
         return CGRect(
             x: horizontalPadding,
@@ -1161,7 +952,7 @@ private struct HandTargetGameState {
     private func candidateQuality(
         _ candidate: CGPoint,
         previousCenter: CGPoint?,
-        hands: [HandTargetDetectedHand],
+        feet: [FootTargetDetectedFoot],
         targetRadius: CGFloat
     ) -> CGFloat {
         var quality = targetRadius * 10
@@ -1170,8 +961,8 @@ private struct HandTargetGameState {
             quality += hypot(candidate.x - previousCenter.x, candidate.y - previousCenter.y)
         }
 
-        if let farthestHandDistance = hands.map({ distance(from: candidate, to: $0) }).min() {
-            quality += max(farthestHandDistance - targetRadius, 0)
+        if let farthestFootDistance = feet.map({ distance(from: candidate, to: $0) }).min() {
+            quality += max(farthestFootDistance - targetRadius, 0)
         }
 
         return quality
@@ -1180,20 +971,20 @@ private struct HandTargetGameState {
     private func isCandidateValid(
         _ candidate: CGPoint,
         previousCenter: CGPoint?,
-        hands: [HandTargetDetectedHand],
+        feet: [FootTargetDetectedFoot],
         targetRadius: CGFloat
     ) -> Bool {
         if let previousCenter {
             let previousDistance = hypot(candidate.x - previousCenter.x, candidate.y - previousCenter.y)
-            if previousDistance < targetRadius * configuration.previousTargetDistanceMultiplier {
+            if previousDistance < targetRadius * previousTargetDistanceMultiplier {
                 return false
             }
         }
 
-        for hand in hands {
-            let bounds = hand.collisionBounds
+        for foot in feet {
+            let bounds = foot.collisionBounds
             let requiredClearance = targetRadius + max(baseClearance, min(bounds.width, bounds.height) * 0.2)
-            if distance(from: candidate, to: hand) < requiredClearance {
+            if distance(from: candidate, to: foot) < requiredClearance {
                 return false
             }
         }
@@ -1201,14 +992,14 @@ private struct HandTargetGameState {
         return true
     }
 
-    private func handIntersectsTarget(_ hand: HandTargetDetectedHand, target: HandTargetTarget) -> Bool {
-        distance(from: target.center, to: hand) <= target.radius
+    private func footIntersectsTarget(_ foot: FootTargetDetectedFoot, target: FootTargetTarget) -> Bool {
+        distance(from: target.center, to: foot) <= target.radius
     }
 
-    private func distance(from point: CGPoint, to hand: HandTargetDetectedHand) -> CGFloat {
-        let polygon = hand.collisionPolygon
+    private func distance(from point: CGPoint, to foot: FootTargetDetectedFoot) -> CGFloat {
+        let polygon = foot.collisionPolygon
         guard polygon.count >= 3 else {
-            return distance(from: point, to: hand.collisionBounds)
+            return distance(from: point, to: foot.collisionBounds)
         }
 
         if polygonContains(point, polygon: polygon) {
@@ -1265,14 +1056,13 @@ private struct HandTargetGameState {
     }
 }
 
-private struct HandTargetTarget {
+private struct FootTargetTarget {
     let center: CGPoint
     let radius: CGFloat
     let spawnedAt: Date
-    let lifetime: TimeInterval?
 }
 
-private struct HandTargetScorePopup: Identifiable {
+private struct FootTargetScorePopup: Identifiable {
     let id = UUID()
     let points: Int
     let center: CGPoint
@@ -1290,12 +1080,12 @@ private struct HandTargetScorePopup: Identifiable {
     }
 }
 
-private enum HandTargetStepEvent {
+private enum FootTargetStepEvent {
     case hit
     case miss
 }
 
-private enum HandTargetSoundPlayer {
+private enum FootTargetSoundPlayer {
     private static var player: AVAudioPlayer?
 
     static func playScore() {
@@ -1313,7 +1103,7 @@ private enum HandTargetSoundPlayer {
                 audioPlayer.prepareToPlay()
                 player = audioPlayer
             } catch {
-                print("Hand target score sound failed to load: \(error.localizedDescription)")
+                print("Foot target score sound failed to load: \(error.localizedDescription)")
                 return
             }
         }

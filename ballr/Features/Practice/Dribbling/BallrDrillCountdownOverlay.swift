@@ -69,7 +69,12 @@ struct BallrDrillCountdownOverlay: View {
 struct BallrDrillReadinessOverlay: View {
     let ballFoundStartedAt: Date?
 
-    private let requiredLockSeconds: TimeInterval = 3.0
+    private let requiredLockSeconds: TimeInterval
+
+    init(ballFoundStartedAt: Date?, requiredLockSeconds: TimeInterval = 3.0) {
+        self.ballFoundStartedAt = ballFoundStartedAt
+        self.requiredLockSeconds = requiredLockSeconds
+    }
 
     var body: some View {
         TimelineView(.animation) { timeline in

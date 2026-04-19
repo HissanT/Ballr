@@ -325,8 +325,26 @@ private struct LevelsHomeView: View {
             title: "Level \(level)",
             subtitle: {
                 switch level {
+                case 1:
+                    return "Ball Basics"
                 case 2:
                     return "Hand Targets"
+                case 3:
+                    return "Foot Targets"
+                case 4:
+                    return "Ball Targets"
+                case 5:
+                    return "Timed Targets"
+                case 6:
+                    return "Bomb Targets"
+                case 7:
+                    return "Timed Hand Targets"
+                case 8:
+                    return "Timed Foot Targets"
+                case 9:
+                    return "Combo Targets"
+                case 10:
+                    return "Timed Targets 45%"
                 case 19:
                     return "Ball Blast"
                 case 20:
@@ -423,8 +441,35 @@ private struct LevelsHomeView: View {
                 }
             }
             .navigationDestination(item: $selectedDrill) { drill in
-                if drill.level == 2 {
+                if drill.level == 1 {
+                    LevelOneCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 2 {
                     HandTargetCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 3 {
+                    FootTargetCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 4 {
+                    LevelFourCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 5 {
+                    LevelFiveCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 6 {
+                    LevelSixCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 7 {
+                    LevelSevenCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 8 {
+                    LevelEightCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 9 {
+                    LevelNineCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 10 {
+                    LevelTenCameraView()
                         .navigationBarBackButtonHidden(true)
                 } else if drill.level == 19 {
                     TargetDrillCameraView()

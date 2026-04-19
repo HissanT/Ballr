@@ -609,7 +609,7 @@ private enum BallTrackerCameraError: LocalizedError {
     }
 }
 
-private extension AVCaptureVideoOrientation {
+extension AVCaptureVideoOrientation {
     init?(interfaceOrientation: UIInterfaceOrientation) {
         switch interfaceOrientation {
         case .portrait:

@@ -4,11 +4,12 @@ import Foundation
 import SwiftUI
 import UIKit
 
-struct TargetDrillCameraView: View {
+struct LevelFiveCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
-    @StateObject private var coordinator = TargetDrillCoordinator()
+    @StateObject private var coordinator = LevelFiveCoordinator()
     @State private var showsQuitConfirmation = false
+    @State private var showsNextLevel = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -22,22 +23,24 @@ struct TargetDrillCameraView: View {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
 
-                TargetDrillRenderSurface(coordinator: coordinator)
-                .ignoresSafeArea()
+                LevelFiveRenderSurface(coordinator: coordinator)
+                    .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if !coordinator.hasEnded {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
 
                 if cameraController.isStarting {
-                    TargetDrillLoadingOverlay()
+                    LevelFiveLoadingOverlay()
                 }
 
                 if let errorMessage = cameraController.errorMessage {
-                    TargetDrillErrorOverlay(
+                    LevelFiveErrorOverlay(
                         message: errorMessage,
                         permissionDenied: cameraController.permissionDenied,
                         onDismiss: { dismiss() }
@@ -46,11 +49,28 @@ struct TargetDrillCameraView: View {
 
                 if coordinator.startPhase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
-                } else if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
+                } else if coordinator.startPhase == .readiness, cameraController.errorMessage == nil {
                     BallrDrillReadinessOverlay(ballFoundStartedAt: coordinator.ballFoundStartedAt)
+                }
+
+                if coordinator.hasEnded {
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        title: coordinator.finishTitle,
+                        primaryTitle: "TRY AGAIN",
+                        showsNextLevelButton: coordinator.didComplete,
+                        onNextLevel: { showsNextLevel = true },
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
+                    )
                 }
             }
             .statusBarHidden(true)
+            .navigationDestination(isPresented: $showsNextLevel) {
+                LevelSixCameraView()
+                    .navigationBarBackButtonHidden(true)
+            }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -64,6 +84,7 @@ struct TargetDrillCameraView: View {
                 cameraController.start()
             }
             .onDisappear {
+                coordinator.tearDown()
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
@@ -83,7 +104,7 @@ struct TargetDrillCameraView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            TargetDrillHudChip(
+            LevelFiveHudChip(
                 title: "STREAK",
                 value: "\(coordinator.hitStreak)",
                 tint: .orange,
@@ -101,9 +122,9 @@ struct TargetDrillCameraView: View {
             }
             .padding(.top, 8)
             Spacer()
-            TargetDrillHudChip(
-                title: "SCORE",
-                value: "\(coordinator.score)",
+            LevelFiveHudChip(
+                title: "HITS",
+                value: "\(coordinator.successfulHits)/25",
                 tint: .yellow,
                 alignment: .trailing
             )
@@ -111,25 +132,50 @@ struct TargetDrillCameraView: View {
     }
 }
 
-private final class TargetDrillCoordinator: ObservableObject {
+private final class LevelFiveCoordinator: ObservableObject {
+    enum FinishState {
+        case none
+        case completed
+        case failed
+    }
+
     @Published private(set) var startPhase: BallrDrillStartPhase = .readiness
     @Published private(set) var ballFoundStartedAt: Date?
     @Published private(set) var countdownStartedAt: Date?
-    @Published private(set) var score = 0
     @Published private(set) var hitStreak = 0
-    @Published private(set) var lastEventText = "READY"
-    @Published private(set) var lastEventIsPositive = true
     @Published private(set) var isTracking = false
     @Published private(set) var trackingStatusText = "SEARCHING"
+    @Published private(set) var successfulHits = 0
+    @Published private(set) var misses = 0
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
+    @Published private(set) var finishState: FinishState = .none
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
+    private let requiredSuccessfulHits = 25
+    private let allowedMisses = 5
+    private let finishAnimationDuration: TimeInterval = 1.2
+    private let finishButtonRevealDelay: TimeInterval = 0.28
 
-    private var gameState = TargetDrillGameState()
+    private var gameState = LevelFiveGameState()
     private var size: CGSize = .zero
-    private weak var renderView: TargetDrillRenderView?
+    private weak var renderView: LevelFiveRenderView?
+    private var finishWorkItem: DispatchWorkItem?
 
-    func attach(renderView: TargetDrillRenderView) {
+    var hasEnded: Bool {
+        finishState != .none
+    }
+
+    var didComplete: Bool {
+        finishState == .completed
+    }
+
+    var finishTitle: String {
+        didComplete ? "DONE" : "TRY AGAIN"
+    }
+
+    func attach(renderView: LevelFiveRenderView) {
         self.renderView = renderView
         renderView.update(
             ballDisplayRect: nil,
@@ -140,22 +186,29 @@ private final class TargetDrillCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
-        gameState = TargetDrillGameState()
+        cancelFinishWorkItem()
+        gameState = LevelFiveGameState()
         startPhase = .readiness
         ballFoundStartedAt = nil
         countdownStartedAt = nil
-        score = 0
         hitStreak = 0
-        lastEventText = "READY"
-        lastEventIsPositive = true
         isTracking = false
         trackingStatusText = "SEARCHING"
+        successfulHits = 0
+        misses = 0
+        finishStartedAt = nil
+        showsFinishButtons = false
+        finishState = .none
         prepare(in: size, forceRespawn: true)
+    }
+
+    func tearDown() {
+        cancelFinishWorkItem()
     }
 
     func prepare(in size: CGSize, forceRespawn: Bool = false) {
         self.size = size
-        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live)
+        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live && !hasEnded)
         renderView?.update(
             ballDisplayRect: nil,
             isTracking: isTracking,
@@ -170,16 +223,30 @@ private final class TargetDrillCoordinator: ObservableObject {
         updateTrackingStatus(from: overlayState)
         updateStartGate(isTracking: overlayState.isTracking, timestamp: frame.timestamp)
 
-        if startPhase == .live {
+        if startPhase == .live, !hasEnded {
             let event = gameState.step(
                 overlayState: overlayState,
                 ballDisplayRect: ballDisplayRect,
                 in: size,
                 timestamp: frame.timestamp
             )
-            if event == .hit {
-                TargetDrillSoundPlayer.playScore()
+
+            switch event {
+            case .hit:
+                successfulHits += 1
+                LevelFiveSoundPlayer.playScore()
+                if successfulHits >= requiredSuccessfulHits {
+                    finish(.completed, at: frame.timestamp)
+                }
+            case .miss:
+                misses += 1
+                if misses >= allowedMisses {
+                    finish(.failed, at: frame.timestamp)
+                }
+            case nil:
+                break
             }
+
             syncHudFromGameState()
         }
 
@@ -242,36 +309,58 @@ private final class TargetDrillCoordinator: ObservableObject {
     }
 
     private func syncHudFromGameState() {
-        if score != gameState.score {
-            score = gameState.score
-        }
         if hitStreak != gameState.hitStreak {
             hitStreak = gameState.hitStreak
         }
-        if lastEventText != gameState.lastEventText {
-            lastEventText = gameState.lastEventText
+    }
+
+    private func finish(_ state: FinishState, at timestamp: Date) {
+        guard finishState == .none else {
+            return
         }
-        if lastEventIsPositive != gameState.lastEventIsPositive {
-            lastEventIsPositive = gameState.lastEventIsPositive
+
+        finishState = state
+        finishStartedAt = timestamp
+        showsFinishButtons = false
+        gameState.finish()
+        renderView?.update(
+            ballDisplayRect: nil,
+            isTracking: isTracking,
+            target: gameState.target,
+            scorePopups: gameState.scorePopups
+        )
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
         }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 }
 
-private struct TargetDrillRenderSurface: UIViewRepresentable {
-    let coordinator: TargetDrillCoordinator
+private struct LevelFiveRenderSurface: UIViewRepresentable {
+    let coordinator: LevelFiveCoordinator
 
-    func makeUIView(context: Context) -> TargetDrillRenderView {
-        let view = TargetDrillRenderView()
+    func makeUIView(context: Context) -> LevelFiveRenderView {
+        let view = LevelFiveRenderView()
         coordinator.attach(renderView: view)
         return view
     }
 
-    func updateUIView(_ uiView: TargetDrillRenderView, context: Context) {
+    func updateUIView(_ uiView: LevelFiveRenderView, context: Context) {
         coordinator.attach(renderView: uiView)
     }
 }
 
-private final class TargetDrillRenderView: UIView {
+private final class LevelFiveRenderView: UIView {
     private let targetFillLayer = CAShapeLayer()
     private let targetOuterLayer = CAShapeLayer()
     private let targetInnerLayer = CAShapeLayer()
@@ -284,8 +373,8 @@ private final class TargetDrillRenderView: UIView {
     private var displayLink: CADisplayLink?
     private var ballDisplayRect: CGRect?
     private var isTracking = false
-    private var target: TargetDrillTarget?
-    private var scorePopups: [TargetDrillScorePopup] = []
+    private var target: LevelFiveTarget?
+    private var scorePopups: [LevelFiveScorePopup] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -319,8 +408,8 @@ private final class TargetDrillRenderView: UIView {
     func update(
         ballDisplayRect: CGRect?,
         isTracking: Bool,
-        target: TargetDrillTarget?,
-        scorePopups: [TargetDrillScorePopup]
+        target: LevelFiveTarget?,
+        scorePopups: [LevelFiveScorePopup]
     ) {
         self.ballDisplayRect = ballDisplayRect
         self.isTracking = isTracking
@@ -409,7 +498,7 @@ private final class TargetDrillRenderView: UIView {
             return
         }
 
-        let alpha = CGFloat(1.0 - targetAgeProgress(for: target, at: date))
+        let alpha = CGFloat(1.0 - targetAgeProgress(for: target, at: date)) * 0.5
         let rect = CGRect(
             x: target.center.x - target.radius,
             y: target.center.y - target.radius,
@@ -437,7 +526,7 @@ private final class TargetDrillRenderView: UIView {
         targetFillLayer.opacity = Float(alpha)
         targetOuterLayer.opacity = Float(alpha)
         targetInnerLayer.opacity = Float(alpha)
-        targetProgressLayer.opacity = Float(alpha)
+        targetProgressLayer.opacity = Float(1.0 - targetAgeProgress(for: target, at: date))
     }
 
     private func renderBall() {
@@ -484,7 +573,7 @@ private final class TargetDrillRenderView: UIView {
         }
     }
 
-    private func makePopupLayer(for popup: TargetDrillScorePopup) -> CATextLayer {
+    private func makePopupLayer(for popup: LevelFiveScorePopup) -> CATextLayer {
         let textLayer = CATextLayer()
         textLayer.contentsScale = traitCollection.displayScale
         textLayer.alignmentMode = .center
@@ -500,8 +589,8 @@ private final class TargetDrillRenderView: UIView {
         return textLayer
     }
 
-    private func targetAgeProgress(for target: TargetDrillTarget, at date: Date) -> Double {
-        min(max(date.timeIntervalSince(target.spawnedAt) / TargetDrillGameState.targetLifetime, 0), 1)
+    private func targetAgeProgress(for target: LevelFiveTarget, at date: Date) -> Double {
+        min(max(date.timeIntervalSince(target.spawnedAt) / LevelFiveGameState.targetLifetime, 0), 1)
     }
 
     private func smoothStep(_ value: Double) -> CGFloat {
@@ -510,7 +599,7 @@ private final class TargetDrillRenderView: UIView {
     }
 }
 
-private struct TargetDrillHudChip: View {
+private struct LevelFiveHudChip: View {
     let title: String
     let value: String
     let tint: Color
@@ -535,12 +624,12 @@ private struct TargetDrillHudChip: View {
     }
 }
 
-private struct TargetDrillLoadingOverlay: View {
+private struct LevelFiveLoadingOverlay: View {
     var body: some View {
         VStack(spacing: 14) {
             ProgressView()
                 .tint(.white)
-            Text("Starting target drill...")
+            Text("Starting level 5...")
                 .font(.system(size: 16, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
         }
@@ -550,7 +639,7 @@ private struct TargetDrillLoadingOverlay: View {
     }
 }
 
-private struct TargetDrillErrorOverlay: View {
+private struct LevelFiveErrorOverlay: View {
     let message: String
     let permissionDenied: Bool
     let onDismiss: () -> Void
@@ -605,22 +694,16 @@ private struct TargetDrillErrorOverlay: View {
     }
 }
 
-private struct TargetDrillGameState {
+private struct LevelFiveGameState {
     static let targetLifetime: TimeInterval = 4.0
 
-    var target: TargetDrillTarget?
-    var scorePopups: [TargetDrillScorePopup] = []
-    var score = 0
+    var target: LevelFiveTarget?
+    var scorePopups: [LevelFiveScorePopup] = []
     var hitStreak = 0
     var misses = 0
-    var lastEventText = "READY"
-    var lastEventIsPositive = true
 
-    private let fullValueWindow: TimeInterval = 2.0
-    private let scoreStep: TimeInterval = 0.4
-    private let scoreValue = 5
-    private let comboStreakStep = 10
-    private let lowerYFraction: CGFloat = 0.58
+    private let popupValue = 5
+    private let spawnTopFraction: CGFloat = 0.75
     private let clearance: CGFloat = 20
 
     mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
@@ -638,12 +721,16 @@ private struct TargetDrillGameState {
         }
     }
 
+    mutating func finish() {
+        target = nil
+    }
+
     mutating func step(
         overlayState: BallTrackerOverlayState,
         ballDisplayRect: CGRect?,
         in size: CGSize,
         timestamp: Date
-    ) -> TargetDrillStepEvent? {
+    ) -> LevelFiveStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
         prepare(in: size)
 
@@ -654,11 +741,8 @@ private struct TargetDrillGameState {
         if targetAge(for: currentTarget, at: timestamp) >= Self.targetLifetime {
             misses += 1
             hitStreak = 0
-            lastEventText = "-1"
-            lastEventIsPositive = false
-            score = max(score - 1, 0)
             scorePopups.append(
-                TargetDrillScorePopup(
+                LevelFiveScorePopup(
                     points: -1,
                     center: currentTarget.center,
                     destination: CGPoint(x: 104, y: 40),
@@ -680,14 +764,10 @@ private struct TargetDrillGameState {
             return nil
         }
 
-        let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
-        score += points
         hitStreak += 1
-        lastEventText = "+\(points)"
-        lastEventIsPositive = true
         scorePopups.append(
-            TargetDrillScorePopup(
-                points: points,
+            LevelFiveScorePopup(
+                points: popupValue,
                 center: currentTarget.center,
                 destination: CGPoint(x: max(size.width - 104, 40), y: 40),
                 startedAt: timestamp
@@ -697,40 +777,7 @@ private struct TargetDrillGameState {
         return .hit
     }
 
-    func targetAlpha(at timestamp: Date) -> Double {
-        guard let target else {
-            return 0
-        }
-        return 1.0 - targetAgeProgress(for: target, at: timestamp)
-    }
-
-    func targetAgeProgress(at timestamp: Date) -> Double {
-        guard let target else {
-            return 0
-        }
-        return targetAgeProgress(for: target, at: timestamp)
-    }
-
-    private var comboMultiplier: Int {
-        1 + max(hitStreak, 0) / comboStreakStep
-    }
-
-    private func basePoints(for target: TargetDrillTarget, at timestamp: Date) -> Int {
-        let age = targetAge(for: target, at: timestamp)
-        guard age > fullValueWindow else {
-            return scoreValue
-        }
-
-        let elapsedAfterFullValue = age - fullValueWindow
-        let steps = Int(floor(elapsedAfterFullValue / scoreStep)) + 1
-        return max(1, scoreValue - steps)
-    }
-
-    private func targetAgeProgress(for target: TargetDrillTarget, at timestamp: Date) -> Double {
-        min(max(targetAge(for: target, at: timestamp) / Self.targetLifetime, 0), 1)
-    }
-
-    private func targetAge(for target: TargetDrillTarget, at timestamp: Date) -> TimeInterval {
+    private func targetAge(for target: LevelFiveTarget, at timestamp: Date) -> TimeInterval {
         max(0, timestamp.timeIntervalSince(target.spawnedAt))
     }
 
@@ -771,12 +818,12 @@ private struct TargetDrillGameState {
                 ballRadius: ballRadius,
                 targetRadius: radius
             ) {
-                target = TargetDrillTarget(center: candidate, radius: radius, spawnedAt: timestamp)
+                target = LevelFiveTarget(center: candidate, radius: radius, spawnedAt: timestamp)
                 return
             }
         }
 
-        target = TargetDrillTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
+        target = LevelFiveTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
     }
 
     private func targetRadius(for size: CGSize) -> CGFloat {
@@ -785,7 +832,7 @@ private struct TargetDrillGameState {
 
     private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
         let horizontalPadding = radius + 26
-        let top = max(size.height * lowerYFraction, radius + 76)
+        let top = max(size.height * spawnTopFraction + radius, radius + 76)
         let bottom = max(top, size.height - radius - 58)
         return CGRect(
             x: horizontalPadding,
@@ -838,13 +885,13 @@ private struct TargetDrillGameState {
     }
 }
 
-private struct TargetDrillTarget {
+private struct LevelFiveTarget {
     let center: CGPoint
     let radius: CGFloat
     let spawnedAt: Date
 }
 
-private struct TargetDrillScorePopup: Identifiable {
+private struct LevelFiveScorePopup: Identifiable {
     let id = UUID()
     let points: Int
     let center: CGPoint
@@ -862,12 +909,12 @@ private struct TargetDrillScorePopup: Identifiable {
     }
 }
 
-private enum TargetDrillStepEvent {
+private enum LevelFiveStepEvent {
     case hit
     case miss
 }
 
-private enum TargetDrillSoundPlayer {
+private enum LevelFiveSoundPlayer {
     private static var player: AVAudioPlayer?
 
     static func playScore() {
@@ -885,7 +932,7 @@ private enum TargetDrillSoundPlayer {
                 audioPlayer.prepareToPlay()
                 player = audioPlayer
             } catch {
-                print("Target drill score sound failed to load: \(error.localizedDescription)")
+                print("Level 5 score sound failed to load: \(error.localizedDescription)")
                 return
             }
         }
