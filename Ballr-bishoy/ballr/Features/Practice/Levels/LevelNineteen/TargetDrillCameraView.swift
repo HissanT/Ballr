@@ -1,25 +1,14 @@
 import AVFoundation
+import Combine
 import Foundation
 import SwiftUI
 import UIKit
-import Combine
 
-enum FootTargetNextDestination {
-    case levelFour
-    case levelNine
-}
-
-struct FootTargetCameraView: View {
+struct TargetDrillCameraView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var cameraController = FootPoseCameraController()
-    @StateObject private var coordinator = FootTargetCoordinator()
+    @StateObject private var cameraController = BallTrackerCameraController()
+    @StateObject private var coordinator = TargetDrillCoordinator()
     @State private var showsQuitConfirmation = false
-    @State private var showsNextLevel = false
-    private let nextDestination: FootTargetNextDestination
-
-    init(nextDestination: FootTargetNextDestination = .levelFour) {
-        self.nextDestination = nextDestination
-    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -33,66 +22,48 @@ struct FootTargetCameraView: View {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
 
-                FootTargetRenderSurface(coordinator: coordinator)
-                    .ignoresSafeArea()
+                TargetDrillRenderSurface(coordinator: coordinator)
+                .ignoresSafeArea()
 
-                if !coordinator.isCompleted {
-                    VStack(spacing: 0) {
-                        topBar
-                        Spacer()
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer()
                 }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
 
                 if cameraController.isStarting {
-                    FootTargetLoadingOverlay()
+                    TargetDrillLoadingOverlay()
                 }
 
                 if let errorMessage = cameraController.errorMessage {
-                    FootTargetErrorOverlay(
+                    TargetDrillErrorOverlay(
                         message: errorMessage,
                         permissionDenied: cameraController.permissionDenied,
                         onDismiss: { dismiss() }
                     )
                 }
 
-                if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
-                    FootTargetReadinessOverlay(footFoundStartedAt: coordinator.footFoundStartedAt)
-                }
-
-                if coordinator.isCompleted {
-                    PracticeLevelCompletionOverlay(
-                        startedAt: coordinator.completionStartedAt,
-                        buttonsVisible: coordinator.showsCompletionButtons,
-                        onNextLevel: { showsNextLevel = true },
-                        onTryAgain: { coordinator.reset(in: geometry.size) },
-                        onBackToLevels: { dismiss() }
-                    )
+                if coordinator.startPhase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
+                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                } else if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
+                    BallrDrillReadinessOverlay(ballFoundStartedAt: coordinator.ballFoundStartedAt)
                 }
             }
             .statusBarHidden(true)
-            .navigationDestination(isPresented: $showsNextLevel) {
-                switch nextDestination {
-                case .levelFour:
-                    LevelFourCameraView()
-                        .navigationBarBackButtonHidden(true)
-                case .levelNine:
-                    LevelNineCameraView()
-                        .navigationBarBackButtonHidden(true)
-                }
-            }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
                 cameraController.publishesTrackingFramesToSwiftUI = false
-                cameraController.onTrackingFrame = { [weak coordinator] frame in
+                cameraController.onTrackingFrame = { [weak coordinator, weak cameraController] frame in
+                    guard let cameraController else {
+                        return
+                    }
                     coordinator?.handle(frame: frame, cameraController: cameraController)
                 }
                 cameraController.start()
             }
             .onDisappear {
-                coordinator.tearDown()
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
@@ -112,15 +83,13 @@ struct FootTargetCameraView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            FootTargetHudChip(
+            TargetDrillHudChip(
                 title: "STREAK",
                 value: "\(coordinator.hitStreak)",
                 tint: .orange,
                 alignment: .leading
             )
-
             Spacer()
-
             Button {
                 showsQuitConfirmation = true
             } label: {
@@ -131,12 +100,10 @@ struct FootTargetCameraView: View {
                     .background(.black.opacity(0.65), in: Circle())
             }
             .padding(.top, 8)
-
             Spacer()
-
-            FootTargetHudChip(
-                title: "HITS",
-                value: "\(coordinator.successfulHits)/20",
+            TargetDrillHudChip(
+                title: "SCORE",
+                value: "\(coordinator.score)",
                 tint: .yellow,
                 alignment: .trailing
             )
@@ -144,49 +111,28 @@ struct FootTargetCameraView: View {
     }
 }
 
-private final class FootTargetCoordinator: ObservableObject {
+private final class TargetDrillCoordinator: ObservableObject {
     @Published private(set) var startPhase: BallrDrillStartPhase = .readiness
-    @Published private(set) var footFoundStartedAt: Date?
+    @Published private(set) var ballFoundStartedAt: Date?
+    @Published private(set) var countdownStartedAt: Date?
     @Published private(set) var score = 0
     @Published private(set) var hitStreak = 0
-    @Published private(set) var successfulHits = 0
     @Published private(set) var lastEventText = "READY"
     @Published private(set) var lastEventIsPositive = true
     @Published private(set) var isTracking = false
     @Published private(set) var trackingStatusText = "SEARCHING"
-    @Published private(set) var completionStartedAt: Date?
-    @Published private(set) var showsCompletionButtons = false
 
-    private let requiredFootLockSeconds: TimeInterval = 3.0
-    private let requiredSuccessfulHits = 20
-    private let completionAnimationDuration: TimeInterval = 1.2
-    private let completionButtonRevealDelay: TimeInterval = 0.28
+    private let requiredBallLockSeconds: TimeInterval = 3.0
+    private let countdownDuration: TimeInterval = 4.0
 
-    private var gameState = FootTargetGameState()
+    private var gameState = TargetDrillGameState()
     private var size: CGSize = .zero
-    private weak var renderView: FootTargetRenderView?
-    private var lastDetectedFeet: [FootTargetDetectedFoot] = []
-    private var completionWorkItem: DispatchWorkItem?
+    private weak var renderView: TargetDrillRenderView?
 
-    var isCompleted: Bool {
-        completionStartedAt != nil
-    }
-
-    func attach(renderView: FootTargetRenderView) {
-        if self.renderView !== renderView {
-            self.renderView = renderView
-            renderView.onBoundsChange = { [weak self] size in
-                self?.prepare(in: size)
-            }
-        }
-
-        let renderSize = renderView.bounds.size
-        if renderSize.width > 0, renderSize.height > 0 {
-            size = renderSize
-        }
-
+    func attach(renderView: TargetDrillRenderView) {
+        self.renderView = renderView
         renderView.update(
-            feet: lastDetectedFeet,
+            ballDisplayRect: nil,
             isTracking: isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
@@ -194,103 +140,68 @@ private final class FootTargetCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
-        gameState = FootTargetGameState()
+        gameState = TargetDrillGameState()
         startPhase = .readiness
-        footFoundStartedAt = nil
+        ballFoundStartedAt = nil
+        countdownStartedAt = nil
         score = 0
         hitStreak = 0
-        successfulHits = 0
         lastEventText = "READY"
         lastEventIsPositive = true
         isTracking = false
         trackingStatusText = "SEARCHING"
-        completionStartedAt = nil
-        showsCompletionButtons = false
-        lastDetectedFeet = []
-        cancelCompletionWorkItem()
         prepare(in: size, forceRespawn: true)
     }
 
-    func tearDown() {
-        cancelCompletionWorkItem()
-    }
-
     func prepare(in size: CGSize, forceRespawn: Bool = false) {
-        guard size.width > 0, size.height > 0 else {
-            return
-        }
-
-        self.size = resolvedGameplaySize(fallback: size)
-        gameState.prepare(in: self.size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live && !isCompleted)
+        self.size = size
+        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live)
         renderView?.update(
-            feet: lastDetectedFeet,
+            ballDisplayRect: nil,
             isTracking: isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
         )
     }
 
-    func handle(frame: FootPoseFrame, cameraController: FootPoseCameraController) {
-        let detectedFeet = frame.overlayState.feet.compactMap { footState -> FootTargetDetectedFoot? in
-            guard let displayRect = cameraController.displayRect(for: footState.normalizedRect) else {
-                return nil
-            }
-            let displayPoints = footState.normalizedPoints.compactMap {
-                cameraController.displayPoint(for: $0)
-            }
-            return FootTargetDetectedFoot(
-                id: footState.id,
-                rect: displayRect,
-                collisionPolygon: FootTargetDetectedFoot.collisionPolygon(
-                    from: displayPoints,
-                    fallbackRect: displayRect
-                ),
-                confidence: CGFloat(footState.confidence)
-            )
-        }
-        lastDetectedFeet = detectedFeet
+    func handle(frame: BallTrackerFrame, cameraController: BallTrackerCameraController) {
+        let overlayState = frame.overlayState
+        let ballDisplayRect = displayRect(for: overlayState, cameraController: cameraController)
+        updateTrackingStatus(from: overlayState)
+        updateStartGate(isTracking: overlayState.isTracking, timestamp: frame.timestamp)
 
-        updateTrackingStatus(from: frame.overlayState)
-        updateStartGate(isTracking: frame.overlayState.isTracking, timestamp: frame.timestamp)
-
-        if startPhase == .live, !isCompleted {
+        if startPhase == .live {
             let event = gameState.step(
-                feet: detectedFeet,
-                isTracking: frame.overlayState.isTracking,
+                overlayState: overlayState,
+                ballDisplayRect: ballDisplayRect,
                 in: size,
                 timestamp: frame.timestamp
             )
             if event == .hit {
-                FootTargetSoundPlayer.playScore()
-                successfulHits += 1
-                if successfulHits >= requiredSuccessfulHits {
-                    completeLevel(at: frame.timestamp)
-                }
+                TargetDrillSoundPlayer.playScore()
             }
             syncHudFromGameState()
         }
 
         renderView?.update(
-            feet: detectedFeet,
-            isTracking: frame.overlayState.isTracking,
+            ballDisplayRect: ballDisplayRect,
+            isTracking: overlayState.isTracking,
             target: gameState.target,
             scorePopups: gameState.scorePopups
         )
     }
 
-    private func resolvedGameplaySize(fallback size: CGSize) -> CGSize {
-        guard let renderView else {
-            return size
+    private func displayRect(
+        for overlayState: BallTrackerOverlayState,
+        cameraController: BallTrackerCameraController
+    ) -> CGRect? {
+        guard let normalizedRect = overlayState.normalizedRect else {
+            return nil
         }
-
-        let renderSize = renderView.bounds.size
-        guard renderSize.width > 0, renderSize.height > 0 else {
-            return size
-        }
-        return renderSize
+        return cameraController.displayRect(for: normalizedRect)
     }
 
-    private func updateTrackingStatus(from overlayState: FootPoseOverlayState) {
+    private func updateTrackingStatus(from overlayState: BallTrackerOverlayState) {
         if isTracking != overlayState.isTracking {
             isTracking = overlayState.isTracking
         }
@@ -306,18 +217,27 @@ private final class FootTargetCoordinator: ObservableObject {
             return
         }
 
-        guard isTracking else {
-            footFoundStartedAt = nil
+        if startPhase == .countdown {
+            if
+                let countdownStartedAt,
+                timestamp.timeIntervalSince(countdownStartedAt) >= countdownDuration
+            {
+                startPhase = .live
+            }
             return
         }
 
-        let startedAt = footFoundStartedAt ?? timestamp
-        footFoundStartedAt = startedAt
+        guard isTracking else {
+            ballFoundStartedAt = nil
+            return
+        }
 
-        if timestamp.timeIntervalSince(startedAt) >= requiredFootLockSeconds {
-            startPhase = .live
-            lastEventText = "GO"
-            lastEventIsPositive = true
+        let startedAt = ballFoundStartedAt ?? timestamp
+        ballFoundStartedAt = startedAt
+
+        if timestamp.timeIntervalSince(startedAt) >= requiredBallLockSeconds {
+            countdownStartedAt = timestamp
+            startPhase = .countdown
         }
     }
 
@@ -335,69 +255,37 @@ private final class FootTargetCoordinator: ObservableObject {
             lastEventIsPositive = gameState.lastEventIsPositive
         }
     }
-
-    private func completeLevel(at timestamp: Date) {
-        guard completionStartedAt == nil else {
-            return
-        }
-
-        completionStartedAt = timestamp
-        showsCompletionButtons = false
-        gameState.finish()
-        renderView?.update(
-            feet: lastDetectedFeet,
-            isTracking: isTracking,
-            target: gameState.target,
-            scorePopups: gameState.scorePopups
-        )
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.showsCompletionButtons = true
-        }
-        completionWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + completionAnimationDuration + completionButtonRevealDelay,
-            execute: workItem
-        )
-    }
-
-    private func cancelCompletionWorkItem() {
-        completionWorkItem?.cancel()
-        completionWorkItem = nil
-    }
 }
 
-private struct FootTargetRenderSurface: UIViewRepresentable {
-    let coordinator: FootTargetCoordinator
+private struct TargetDrillRenderSurface: UIViewRepresentable {
+    let coordinator: TargetDrillCoordinator
 
-    func makeUIView(context: Context) -> FootTargetRenderView {
-        let view = FootTargetRenderView()
+    func makeUIView(context: Context) -> TargetDrillRenderView {
+        let view = TargetDrillRenderView()
         coordinator.attach(renderView: view)
         return view
     }
 
-    func updateUIView(_ uiView: FootTargetRenderView, context: Context) {
+    func updateUIView(_ uiView: TargetDrillRenderView, context: Context) {
         coordinator.attach(renderView: uiView)
     }
 }
 
-private final class FootTargetRenderView: UIView {
+private final class TargetDrillRenderView: UIView {
     private let targetFillLayer = CAShapeLayer()
     private let targetOuterLayer = CAShapeLayer()
     private let targetInnerLayer = CAShapeLayer()
     private let targetProgressLayer = CAShapeLayer()
+    private let ballRingLayer = CAShapeLayer()
+    private let ballCenterLayer = CAShapeLayer()
     private let promptLabel = UILabel()
 
     private var popupLayers: [UUID: CATextLayer] = [:]
     private var displayLink: CADisplayLink?
-    private var feet: [FootTargetDetectedFoot] = []
+    private var ballDisplayRect: CGRect?
     private var isTracking = false
-    private var target: FootTargetTarget?
-    private var scorePopups: [FootTargetScorePopup] = []
-    private var missingFootFrameCount = 0
-    var onBoundsChange: ((CGSize) -> Void)?
-    private var lastReportedBoundsSize: CGSize = .zero
-    private let missingFootPromptFrameThreshold = 12
+    private var target: TargetDrillTarget?
+    private var scorePopups: [TargetDrillScorePopup] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -429,22 +317,20 @@ private final class FootTargetRenderView: UIView {
     }
 
     func update(
-        feet: [FootTargetDetectedFoot],
+        ballDisplayRect: CGRect?,
         isTracking: Bool,
-        target: FootTargetTarget?,
-        scorePopups: [FootTargetScorePopup]
+        target: TargetDrillTarget?,
+        scorePopups: [TargetDrillScorePopup]
     ) {
-        self.feet = feet
+        self.ballDisplayRect = ballDisplayRect
         self.isTracking = isTracking
         self.target = target
         self.scorePopups = scorePopups
-        missingFootFrameCount = isTracking ? 0 : missingFootFrameCount + 1
         render(date: Date())
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        reportBoundsIfNeeded()
         render(date: Date())
     }
 
@@ -465,13 +351,25 @@ private final class FootTargetRenderView: UIView {
         targetOuterLayer.shadowRadius = 16
         targetOuterLayer.shadowOffset = .zero
 
+        ballRingLayer.fillColor = UIColor.clear.cgColor
+        ballRingLayer.strokeColor = UIColor.white.cgColor
+        ballRingLayer.lineWidth = 2.5
+        ballRingLayer.shadowColor = UIColor.black.cgColor
+        ballRingLayer.shadowOpacity = 0.45
+        ballRingLayer.shadowRadius = 6
+        ballRingLayer.shadowOffset = .zero
+        ballCenterLayer.fillColor = UIColor.orange.cgColor
+
         [
             targetFillLayer,
             targetOuterLayer,
-            targetInnerLayer
+            targetInnerLayer,
+            targetProgressLayer,
+            ballRingLayer,
+            ballCenterLayer
         ].forEach(layer.addSublayer)
 
-        promptLabel.text = "Find your foot"
+        promptLabel.text = "Find the ball"
         promptLabel.font = .systemFont(ofSize: 15, weight: .black)
         promptLabel.textColor = .white
         promptLabel.textAlignment = .center
@@ -479,18 +377,6 @@ private final class FootTargetRenderView: UIView {
         promptLabel.layer.cornerRadius = 8
         promptLabel.layer.masksToBounds = true
         addSubview(promptLabel)
-    }
-
-    private func reportBoundsIfNeeded() {
-        guard bounds.size != lastReportedBoundsSize else {
-            return
-        }
-
-        lastReportedBoundsSize = bounds.size
-        guard bounds.width > 0, bounds.height > 0 else {
-            return
-        }
-        onBoundsChange?(bounds.size)
     }
 
     @objc private func renderFrame() {
@@ -501,10 +387,10 @@ private final class FootTargetRenderView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         renderTarget(date: date)
-        renderFeet()
+        renderBall()
         renderPopups(date: date)
-        promptLabel.isHidden = isTracking || missingFootFrameCount < missingFootPromptFrameThreshold || target == nil
-        let promptSize = CGSize(width: 180, height: 42)
+        promptLabel.isHidden = isTracking
+        let promptSize = CGSize(width: 160, height: 42)
         promptLabel.frame = CGRect(
             x: bounds.midX - promptSize.width * 0.5,
             y: bounds.midY - promptSize.height * 0.5,
@@ -523,6 +409,7 @@ private final class FootTargetRenderView: UIView {
             return
         }
 
+        let alpha = CGFloat(1.0 - targetAgeProgress(for: target, at: date))
         let rect = CGRect(
             x: target.center.x - target.radius,
             y: target.center.y - target.radius,
@@ -530,19 +417,49 @@ private final class FootTargetRenderView: UIView {
             height: target.radius * 2
         )
         let innerRect = rect.insetBy(dx: 8, dy: 8)
+        let progressRadius = max(target.radius - 16, 1)
+        let remainingProgress = max(CGFloat(0.02), 1.0 - CGFloat(targetAgeProgress(for: target, at: date)))
 
         targetFillLayer.isHidden = false
         targetOuterLayer.isHidden = false
         targetInnerLayer.isHidden = false
+        targetProgressLayer.isHidden = false
         targetFillLayer.path = UIBezierPath(ovalIn: rect).cgPath
         targetOuterLayer.path = UIBezierPath(ovalIn: rect).cgPath
         targetInnerLayer.path = UIBezierPath(ovalIn: innerRect).cgPath
-        targetFillLayer.opacity = 1
-        targetOuterLayer.opacity = 1
-        targetInnerLayer.opacity = 1
+        targetProgressLayer.path = UIBezierPath(
+            arcCenter: target.center,
+            radius: progressRadius,
+            startAngle: -.pi / 2,
+            endAngle: -.pi / 2 + (.pi * 2 * remainingProgress),
+            clockwise: true
+        ).cgPath
+        targetFillLayer.opacity = Float(alpha)
+        targetOuterLayer.opacity = Float(alpha)
+        targetInnerLayer.opacity = Float(alpha)
+        targetProgressLayer.opacity = Float(alpha)
     }
 
-    private func renderFeet() {
+    private func renderBall() {
+        guard let ballDisplayRect else {
+            ballRingLayer.isHidden = true
+            ballCenterLayer.isHidden = true
+            ballRingLayer.path = nil
+            ballCenterLayer.path = nil
+            return
+        }
+
+        ballRingLayer.isHidden = false
+        ballCenterLayer.isHidden = false
+        ballRingLayer.path = UIBezierPath(ovalIn: ballDisplayRect).cgPath
+        ballCenterLayer.path = UIBezierPath(
+            ovalIn: CGRect(
+                x: ballDisplayRect.midX - 5,
+                y: ballDisplayRect.midY - 5,
+                width: 10,
+                height: 10
+            )
+        ).cgPath
     }
 
     private func renderPopups(date: Date) {
@@ -567,7 +484,7 @@ private final class FootTargetRenderView: UIView {
         }
     }
 
-    private func makePopupLayer(for popup: FootTargetScorePopup) -> CATextLayer {
+    private func makePopupLayer(for popup: TargetDrillScorePopup) -> CATextLayer {
         let textLayer = CATextLayer()
         textLayer.contentsScale = traitCollection.displayScale
         textLayer.alignmentMode = .center
@@ -583,72 +500,17 @@ private final class FootTargetRenderView: UIView {
         return textLayer
     }
 
+    private func targetAgeProgress(for target: TargetDrillTarget, at date: Date) -> Double {
+        min(max(date.timeIntervalSince(target.spawnedAt) / TargetDrillGameState.targetLifetime, 0), 1)
+    }
+
     private func smoothStep(_ value: Double) -> CGFloat {
         let clamped = min(max(value, 0), 1)
         return CGFloat(clamped * clamped * (3 - 2 * clamped))
     }
 }
 
-private struct FootTargetDetectedFoot: Identifiable {
-    let id: Int
-    let rect: CGRect
-    let collisionPolygon: [CGPoint]
-    let confidence: CGFloat
-
-    var collisionBounds: CGRect {
-        Self.boundingRect(for: collisionPolygon) ?? rect.insetBy(dx: rect.width * 0.18, dy: rect.height * 0.18)
-    }
-
-    static func collisionPolygon(from points: [CGPoint], fallbackRect: CGRect) -> [CGPoint] {
-        guard points.count >= 4 else {
-            let fallback = fallbackRect.insetBy(dx: fallbackRect.width * 0.18, dy: fallbackRect.height * 0.18)
-            return [
-                CGPoint(x: fallback.minX, y: fallback.minY),
-                CGPoint(x: fallback.maxX, y: fallback.minY),
-                CGPoint(x: fallback.maxX, y: fallback.maxY),
-                CGPoint(x: fallback.minX, y: fallback.maxY)
-            ]
-        }
-
-        return scaled(points: points, factor: 0.9)
-    }
-
-    private static func scaled(points: [CGPoint], factor: CGFloat) -> [CGPoint] {
-        guard !points.isEmpty else {
-            return []
-        }
-
-        let center = points.reduce(CGPoint.zero) { partial, point in
-            CGPoint(x: partial.x + point.x, y: partial.y + point.y)
-        }
-        let centroid = CGPoint(
-            x: center.x / CGFloat(points.count),
-            y: center.y / CGFloat(points.count)
-        )
-
-        return points.map {
-            CGPoint(
-                x: centroid.x + ($0.x - centroid.x) * factor,
-                y: centroid.y + ($0.y - centroid.y) * factor
-            )
-        }
-    }
-
-    private static func boundingRect(for points: [CGPoint]) -> CGRect? {
-        guard
-            let minX = points.map(\.x).min(),
-            let maxX = points.map(\.x).max(),
-            let minY = points.map(\.y).min(),
-            let maxY = points.map(\.y).max()
-        else {
-            return nil
-        }
-
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private struct FootTargetHudChip: View {
+private struct TargetDrillHudChip: View {
     let title: String
     let value: String
     let tint: Color
@@ -673,68 +535,12 @@ private struct FootTargetHudChip: View {
     }
 }
 
-private struct FootTargetReadinessOverlay: View {
-    let footFoundStartedAt: Date?
-
-    private let requiredLockSeconds: TimeInterval = 3.0
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let progress = readinessProgress(at: timeline.date)
-
-            ZStack {
-                Color.black.opacity(0.86)
-                    .ignoresSafeArea()
-
-                VStack(spacing: 16) {
-                    Text(footFoundStartedAt == nil ? "Find your foot" : "Hold your foot still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
-                        .foregroundStyle(footFoundStartedAt == nil ? Color.yellow : .white)
-
-                    Text(footFoundStartedAt == nil ? "Put your foot in frame to start." : "Starting in \(remainingText(at: timeline.date))")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .multilineTextAlignment(.center)
-
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.white.opacity(0.16))
-
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.yellow)
-                            .frame(width: 220 * progress)
-                    }
-                    .frame(width: 220, height: 12)
-                    .opacity(footFoundStartedAt == nil ? 0 : 1)
-                }
-                .padding(.horizontal, 24)
-            }
-            .allowsHitTesting(false)
-        }
-    }
-
-    private func readinessProgress(at date: Date) -> CGFloat {
-        guard let footFoundStartedAt else {
-            return 0
-        }
-        return CGFloat(min(max(date.timeIntervalSince(footFoundStartedAt) / requiredLockSeconds, 0), 1))
-    }
-
-    private func remainingText(at date: Date) -> String {
-        guard let footFoundStartedAt else {
-            return "3"
-        }
-        let remaining = max(ceil(requiredLockSeconds - date.timeIntervalSince(footFoundStartedAt)), 0)
-        return "\(Int(remaining))"
-    }
-}
-
-private struct FootTargetLoadingOverlay: View {
+private struct TargetDrillLoadingOverlay: View {
     var body: some View {
         VStack(spacing: 14) {
             ProgressView()
                 .tint(.white)
-            Text("Starting foot targets...")
+            Text("Starting target drill...")
                 .font(.system(size: 16, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
         }
@@ -744,7 +550,7 @@ private struct FootTargetLoadingOverlay: View {
     }
 }
 
-private struct FootTargetErrorOverlay: View {
+private struct TargetDrillErrorOverlay: View {
     let message: String
     let permissionDenied: Bool
     let onDismiss: () -> Void
@@ -799,9 +605,11 @@ private struct FootTargetErrorOverlay: View {
     }
 }
 
-private struct FootTargetGameState {
-    var target: FootTargetTarget?
-    var scorePopups: [FootTargetScorePopup] = []
+private struct TargetDrillGameState {
+    static let targetLifetime: TimeInterval = 4.0
+
+    var target: TargetDrillTarget?
+    var scorePopups: [TargetDrillScorePopup] = []
     var score = 0
     var hitStreak = 0
     var misses = 0
@@ -812,9 +620,8 @@ private struct FootTargetGameState {
     private let scoreStep: TimeInterval = 0.4
     private let scoreValue = 5
     private let comboStreakStep = 10
-    private let spawnTopFraction: CGFloat = 0.75
-    private let previousTargetDistanceMultiplier: CGFloat = 4.0
-    private let baseClearance: CGFloat = 24
+    private let lowerYFraction: CGFloat = 0.58
+    private let clearance: CGFloat = 20
 
     mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
         guard size.width > 0, size.height > 0 else {
@@ -832,11 +639,11 @@ private struct FootTargetGameState {
     }
 
     mutating func step(
-        feet: [FootTargetDetectedFoot],
-        isTracking: Bool,
+        overlayState: BallTrackerOverlayState,
+        ballDisplayRect: CGRect?,
         in size: CGSize,
         timestamp: Date
-    ) -> FootTargetStepEvent? {
+    ) -> TargetDrillStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
         prepare(in: size)
 
@@ -844,40 +651,71 @@ private struct FootTargetGameState {
             return nil
         }
 
-        guard isTracking, !feet.isEmpty else {
-            return nil
-        }
-
-        if feet.contains(where: { footIntersectsTarget($0, target: currentTarget) }) {
-            let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
-            score += points
-            hitStreak += 1
-            lastEventText = "+\(points)"
-            lastEventIsPositive = true
+        if targetAge(for: currentTarget, at: timestamp) >= Self.targetLifetime {
+            misses += 1
+            hitStreak = 0
+            lastEventText = "-1"
+            lastEventIsPositive = false
+            score = max(score - 1, 0)
             scorePopups.append(
-                FootTargetScorePopup(
-                    points: points,
+                TargetDrillScorePopup(
+                    points: -1,
                     center: currentTarget.center,
-                    destination: CGPoint(x: max(size.width - 104, 40), y: 40),
+                    destination: CGPoint(x: 104, y: 40),
                     startedAt: timestamp
                 )
             )
-            spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: feet)
-            return .hit
+            spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: ballDisplayRect)
+            return .miss
         }
 
-        return nil
+        guard overlayState.isTracking, let ballDisplayRect else {
+            return nil
+        }
+
+        let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
+        let ballRadius = max(ballDisplayRect.width, ballDisplayRect.height) * 0.5
+        let distance = hypot(ballCenter.x - currentTarget.center.x, ballCenter.y - currentTarget.center.y)
+        guard distance <= ballRadius + currentTarget.radius else {
+            return nil
+        }
+
+        let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
+        score += points
+        hitStreak += 1
+        lastEventText = "+\(points)"
+        lastEventIsPositive = true
+        scorePopups.append(
+            TargetDrillScorePopup(
+                points: points,
+                center: currentTarget.center,
+                destination: CGPoint(x: max(size.width - 104, 40), y: 40),
+                startedAt: timestamp
+            )
+        )
+        spawnTarget(in: size, timestamp: timestamp, previousCenter: currentTarget.center, avoiding: ballDisplayRect)
+        return .hit
     }
 
-    mutating func finish() {
-        target = nil
+    func targetAlpha(at timestamp: Date) -> Double {
+        guard let target else {
+            return 0
+        }
+        return 1.0 - targetAgeProgress(for: target, at: timestamp)
+    }
+
+    func targetAgeProgress(at timestamp: Date) -> Double {
+        guard let target else {
+            return 0
+        }
+        return targetAgeProgress(for: target, at: timestamp)
     }
 
     private var comboMultiplier: Int {
         1 + max(hitStreak, 0) / comboStreakStep
     }
 
-    private func basePoints(for target: FootTargetTarget, at timestamp: Date) -> Int {
+    private func basePoints(for target: TargetDrillTarget, at timestamp: Date) -> Int {
         let age = targetAge(for: target, at: timestamp)
         guard age > fullValueWindow else {
             return scoreValue
@@ -888,7 +726,11 @@ private struct FootTargetGameState {
         return max(1, scoreValue - steps)
     }
 
-    private func targetAge(for target: FootTargetTarget, at timestamp: Date) -> TimeInterval {
+    private func targetAgeProgress(for target: TargetDrillTarget, at timestamp: Date) -> Double {
+        min(max(targetAge(for: target, at: timestamp) / Self.targetLifetime, 0), 1)
+    }
+
+    private func targetAge(for target: TargetDrillTarget, at timestamp: Date) -> TimeInterval {
         max(0, timestamp.timeIntervalSince(target.spawnedAt))
     }
 
@@ -896,15 +738,17 @@ private struct FootTargetGameState {
         in size: CGSize,
         timestamp: Date,
         previousCenter: CGPoint? = nil,
-        avoiding feet: [FootTargetDetectedFoot] = []
+        avoiding ballRect: CGRect? = nil
     ) {
         let radius = targetRadius(for: size)
         let bounds = spawnBounds(in: size, radius: radius)
+        let ballCenter = ballRect.map { CGPoint(x: $0.midX, y: $0.midY) }
+        let ballRadius = ballRect.map { max($0.width, $0.height) * 0.5 } ?? 0
 
         var bestCandidate = CGPoint(x: bounds.midX, y: bounds.midY)
         var bestQuality = CGFloat.leastNonzeroMagnitude
 
-        for _ in 0..<72 {
+        for _ in 0..<64 {
             let candidate = CGPoint(
                 x: CGFloat.random(in: bounds.minX...bounds.maxX),
                 y: CGFloat.random(in: bounds.minY...bounds.maxY)
@@ -912,7 +756,8 @@ private struct FootTargetGameState {
             let quality = candidateQuality(
                 candidate,
                 previousCenter: previousCenter,
-                feet: feet,
+                ballCenter: ballCenter,
+                ballRadius: ballRadius,
                 targetRadius: radius
             )
             if quality > bestQuality {
@@ -922,15 +767,16 @@ private struct FootTargetGameState {
             if isCandidateValid(
                 candidate,
                 previousCenter: previousCenter,
-                feet: feet,
+                ballCenter: ballCenter,
+                ballRadius: ballRadius,
                 targetRadius: radius
             ) {
-                target = FootTargetTarget(center: candidate, radius: radius, spawnedAt: timestamp)
+                target = TargetDrillTarget(center: candidate, radius: radius, spawnedAt: timestamp)
                 return
             }
         }
 
-        target = FootTargetTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
+        target = TargetDrillTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
     }
 
     private func targetRadius(for size: CGSize) -> CGFloat {
@@ -939,7 +785,7 @@ private struct FootTargetGameState {
 
     private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
         let horizontalPadding = radius + 26
-        let top = max(size.height * spawnTopFraction + radius, radius + 86)
+        let top = max(size.height * lowerYFraction, radius + 76)
         let bottom = max(top, size.height - radius - 58)
         return CGRect(
             x: horizontalPadding,
@@ -952,117 +798,53 @@ private struct FootTargetGameState {
     private func candidateQuality(
         _ candidate: CGPoint,
         previousCenter: CGPoint?,
-        feet: [FootTargetDetectedFoot],
+        ballCenter: CGPoint?,
+        ballRadius: CGFloat,
         targetRadius: CGFloat
     ) -> CGFloat {
         var quality = targetRadius * 10
-
         if let previousCenter {
             quality += hypot(candidate.x - previousCenter.x, candidate.y - previousCenter.y)
         }
-
-        if let farthestFootDistance = feet.map({ distance(from: candidate, to: $0) }).min() {
-            quality += max(farthestFootDistance - targetRadius, 0)
+        if let ballCenter {
+            quality += max(
+                hypot(candidate.x - ballCenter.x, candidate.y - ballCenter.y) - ballRadius - targetRadius,
+                0
+            )
         }
-
         return quality
     }
 
     private func isCandidateValid(
         _ candidate: CGPoint,
         previousCenter: CGPoint?,
-        feet: [FootTargetDetectedFoot],
+        ballCenter: CGPoint?,
+        ballRadius: CGFloat,
         targetRadius: CGFloat
     ) -> Bool {
         if let previousCenter {
             let previousDistance = hypot(candidate.x - previousCenter.x, candidate.y - previousCenter.y)
-            if previousDistance < targetRadius * previousTargetDistanceMultiplier {
+            if previousDistance < targetRadius * 3 {
                 return false
             }
         }
-
-        for foot in feet {
-            let bounds = foot.collisionBounds
-            let requiredClearance = targetRadius + max(baseClearance, min(bounds.width, bounds.height) * 0.2)
-            if distance(from: candidate, to: foot) < requiredClearance {
+        if let ballCenter {
+            let ballDistance = hypot(candidate.x - ballCenter.x, candidate.y - ballCenter.y)
+            if ballDistance < ballRadius + targetRadius + clearance {
                 return false
             }
         }
-
         return true
-    }
-
-    private func footIntersectsTarget(_ foot: FootTargetDetectedFoot, target: FootTargetTarget) -> Bool {
-        distance(from: target.center, to: foot) <= target.radius
-    }
-
-    private func distance(from point: CGPoint, to foot: FootTargetDetectedFoot) -> CGFloat {
-        let polygon = foot.collisionPolygon
-        guard polygon.count >= 3 else {
-            return distance(from: point, to: foot.collisionBounds)
-        }
-
-        if polygonContains(point, polygon: polygon) {
-            return 0
-        }
-
-        var minimumDistance = CGFloat.greatestFiniteMagnitude
-        for index in polygon.indices {
-            let start = polygon[index]
-            let end = polygon[(index + 1) % polygon.count]
-            minimumDistance = min(minimumDistance, distance(from: point, toSegmentFrom: start, to: end))
-        }
-        return minimumDistance
-    }
-
-    private func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
-        let clampedX = min(max(point.x, rect.minX), rect.maxX)
-        let clampedY = min(max(point.y, rect.minY), rect.maxY)
-        return hypot(point.x - clampedX, point.y - clampedY)
-    }
-
-    private func distance(from point: CGPoint, toSegmentFrom start: CGPoint, to end: CGPoint) -> CGFloat {
-        let dx = end.x - start.x
-        let dy = end.y - start.y
-        let lengthSquared = dx * dx + dy * dy
-        guard lengthSquared > 0 else {
-            return hypot(point.x - start.x, point.y - start.y)
-        }
-
-        let t = min(max(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0), 1)
-        let projected = CGPoint(x: start.x + t * dx, y: start.y + t * dy)
-        return hypot(point.x - projected.x, point.y - projected.y)
-    }
-
-    private func polygonContains(_ point: CGPoint, polygon: [CGPoint]) -> Bool {
-        var contains = false
-        var previousIndex = polygon.count - 1
-
-        for index in polygon.indices {
-            let current = polygon[index]
-            let previous = polygon[previousIndex]
-            let crossesY = (current.y > point.y) != (previous.y > point.y)
-            let denominator = previous.y - current.y
-            if crossesY, abs(denominator) > 0.000001 {
-                let intersectionX = (previous.x - current.x) * (point.y - current.y) / denominator + current.x
-                if point.x < intersectionX {
-                    contains.toggle()
-                }
-            }
-            previousIndex = index
-        }
-
-        return contains
     }
 }
 
-private struct FootTargetTarget {
+private struct TargetDrillTarget {
     let center: CGPoint
     let radius: CGFloat
     let spawnedAt: Date
 }
 
-private struct FootTargetScorePopup: Identifiable {
+private struct TargetDrillScorePopup: Identifiable {
     let id = UUID()
     let points: Int
     let center: CGPoint
@@ -1080,12 +862,12 @@ private struct FootTargetScorePopup: Identifiable {
     }
 }
 
-private enum FootTargetStepEvent {
+private enum TargetDrillStepEvent {
     case hit
     case miss
 }
 
-private enum FootTargetSoundPlayer {
+private enum TargetDrillSoundPlayer {
     private static var player: AVAudioPlayer?
 
     static func playScore() {
@@ -1103,7 +885,7 @@ private enum FootTargetSoundPlayer {
                 audioPlayer.prepareToPlay()
                 player = audioPlayer
             } catch {
-                print("Foot target score sound failed to load: \(error.localizedDescription)")
+                print("Target drill score sound failed to load: \(error.localizedDescription)")
                 return
             }
         }

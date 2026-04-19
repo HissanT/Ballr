@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import SwiftUI
 import UIKit
+import Combine
 
 struct LevelOneCameraView: View {
     @Environment(\.dismiss) private var dismiss
@@ -62,7 +63,7 @@ struct LevelOneCameraView: View {
             }
             .statusBarHidden(true)
             .navigationDestination(isPresented: $showsNextLevel) {
-                HandTargetCameraView()
+                LevelTwoCameraView()
                     .navigationBarBackButtonHidden(true)
             }
             .onAppear {
@@ -163,6 +164,7 @@ private final class LevelOneCoordinator: ObservableObject {
     private var size: CGSize = .zero
     private var motionSampler = LevelOneMotionSampler()
     private var repTracker = LevelOneRepTracker()
+    private var yRepTracker = LevelOneYRepTracker()
     private var pendingTransitionWorkItem: DispatchWorkItem?
 
     func reset(in size: CGSize) {
@@ -182,6 +184,7 @@ private final class LevelOneCoordinator: ObservableObject {
         completionStartedAt = nil
         motionSampler.reset()
         repTracker.reset()
+        yRepTracker.reset()
     }
 
     func tearDown() {
@@ -335,27 +338,29 @@ private final class LevelOneCoordinator: ObservableObject {
     private func handleAxis(_ axis: LevelOneAxis, overlayState: BallTrackerOverlayState) {
         guard
             hasConfidentTracking,
-            let center = overlayState.centerPixels,
-            let diameter = overlayState.pixelDiameter
+            let ballDisplayRect
         else {
             motionSampler.reset()
             repTracker.reset()
+            yRepTracker.reset()
             return
         }
 
+        let center = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
+        let diameter = max(ballDisplayRect.width, ballDisplayRect.height)
         let sample = motionSampler.append(center: center, diameter: diameter)
         let didCompleteRep: Bool
 
         switch axis {
         case .x:
-            let threshold = max(size.width * 0.14, 70)
+            let threshold = min(max(size.width * 0.075, sample.diameter * 0.45, 42), 96)
             didCompleteRep = repTracker.register(value: sample.center.x, threshold: threshold)
         case .y:
-            let threshold = max(size.height * 0.14, 70)
-            didCompleteRep = repTracker.register(value: sample.center.y, threshold: threshold)
+            let threshold = min(max(size.height * 0.055, sample.diameter * 0.24, 22), 52)
+            didCompleteRep = yRepTracker.register(value: sample.center.y, threshold: threshold)
         case .z:
             let baseline = repTracker.anchor ?? sample.diameter
-            let threshold = max(baseline * 0.18, 18)
+            let threshold = min(max(baseline * 0.10, 10), 28)
             didCompleteRep = repTracker.register(value: sample.diameter, threshold: threshold)
         }
 
@@ -916,7 +921,10 @@ private struct LevelOneRepTracker {
     }
 
     var anchor: CGFloat?
-    var firstSide: Side?
+    private var terminalSide: Side?
+    private var awaySide: Side?
+    private var negativeExtreme: CGFloat?
+    private var positiveExtreme: CGFloat?
 
     mutating func register(value: CGFloat, threshold: CGFloat) -> Bool {
         guard threshold > 0 else {
@@ -925,32 +933,216 @@ private struct LevelOneRepTracker {
 
         guard let anchor else {
             self.anchor = value
-            firstSide = nil
+            terminalSide = nil
+            awaySide = nil
             return false
         }
 
         let delta = value - anchor
-        guard abs(delta) >= threshold else {
+        guard let currentSide = side(for: delta, threshold: threshold) else {
             return false
         }
+        recordExtreme(value, on: currentSide)
 
-        let currentSide: Side = delta >= 0 ? .positive : .negative
-        if let firstSide {
-            guard currentSide != firstSide else {
+        if let terminalSide {
+            if awaySide == nil {
+                if currentSide != terminalSide {
+                    awaySide = currentSide
+                }
                 return false
             }
-            self.anchor = value
-            self.firstSide = nil
+
+            guard currentSide == terminalSide else {
+                return false
+            }
+
+            awaySide = nil
+            updateAnchorFromExtremes(maxShift: threshold * 0.45)
             return true
         }
 
-        self.firstSide = currentSide
-        return false
+        guard let awaySide else {
+            self.awaySide = currentSide
+            return false
+        }
+
+        guard currentSide != awaySide else {
+            return false
+        }
+
+        terminalSide = currentSide
+        self.awaySide = nil
+        updateAnchorFromExtremes(maxShift: threshold * 0.45)
+        return true
     }
 
     mutating func reset() {
         anchor = nil
-        firstSide = nil
+        terminalSide = nil
+        awaySide = nil
+        negativeExtreme = nil
+        positiveExtreme = nil
+    }
+
+    private func side(for delta: CGFloat, threshold: CGFloat) -> Side? {
+        if delta >= threshold {
+            return .positive
+        }
+        if delta <= -threshold {
+            return .negative
+        }
+        return nil
+    }
+
+    private mutating func recordExtreme(_ value: CGFloat, on side: Side) {
+        switch side {
+        case .negative:
+            negativeExtreme = min(negativeExtreme ?? value, value)
+        case .positive:
+            positiveExtreme = max(positiveExtreme ?? value, value)
+        }
+    }
+
+    private mutating func updateAnchorFromExtremes(maxShift: CGFloat) {
+        guard
+            let anchor,
+            let negativeExtreme,
+            let positiveExtreme,
+            maxShift > 0
+        else {
+            return
+        }
+
+        let midpoint = (negativeExtreme + positiveExtreme) * 0.5
+        let shift = min(max(midpoint - anchor, -maxShift), maxShift)
+        self.anchor = anchor + shift
+        self.negativeExtreme = nil
+        self.positiveExtreme = nil
+    }
+}
+
+private struct LevelOneYRepTracker {
+    private enum Direction {
+        case decreasing
+        case increasing
+
+        var opposite: Direction {
+            switch self {
+            case .decreasing:
+                return .increasing
+            case .increasing:
+                return .decreasing
+            }
+        }
+    }
+
+    private struct PendingReturn {
+        let direction: Direction
+        let turnValue: CGFloat
+    }
+
+    private var lastValue: CGFloat?
+    private var segmentStartValue: CGFloat?
+    private var currentDirection: Direction?
+    private var armedDirection: Direction?
+    private var pendingReturn: PendingReturn?
+    private var requiredFirstDirection: Direction?
+
+    mutating func register(value: CGFloat, threshold: CGFloat) -> Bool {
+        guard threshold > 0 else {
+            return false
+        }
+
+        guard let lastValue else {
+            self.lastValue = value
+            segmentStartValue = value
+            currentDirection = nil
+            armedDirection = nil
+            pendingReturn = nil
+            return false
+        }
+
+        let delta = value - lastValue
+        let noiseFloor = max(threshold * 0.16, 3)
+        guard abs(delta) >= noiseFloor else {
+            return false
+        }
+
+        let newDirection: Direction = delta > 0 ? .increasing : .decreasing
+        if currentDirection == nil {
+            guard requiredFirstDirection == nil || newDirection == requiredFirstDirection else {
+                self.lastValue = value
+                segmentStartValue = value
+                return false
+            }
+
+            currentDirection = newDirection
+            segmentStartValue = lastValue
+            self.lastValue = value
+            return false
+        }
+
+        if newDirection == currentDirection {
+            self.lastValue = value
+            armCurrentSegmentIfNeeded(value: value, threshold: threshold)
+            return completePendingReturnIfNeeded(value: value, threshold: threshold)
+        }
+
+        let previousDirection = currentDirection
+        let turnValue = lastValue
+        let previousTravel = abs(turnValue - (segmentStartValue ?? turnValue))
+        let canUsePreviousDirection = requiredFirstDirection == nil || previousDirection == requiredFirstDirection
+        if canUsePreviousDirection, previousDirection == armedDirection || previousTravel >= threshold {
+            pendingReturn = PendingReturn(direction: newDirection, turnValue: turnValue)
+        }
+
+        currentDirection = newDirection
+        segmentStartValue = turnValue
+        armedDirection = nil
+        self.lastValue = value
+        return completePendingReturnIfNeeded(value: value, threshold: threshold)
+    }
+
+    mutating func reset() {
+        lastValue = nil
+        segmentStartValue = nil
+        currentDirection = nil
+        armedDirection = nil
+        pendingReturn = nil
+        requiredFirstDirection = nil
+    }
+
+    private mutating func armCurrentSegmentIfNeeded(value: CGFloat, threshold: CGFloat) {
+        guard
+            let currentDirection,
+            let segmentStartValue,
+            abs(value - segmentStartValue) >= threshold
+        else {
+            return
+        }
+        armedDirection = currentDirection
+    }
+
+    private mutating func completePendingReturnIfNeeded(value: CGFloat, threshold: CGFloat) -> Bool {
+        guard
+            let pendingReturn,
+            currentDirection == pendingReturn.direction
+        else {
+            return false
+        }
+
+        let returnThreshold = max(threshold * 0.9, 12)
+        guard abs(value - pendingReturn.turnValue) >= returnThreshold else {
+            return false
+        }
+
+        self.pendingReturn = nil
+        self.armedDirection = nil
+        self.requiredFirstDirection = pendingReturn.direction.opposite
+        self.currentDirection = nil
+        self.segmentStartValue = value
+        self.lastValue = value
+        return true
     }
 }
 
