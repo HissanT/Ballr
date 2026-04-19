@@ -7,12 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		EDAB10012FA5000000BC1011 /* alexzavesa-dance-playful-night-510786.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = EDAB10002FA5000000BC1011 /* alexzavesa-dance-playful-night-510786.mp3 */; };
+		EDAB10112FA5000000BC1011 /* sounds in Resources */ = {isa = PBXBuildFile; fileRef = EDAB10102FA5000000BC1011 /* sounds */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		ED3624492F897C4500BC1011 /* ballr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ballr.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		EDAB10002FA5000000BC1011 /* alexzavesa-dance-playful-night-510786.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "alexzavesa-dance-playful-night-510786.mp3"; sourceTree = "<group>"; };
+		EDAB10102FA5000000BC1011 /* sounds */ = {isa = PBXFileReference; lastKnownFileType = folder; path = sounds; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -38,7 +38,7 @@
 			isa = PBXGroup;
 			children = (
 				ED36244B2F897C4500BC1011 /* ballr */,
-				EDAB10002FA5000000BC1011 /* alexzavesa-dance-playful-night-510786.mp3 */,
+				EDAB10102FA5000000BC1011 /* sounds */,
 				ED36244A2F897C4500BC1011 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -115,7 +115,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EDAB10012FA5000000BC1011 /* alexzavesa-dance-playful-night-510786.mp3 in Resources */,
+				EDAB10112FA5000000BC1011 /* sounds in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

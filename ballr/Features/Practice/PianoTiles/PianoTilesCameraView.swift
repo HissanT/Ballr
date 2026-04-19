@@ -177,6 +177,13 @@ private final class PianoTilesCoordinator: ObservableObject {
 
     func attach(renderView: PianoTilesRenderView) {
         self.renderView = renderView
+        renderView.onBoundsChange = { [weak self] size in
+            self?.prepare(in: size)
+        }
+        let renderSize = renderView.bounds.size
+        if renderSize.width > 0, renderSize.height > 0 {
+            size = renderSize
+        }
         renderView.update(
             tiles: gameState.tiles,
             activeSequenceIndex: gameState.activeSequenceIndex,
@@ -187,7 +194,7 @@ private final class PianoTilesCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
-        self.size = size
+        self.size = resolvedGameplaySize(fallback: size)
         phase = .readiness
         ballFoundStartedAt = nil
         countdownStartedAt = nil
@@ -211,7 +218,10 @@ private final class PianoTilesCoordinator: ObservableObject {
     }
 
     func prepare(in size: CGSize) {
-        self.size = size
+        guard size.width > 0, size.height > 0 else {
+            return
+        }
+        self.size = resolvedGameplaySize(fallback: size)
         renderView?.update(
             tiles: gameState.tiles,
             activeSequenceIndex: gameState.activeSequenceIndex,
@@ -223,7 +233,7 @@ private final class PianoTilesCoordinator: ObservableObject {
 
     func handle(frame: BallTrackerFrame, cameraController: BallTrackerCameraController) {
         let overlayState = frame.overlayState
-        let detectedBallDisplayRect = displayRect(for: overlayState, cameraController: cameraController)
+        let detectedBallDisplayRect = collisionDisplayRect(for: overlayState, cameraController: cameraController)
         let detectedIsTracking = overlayState.isTracking && detectedBallDisplayRect != nil
         let effectiveBallDisplayRect = resolvedBallDisplayRect(
             detectedBallDisplayRect,
@@ -284,14 +294,47 @@ private final class PianoTilesCoordinator: ObservableObject {
         return nil
     }
 
-    private func displayRect(
+    private func collisionDisplayRect(
         for overlayState: BallTrackerOverlayState,
         cameraController: BallTrackerCameraController
     ) -> CGRect? {
-        guard let normalizedRect = overlayState.normalizedRect else {
+        guard let normalizedRect = overlayState.rawNormalizedRect else {
             return nil
         }
-        return cameraController.displayRect(for: normalizedRect)
+        guard let displayRect = cameraController.displayRect(for: normalizedRect) else {
+            return nil
+        }
+        return Self.collisionCircleRect(from: displayRect)
+    }
+
+    private func resolvedGameplaySize(fallback size: CGSize) -> CGSize {
+        guard let renderView else {
+            return size
+        }
+
+        let renderSize = renderView.bounds.size
+        guard renderSize.width > 0, renderSize.height > 0 else {
+            return size
+        }
+        return renderSize
+    }
+
+    private static func collisionCircleRect(from rect: CGRect) -> CGRect? {
+        guard rect.width > 0, rect.height > 0 else {
+            return nil
+        }
+
+        let diameter = min(rect.width, rect.height)
+        guard diameter > 0 else {
+            return nil
+        }
+
+        return CGRect(
+            x: rect.midX - diameter * 0.5,
+            y: rect.midY - diameter * 0.5,
+            width: diameter,
+            height: diameter
+        )
     }
 
     private func updateStartGate(isTracking: Bool, timestamp: Date) {
@@ -418,55 +461,61 @@ private final class PianoTilesCoordinator: ObservableObject {
 
 private enum PianoTilesSoundPlayer {
     private static let queue = DispatchQueue(label: "com.ballr.piano-tiles-sound")
-    private static var player: AVAudioPlayer?
-    private static var stopWorkItem: DispatchWorkItem?
+    private static var playersByNote: [String: AVAudioPlayer] = [:]
     private static var didAttemptPrepare = false
-    private static let segmentCount = PianoTilesGameState.totalTileCount
-    private static let playbackRate: Float = 0.74
-    private static let minimumClipDuration: TimeInterval = 1.00
-    private static let maximumClipDuration: TimeInterval = 1.40
-    private static let preferredSourceStep: TimeInterval = 1.05
+    private static var availableNotes: [String] = []
+    private static let preferredNotes = [
+        "40", "42", "44", "45", "47", "49", "51", "52",
+        "54", "56", "57", "59", "61", "63", "64", "63",
+        "61", "59", "57", "56", "54", "52", "51", "49",
+        "47", "45", "44", "42"
+    ]
 
     static func playCompletion(for trigger: PianoTileSoundTrigger) {
-        playSegment(index: trigger.sequenceIndex)
+        playNote(for: trigger, volume: 0.9)
     }
 
     static func playHoldStart(for trigger: PianoTileSoundTrigger) {
+        playNote(for: trigger, volume: 0.72)
     }
 
     static func stop() {
         queue.async {
-            stopWorkItem?.cancel()
-            stopWorkItem = nil
-            player?.stop()
-            player?.currentTime = 0
+            playersByNote.values.forEach { player in
+                player.stop()
+                player.currentTime = 0
+            }
         }
     }
 
-    private static func playSegment(index: Int) {
+    private static func playNote(for trigger: PianoTileSoundTrigger, volume: Float) {
         queue.async {
             do {
                 try prepareIfNeeded()
-                guard let player else { return }
-                stopWorkItem?.cancel()
-                player.stop()
-                let wholeSongStep = player.duration / Double(max(segmentCount, 1))
-                let sourceStep = min(max(wholeSongStep, minimumClipDuration), preferredSourceStep)
-                let startTime = min(max(Double(index), 0) * sourceStep, max(player.duration - 0.05, 0))
-                let clipDuration = min(max(sourceStep / Double(playbackRate), minimumClipDuration), maximumClipDuration)
-                player.currentTime = startTime
-                player.volume = 0.88
-                player.rate = playbackRate
-                player.play()
-                let workItem = DispatchWorkItem {
-                    player.stop()
+                guard let note = noteName(for: trigger), let player = playersByNote[note] else {
+                    return
                 }
-                stopWorkItem = workItem
-                queue.asyncAfter(deadline: .now() + clipDuration, execute: workItem)
+                player.stop()
+                player.currentTime = 0
+                player.volume = volume
+                player.play()
             } catch {
                 print("Piano Tiles sound failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    private static func noteName(for trigger: PianoTileSoundTrigger) -> String? {
+        let playablePreferredNotes = preferredNotes.filter { playersByNote[$0] != nil }
+        if !playablePreferredNotes.isEmpty {
+            let noteOffset = trigger.lane + trigger.sequenceIndex
+            return playablePreferredNotes[noteOffset % playablePreferredNotes.count]
+        }
+
+        guard !availableNotes.isEmpty else {
+            return nil
+        }
+        return availableNotes[trigger.sequenceIndex % availableNotes.count]
     }
 
     private static func prepareIfNeeded() throws {
@@ -479,15 +528,20 @@ private enum PianoTilesSoundPlayer {
         try? session.setPreferredIOBufferDuration(0.006)
         try session.setActive(true)
 
-        guard let url = Bundle.main.url(forResource: "alexzavesa-dance-playful-night-510786", withExtension: "mp3") else {
-            didAttemptPrepare = true
-            return
+        var loadedNoteNames: [String] = []
+        for noteIndex in 1...88 {
+            let noteName = String(format: "%02d", noteIndex)
+            guard let url = Bundle.main.url(forResource: noteName, withExtension: "wav", subdirectory: "sounds") else {
+                continue
+            }
+
+            let loadedPlayer = try AVAudioPlayer(contentsOf: url)
+            loadedPlayer.prepareToPlay()
+            playersByNote[noteName] = loadedPlayer
+            loadedNoteNames.append(noteName)
         }
-        let loadedPlayer = try AVAudioPlayer(contentsOf: url)
-        loadedPlayer.enableRate = true
-        loadedPlayer.rate = playbackRate
-        loadedPlayer.prepareToPlay()
-        player = loadedPlayer
+
+        availableNotes = loadedNoteNames
         didAttemptPrepare = true
     }
 }
@@ -518,6 +572,8 @@ private final class PianoTilesRenderView: UIView {
     private var ballDisplayRect: CGRect?
     private var isTracking = false
     private var prompt: String?
+    var onBoundsChange: ((CGSize) -> Void)?
+    private var lastReportedBoundsSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -548,6 +604,7 @@ private final class PianoTilesRenderView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        reportBoundsIfNeeded()
         render()
     }
 
@@ -582,6 +639,18 @@ private final class PianoTilesRenderView: UIView {
         promptLabel.layer.cornerRadius = 8
         promptLabel.layer.masksToBounds = true
         addSubview(promptLabel)
+    }
+
+    private func reportBoundsIfNeeded() {
+        guard bounds.size != lastReportedBoundsSize else {
+            return
+        }
+
+        lastReportedBoundsSize = bounds.size
+        guard bounds.width > 0, bounds.height > 0 else {
+            return
+        }
+        onBoundsChange?(bounds.size)
     }
 
     private func render() {
@@ -690,8 +759,8 @@ private final class PianoTilesRenderView: UIView {
         layerSet.container.frame = rect
         let localBounds = CGRect(origin: .zero, size: rect.size)
         let isActive = tile.sequenceIndex == activeSequenceIndex
-        let cornerRadius: CGFloat = 8
-        let bodyPath = UIBezierPath(roundedRect: localBounds, cornerRadius: cornerRadius).cgPath
+        let cornerRadius = PianoTile.bodyCornerRadius
+        let bodyPath = tile.bodyPath(in: localBounds).cgPath
         let accentColor: UIColor
         let labelText: String
         let baseAlpha: CGFloat = isActive ? 0.94 : 0.64
@@ -874,7 +943,10 @@ private struct PianoTilesGameState {
     static let totalTileCount = 40
     static let holdDuration: TimeInterval = 2.0
     static let holdGrace: TimeInterval = 0.25
-    private static let ballContactRadiusMultiplier: CGFloat = 0.34
+    private static let requiredBallOverlapRatio: CGFloat = 0.20
+    private static let overlapSamplingDensity: CGFloat = 6
+    private static let minimumOverlapGrid = 18
+    private static let maximumOverlapGrid = 36
     private static let maxQueuedTapTiles = 3
 
     var tiles: [PianoTile] = []
@@ -1076,20 +1148,75 @@ private struct PianoTilesGameState {
         }
 
         let currentContact = ballContact(from: ballDisplayRect)
-        return circleOverlapsRect(center: currentContact.center, radius: currentContact.radius, rect: tileRect)
+        let tilePath = tile.bodyPath(in: tileRect)
+        let overlapRatio = overlapRatio(
+            circleCenter: currentContact.center,
+            radius: currentContact.radius,
+            tilePath: tilePath
+        )
+        return overlapRatio >= Self.requiredBallOverlapRatio
     }
 
     private func ballContact(from rect: CGRect) -> (center: CGPoint, radius: CGFloat) {
-        (
+        let diameter = min(rect.width, rect.height)
+        return (
             center: CGPoint(x: rect.midX, y: rect.midY),
-            radius: max(rect.width, rect.height) * Self.ballContactRadiusMultiplier
+            radius: diameter * 0.5
         )
     }
 
-    private func circleOverlapsRect(center: CGPoint, radius: CGFloat, rect: CGRect) -> Bool {
-        let closestX = min(max(center.x, rect.minX), rect.maxX)
-        let closestY = min(max(center.y, rect.minY), rect.maxY)
-        return hypot(center.x - closestX, center.y - closestY) <= radius
+    private func overlapRatio(
+        circleCenter: CGPoint,
+        radius: CGFloat,
+        tilePath: UIBezierPath
+    ) -> CGFloat {
+        guard radius > 0 else {
+            return 0
+        }
+
+        let circleBounds = CGRect(
+            x: circleCenter.x - radius,
+            y: circleCenter.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+        guard tilePath.bounds.intersects(circleBounds) else {
+            return 0
+        }
+
+        let samplesPerAxis = max(
+            Self.minimumOverlapGrid,
+            min(Self.maximumOverlapGrid, Int(ceil(radius / Self.overlapSamplingDensity)))
+        )
+        guard samplesPerAxis > 0 else {
+            return 0
+        }
+
+        let stepX = circleBounds.width / CGFloat(samplesPerAxis)
+        let stepY = circleBounds.height / CGFloat(samplesPerAxis)
+        var circleSamples = 0
+        var overlapSamples = 0
+
+        for row in 0..<samplesPerAxis {
+            let y = circleBounds.minY + (CGFloat(row) + 0.5) * stepY
+            for column in 0..<samplesPerAxis {
+                let x = circleBounds.minX + (CGFloat(column) + 0.5) * stepX
+                let point = CGPoint(x: x, y: y)
+                guard hypot(point.x - circleCenter.x, point.y - circleCenter.y) <= radius else {
+                    continue
+                }
+
+                circleSamples += 1
+                if tilePath.contains(point) {
+                    overlapSamples += 1
+                }
+            }
+        }
+
+        guard circleSamples > 0 else {
+            return 0
+        }
+        return CGFloat(overlapSamples) / CGFloat(circleSamples)
     }
 
     private var hasUnresolvedHoldTile: Bool {
@@ -1139,6 +1266,8 @@ private struct PianoTileSpec {
 }
 
 private struct PianoTile: Identifiable {
+    static let bodyCornerRadius: CGFloat = 8
+
     let id = UUID()
     let sequenceIndex: Int
     let lane: Int
@@ -1153,6 +1282,10 @@ private struct PianoTile: Identifiable {
 
     mutating func advance(delta: TimeInterval) {
         centerY += speed * CGFloat(delta)
+    }
+
+    func bodyPath(in rect: CGRect) -> UIBezierPath {
+        UIBezierPath(roundedRect: rect, cornerRadius: Self.bodyCornerRadius)
     }
 
     func rect(in size: CGSize) -> CGRect? {

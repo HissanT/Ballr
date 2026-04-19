@@ -325,6 +325,8 @@ private struct LevelsHomeView: View {
             title: "Level \(level)",
             subtitle: {
                 switch level {
+                case 2:
+                    return "Hand Targets"
                 case 19:
                     return "Ball Blast"
                 case 20:
@@ -421,7 +423,10 @@ private struct LevelsHomeView: View {
                 }
             }
             .navigationDestination(item: $selectedDrill) { drill in
-                if drill.level == 19 {
+                if drill.level == 2 {
+                    HandTargetCameraView()
+                        .navigationBarBackButtonHidden(true)
+                } else if drill.level == 19 {
                     TargetDrillCameraView()
                         .navigationBarBackButtonHidden(true)
                 } else if drill.level == 20 {
