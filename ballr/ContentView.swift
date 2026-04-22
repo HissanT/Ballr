@@ -35,6 +35,30 @@ private enum BallrTab: Hashable {
     case profile
 }
 
+private extension BallrTab {
+    var systemImage: String {
+        switch self {
+        case .levels:
+            return "map"
+        case .practice:
+            return "figure.soccer"
+        case .profile:
+            return "person.text.rectangle"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .levels:
+            return "Levels"
+        case .practice:
+            return "Practice"
+        case .profile:
+            return "Profile"
+        }
+    }
+}
+
 private enum OnboardingStep {
     case start
     case avatar
@@ -86,6 +110,11 @@ private extension Color {
     static let ballrYellow = Color(red: 0.98, green: 0.79, blue: 0.19)
     static let ballrCream = Color(red: 0.99, green: 0.97, blue: 0.91)
     static let ballrBlack = Color(red: 0.08, green: 0.08, blue: 0.08)
+    static let ballrNavYellow = Color(
+        red: 1.0,
+        green: 216.0 / 255.0,
+        blue: 0.0
+    )
 }
 
 private struct OnboardingFlowView: View {
@@ -100,7 +129,7 @@ private struct OnboardingFlowView: View {
             switch step {
             case .start:
                 StartPageView {
-                    step = .avatar
+                    hasCompletedOnboarding = true
                 }
             case .avatar:
                 BuildAvatarView(
@@ -116,31 +145,60 @@ private struct OnboardingFlowView: View {
 }
 
 private struct MainBallrView: View {
-    @State private var selectedTab: BallrTab = .levels
+    @State private var selectedTab: BallrTab = .practice
     let selectedAvatar: AvatarOption
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            LevelsHomeView()
-                .tabItem {
-                    Label("Levels", systemImage: "map.fill")
-                }
-                .tag(BallrTab.levels)
-
-            PracticeHomeView()
-                .tabItem {
-                    Label("Practice", systemImage: "diamond.fill")
-                }
-                .tag(BallrTab.practice)
-
-            ProfileHomeView(selectedAvatar: selectedAvatar)
-                .tabItem {
-                    Label("Profile", systemImage: "person.crop.shield.fill")
-                }
-                .tag(BallrTab.profile)
+        Group {
+            switch selectedTab {
+            case .levels:
+                LevelsHomeView()
+            case .practice:
+                PracticeHomeView()
+            case .profile:
+                ProfileHomeView(selectedAvatar: selectedAvatar)
+            }
         }
-        .tint(Color.ballrOrange)
+        .safeAreaInset(edge: .bottom) {
+            BallrBottomNavigationBar(selectedTab: $selectedTab)
+        }
         .fontDesign(.rounded)
+    }
+}
+
+private struct BallrBottomNavigationBar: View {
+    @Binding var selectedTab: BallrTab
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach([BallrTab.levels, .practice, .profile], id: \.self) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    Image(systemName: tab.systemImage)
+                        .font(.system(size: 27, weight: .medium))
+                        .foregroundStyle(
+                            selectedTab == tab
+                            ? Color.ballrBlack
+                            : Color.ballrBlack.opacity(0.62)
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 68)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.accessibilityLabel)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: 540)
+        .background(
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(Color.ballrNavYellow)
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 5)
     }
 }
 
