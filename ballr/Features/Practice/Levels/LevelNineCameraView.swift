@@ -64,10 +64,10 @@ struct LevelNineCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelTenCameraView()
-                    .navigationBarBackButtonHidden(true)
+                    .ballrCameraPresentationChrome()
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -1475,6 +1475,7 @@ private final class LevelNineCoordinator: ObservableObject {
             return
         }
 
+        BallrDrillSoundPlayer.playWinner()
         completionStartedAt = timestamp
         showsCompletionButtons = false
         gameState.finish()

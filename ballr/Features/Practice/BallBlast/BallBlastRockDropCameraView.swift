@@ -4,10 +4,80 @@ import Foundation
 import SwiftUI
 import UIKit
 
+enum BallBlastRockDropDifficulty: String, Identifiable {
+    case easy
+    case hard
+
+    var id: String { rawValue }
+
+    fileprivate var gameConfig: BallBlastRockDropGameConfig {
+        switch self {
+        case .easy:
+            return BallBlastRockDropGameConfig(
+                initialSpawnDelay: 0.75,
+                maxRocksBase: 3,
+                maxRocksRamp: 6,
+                spawnIntervalMinimumStart: 1.08,
+                spawnIntervalMinimumRamp: 0.28,
+                spawnIntervalMaximumStart: 1.55,
+                spawnIntervalMaximumRamp: 0.40,
+                speedBaseStart: 95,
+                speedBaseRamp: 115,
+                speedProgressMultiplier: 0.04,
+                speedRandomRange: 0.70...1.15,
+                targetChanceBase: 0.10,
+                targetChanceRamp: 0.12,
+                targetChanceCap: 0.28
+            )
+        case .hard:
+            return BallBlastRockDropGameConfig(
+                initialSpawnDelay: 0.35,
+                maxRocksBase: 5,
+                maxRocksRamp: 12,
+                spawnIntervalMinimumStart: 0.78,
+                spawnIntervalMinimumRamp: 0.46,
+                spawnIntervalMaximumStart: 1.24,
+                spawnIntervalMaximumRamp: 0.74,
+                speedBaseStart: 125,
+                speedBaseRamp: 185,
+                speedProgressMultiplier: 0.10,
+                speedRandomRange: 0.72...1.38,
+                targetChanceBase: 0.26,
+                targetChanceRamp: 0.28,
+                targetChanceCap: 0.64
+            )
+        }
+    }
+}
+
+fileprivate struct BallBlastRockDropGameConfig {
+    let initialSpawnDelay: TimeInterval
+    let maxRocksBase: Int
+    let maxRocksRamp: Int
+    let spawnIntervalMinimumStart: Double
+    let spawnIntervalMinimumRamp: Double
+    let spawnIntervalMaximumStart: Double
+    let spawnIntervalMaximumRamp: Double
+    let speedBaseStart: Double
+    let speedBaseRamp: Double
+    let speedProgressMultiplier: Double
+    let speedRandomRange: ClosedRange<CGFloat>
+    let targetChanceBase: Double
+    let targetChanceRamp: Double
+    let targetChanceCap: Double
+}
+
 struct BallBlastRockDropCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
-    @StateObject private var coordinator = BallBlastRockDropCoordinator()
+    @StateObject private var coordinator: BallBlastRockDropCoordinator
+    @State private var showsQuitConfirmation = false
+    let difficulty: BallBlastRockDropDifficulty
+
+    init(difficulty: BallBlastRockDropDifficulty = .hard) {
+        self.difficulty = difficulty
+        _coordinator = StateObject(wrappedValue: BallBlastRockDropCoordinator(difficulty: difficulty))
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -51,7 +121,7 @@ struct BallBlastRockDropCameraView: View {
 
                 if coordinator.phase == .gameOver {
                     BallBlastRockDropFinishedOverlay(
-                        title: "GAME OVER",
+                        title: "SO CLOSE, TRY AGAIN",
                         subtitle: "A rock hit the ball.",
                         timeText: coordinator.survivedTimeText,
                         primaryTitle: "PLAY AGAIN",
@@ -62,7 +132,7 @@ struct BallBlastRockDropCameraView: View {
 
                 if coordinator.phase == .won {
                     BallBlastRockDropFinishedOverlay(
-                        title: "YOU SURVIVED",
+                        title: "YOU SURVIVED, GOOD JOB!",
                         subtitle: "Clean run.",
                         timeText: "60s",
                         primaryTitle: "PLAY AGAIN",
@@ -71,7 +141,7 @@ struct BallBlastRockDropCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -93,11 +163,27 @@ struct BallBlastRockDropCameraView: View {
             .onChange(of: geometry.size) { _, newSize in
                 coordinator.prepare(in: newSize)
             }
+            .alert("Are you sure you want to quit the drill?", isPresented: $showsQuitConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Quit", role: .destructive) {
+                    dismiss()
+                }
+            }
         }
     }
 
     private var topBar: some View {
         HStack {
+            Button {
+                showsQuitConfirmation = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(.black.opacity(0.58), in: Circle())
+            }
+
             Spacer()
 
             BallBlastRockDropHudChip(title: "TIME", value: coordinator.timerText, tint: .orange)
@@ -130,14 +216,20 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 60.0
     private let lostBallPromptFrameThreshold = 18
+    private let difficulty: BallBlastRockDropDifficulty
 
     private var size: CGSize = .zero
     private var liveElapsed: TimeInterval = 0
     private var lastStepAt: Date?
     private var lostBallFrameCount = 0
     private var heldBallDisplayRect: CGRect?
-    private var gameState = BallBlastRockDropGameState()
+    private var gameState: BallBlastRockDropGameState
     private weak var renderView: BallBlastRockDropRenderView?
+
+    init(difficulty: BallBlastRockDropDifficulty) {
+        self.difficulty = difficulty
+        gameState = BallBlastRockDropGameState(config: difficulty.gameConfig)
+    }
 
     func attach(renderView: BallBlastRockDropRenderView) {
         self.renderView = renderView
@@ -329,10 +421,12 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
 
         switch event {
         case .collision:
+            BallrDrillSoundPlayer.playRockDropGameOver()
             phase = .gameOver
             modeText = "HIT"
         case .none:
             if liveElapsed >= roundDuration {
+                BallrDrillSoundPlayer.playWinner()
                 phase = .won
                 timerText = "0"
                 survivedTimeText = "60s"
@@ -350,9 +444,9 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         case .live:
             return isTracking ? nil : "Find the ball"
         case .gameOver:
-            return "Game over"
+            return "So close, try again"
         case .won:
-            return "You survived"
+            return "You survived, Good job"
         }
     }
 
@@ -614,14 +708,20 @@ private struct BallBlastRockLayerSet {
 
 private struct BallBlastRockDropGameState {
     var rocks: [BallBlastRock] = []
+    let config: BallBlastRockDropGameConfig
 
-    private var nextSpawnElapsed: TimeInterval = 0.35
+    private var nextSpawnElapsed: TimeInterval
     private var lastSpawnX: CGFloat?
     private var recentBallCenters: [CGPoint] = []
 
+    init(config: BallBlastRockDropGameConfig) {
+        self.config = config
+        nextSpawnElapsed = config.initialSpawnDelay
+    }
+
     mutating func reset() {
         rocks = []
-        nextSpawnElapsed = 0.35
+        nextSpawnElapsed = config.initialSpawnDelay
         lastSpawnX = nil
         recentBallCenters.removeAll()
     }
@@ -656,7 +756,7 @@ private struct BallBlastRockDropGameState {
         elapsed: TimeInterval,
         progress: Double
     ) {
-        let maxRocks = Int(5 + progress * 12)
+        let maxRocks = Int(Double(config.maxRocksBase) + progress * Double(config.maxRocksRamp))
         while elapsed >= nextSpawnElapsed, rocks.count < maxRocks {
             spawnRock(in: size, progress: progress)
             let interval = Double.random(in: spawnIntervalRange(progress: progress))
@@ -678,8 +778,9 @@ private struct BallBlastRockDropGameState {
         }
         lastSpawnX = x
 
-        let baseSpeed = CGFloat(125 + progress * 185) * CGFloat(1.0 + progress * 0.10)
-        let speed = baseSpeed * CGFloat.random(in: 0.72...1.38)
+        let baseSpeed = CGFloat(config.speedBaseStart + progress * config.speedBaseRamp)
+            * CGFloat(1.0 + progress * config.speedProgressMultiplier)
+        let speed = baseSpeed * CGFloat.random(in: config.speedRandomRange)
         let radiusPadding = CGFloat.random(in: 0...80)
         rocks.append(
             BallBlastRock(
@@ -704,8 +805,8 @@ private struct BallBlastRockDropGameState {
     }
 
     private func spawnIntervalRange(progress: Double) -> ClosedRange<Double> {
-        let minimum = max(0.20, 0.78 - progress * 0.46)
-        let maximum = max(minimum + 0.08, 1.24 - progress * 0.74)
+        let minimum = max(0.20, config.spawnIntervalMinimumStart - progress * config.spawnIntervalMinimumRamp)
+        let maximum = max(minimum + 0.08, config.spawnIntervalMaximumStart - progress * config.spawnIntervalMaximumRamp)
         return minimum...maximum
     }
 
@@ -731,7 +832,7 @@ private struct BallBlastRockDropGameState {
         guard recentBallCenters.count >= 8 else {
             return false
         }
-        let chance = min(0.64, 0.26 + progress * 0.28)
+        let chance = min(config.targetChanceCap, config.targetChanceBase + progress * config.targetChanceRamp)
         return Double.random(in: 0...1) < chance
     }
 

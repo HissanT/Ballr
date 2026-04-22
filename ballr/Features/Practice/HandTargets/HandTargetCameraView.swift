@@ -122,15 +122,15 @@ struct HandTargetCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
                 case .footTargets:
                     FootTargetCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 case .levelEight:
                     LevelEightCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 }
             }
             .onAppear {
@@ -351,7 +351,11 @@ private final class HandTargetCoordinator: ObservableObject {
             )
             switch event {
             case .hit:
-                HandTargetSoundPlayer.playScore()
+                if gameState.didStartComboOnLastHit {
+                    BallrDrillSoundPlayer.playCombo()
+                } else {
+                    HandTargetSoundPlayer.playScore()
+                }
                 successfulHits += 1
                 if successfulHits >= configuration.requiredSuccessfulHits {
                     finish(.completed, at: frame.timestamp)
@@ -439,6 +443,10 @@ private final class HandTargetCoordinator: ObservableObject {
     private func finish(_ state: FinishState, at timestamp: Date) {
         guard finishState == .none else {
             return
+        }
+
+        if state == .completed {
+            BallrDrillSoundPlayer.playWinner()
         }
 
         finishState = state
@@ -984,6 +992,8 @@ private struct HandTargetGameState {
     var misses = 0
     var lastEventText = "READY"
     var lastEventIsPositive = true
+    private(set) var didStartComboOnLastHit = false
+    private var lastAnnouncedComboMultiplier = 1
 
     private let baseClearance: CGFloat = 24
 
@@ -1017,6 +1027,7 @@ private struct HandTargetGameState {
         timestamp: Date
     ) -> HandTargetStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
+        didStartComboOnLastHit = false
         prepare(in: size)
 
         guard let currentTarget = target else {
@@ -1026,6 +1037,7 @@ private struct HandTargetGameState {
         if hasExpired(currentTarget, at: timestamp) {
             misses += 1
             hitStreak = 0
+            lastAnnouncedComboMultiplier = 1
             lastEventText = "MISS"
             lastEventIsPositive = false
             scorePopups.append(
@@ -1045,8 +1057,11 @@ private struct HandTargetGameState {
         }
 
         if hands.contains(where: { handIntersectsTarget($0, target: currentTarget) }) {
-            let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
+            let awardedComboMultiplier = comboMultiplier
+            let points = basePoints(for: currentTarget, at: timestamp) * awardedComboMultiplier
             score += points
+            didStartComboOnLastHit = awardedComboMultiplier > lastAnnouncedComboMultiplier
+            lastAnnouncedComboMultiplier = awardedComboMultiplier
             hitStreak += 1
             lastEventText = "+\(points)"
             lastEventIsPositive = true

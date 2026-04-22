@@ -50,7 +50,7 @@ struct TargetDrillCameraView: View {
                     BallrDrillReadinessOverlay(ballFoundStartedAt: coordinator.ballFoundStartedAt)
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -178,7 +178,11 @@ private final class TargetDrillCoordinator: ObservableObject {
                 timestamp: frame.timestamp
             )
             if event == .hit {
-                TargetDrillSoundPlayer.playScore()
+                if gameState.didStartComboOnLastHit {
+                    BallrDrillSoundPlayer.playCombo()
+                } else {
+                    TargetDrillSoundPlayer.playScore()
+                }
             }
             syncHudFromGameState()
         }
@@ -615,6 +619,8 @@ private struct TargetDrillGameState {
     var misses = 0
     var lastEventText = "READY"
     var lastEventIsPositive = true
+    private(set) var didStartComboOnLastHit = false
+    private var lastAnnouncedComboMultiplier = 1
 
     private let fullValueWindow: TimeInterval = 2.0
     private let scoreStep: TimeInterval = 0.4
@@ -645,6 +651,7 @@ private struct TargetDrillGameState {
         timestamp: Date
     ) -> TargetDrillStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
+        didStartComboOnLastHit = false
         prepare(in: size)
 
         guard let currentTarget = target else {
@@ -654,6 +661,7 @@ private struct TargetDrillGameState {
         if targetAge(for: currentTarget, at: timestamp) >= Self.targetLifetime {
             misses += 1
             hitStreak = 0
+            lastAnnouncedComboMultiplier = 1
             lastEventText = "-1"
             lastEventIsPositive = false
             score = max(score - 1, 0)
@@ -680,8 +688,11 @@ private struct TargetDrillGameState {
             return nil
         }
 
-        let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
+        let awardedComboMultiplier = comboMultiplier
+        let points = basePoints(for: currentTarget, at: timestamp) * awardedComboMultiplier
         score += points
+        didStartComboOnLastHit = awardedComboMultiplier > lastAnnouncedComboMultiplier
+        lastAnnouncedComboMultiplier = awardedComboMultiplier
         hitStreak += 1
         lastEventText = "+\(points)"
         lastEventIsPositive = true

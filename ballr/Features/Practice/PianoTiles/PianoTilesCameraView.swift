@@ -73,7 +73,7 @@ struct PianoTilesCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -153,6 +153,11 @@ private struct PianoTileSoundTrigger {
     let sequenceIndex: Int
 }
 
+private struct PianoTileSpawnWarning {
+    let lane: Int
+    let progress: CGFloat
+}
+
 private final class PianoTilesCoordinator: ObservableObject {
     @Published private(set) var phase: PianoTilesPhase = .readiness
     @Published private(set) var ballFoundStartedAt: Date?
@@ -189,7 +194,8 @@ private final class PianoTilesCoordinator: ObservableObject {
             activeSequenceIndex: gameState.activeSequenceIndex,
             ballDisplayRect: nil,
             isTracking: false,
-            prompt: promptText
+            prompt: promptText,
+            spawnWarning: nil
         )
     }
 
@@ -213,7 +219,8 @@ private final class PianoTilesCoordinator: ObservableObject {
             activeSequenceIndex: gameState.activeSequenceIndex,
             ballDisplayRect: nil,
             isTracking: false,
-            prompt: promptText
+            prompt: promptText,
+            spawnWarning: nil
         )
     }
 
@@ -227,7 +234,8 @@ private final class PianoTilesCoordinator: ObservableObject {
             activeSequenceIndex: gameState.activeSequenceIndex,
             ballDisplayRect: nil,
             isTracking: phase == .live,
-            prompt: promptText
+            prompt: promptText,
+            spawnWarning: phase == .live ? gameState.spawnWarning(elapsed: liveElapsed) : nil
         )
     }
 
@@ -246,7 +254,8 @@ private final class PianoTilesCoordinator: ObservableObject {
                 activeSequenceIndex: gameState.activeSequenceIndex,
                 ballDisplayRect: effectiveBallDisplayRect,
                 isTracking: detectedIsTracking,
-                prompt: promptText
+                prompt: promptText,
+                spawnWarning: nil
             )
             return
         }
@@ -267,7 +276,8 @@ private final class PianoTilesCoordinator: ObservableObject {
             activeSequenceIndex: gameState.activeSequenceIndex,
             ballDisplayRect: effectiveBallDisplayRect,
             isTracking: detectedIsTracking,
-            prompt: promptText
+            prompt: promptText,
+            spawnWarning: phase == .live ? gameState.spawnWarning(elapsed: liveElapsed) : nil
         )
     }
 
@@ -395,6 +405,7 @@ private final class PianoTilesCoordinator: ObservableObject {
                 modeText = "MISS"
                 return
             case .won(_):
+                BallrDrillSoundPlayer.playWinner()
                 phase = .won
                 modeText = "CLEAR"
                 return
@@ -433,6 +444,7 @@ private final class PianoTilesCoordinator: ObservableObject {
             if let trigger {
                 PianoTilesSoundPlayer.playCompletion(for: trigger)
             }
+            BallrDrillSoundPlayer.playWinner()
             phase = .won
             modeText = "CLEAR"
         case .none:
@@ -562,6 +574,9 @@ private struct PianoTilesRenderSurface: UIViewRepresentable {
 private final class PianoTilesRenderView: UIView {
     private let laneLayer = CAShapeLayer()
     private let missLineLayer = CAShapeLayer()
+    private let spawnWarningOuterLayer = CAShapeLayer()
+    private let spawnWarningInnerLayer = CAShapeLayer()
+    private let spawnWarningCoreLayer = CAShapeLayer()
     private let ballRingLayer = CAShapeLayer()
     private let ballCenterLayer = CAShapeLayer()
     private let promptLabel = UILabel()
@@ -572,6 +587,7 @@ private final class PianoTilesRenderView: UIView {
     private var ballDisplayRect: CGRect?
     private var isTracking = false
     private var prompt: String?
+    private var spawnWarning: PianoTileSpawnWarning?
     var onBoundsChange: ((CGSize) -> Void)?
     private var lastReportedBoundsSize: CGSize = .zero
 
@@ -592,13 +608,15 @@ private final class PianoTilesRenderView: UIView {
         activeSequenceIndex: Int,
         ballDisplayRect: CGRect?,
         isTracking: Bool,
-        prompt: String?
+        prompt: String?,
+        spawnWarning: PianoTileSpawnWarning?
     ) {
         self.tiles = tiles
         self.activeSequenceIndex = activeSequenceIndex
         self.ballDisplayRect = ballDisplayRect
         self.isTracking = isTracking
         self.prompt = prompt
+        self.spawnWarning = spawnWarning
         render()
     }
 
@@ -619,6 +637,30 @@ private final class PianoTilesRenderView: UIView {
         missLineLayer.lineWidth = 3
         missLineLayer.lineDashPattern = [10, 7]
         layer.addSublayer(missLineLayer)
+
+        spawnWarningOuterLayer.fillColor = UIColor.systemRed.cgColor
+        spawnWarningOuterLayer.shadowColor = UIColor.systemRed.cgColor
+        spawnWarningOuterLayer.shadowOffset = .zero
+        spawnWarningOuterLayer.shadowRadius = 28
+        spawnWarningOuterLayer.shadowOpacity = 0
+        spawnWarningOuterLayer.isHidden = true
+        layer.addSublayer(spawnWarningOuterLayer)
+
+        spawnWarningInnerLayer.fillColor = UIColor.systemRed.cgColor
+        spawnWarningInnerLayer.shadowColor = UIColor.systemRed.cgColor
+        spawnWarningInnerLayer.shadowOffset = .zero
+        spawnWarningInnerLayer.shadowRadius = 16
+        spawnWarningInnerLayer.shadowOpacity = 0
+        spawnWarningInnerLayer.isHidden = true
+        layer.addSublayer(spawnWarningInnerLayer)
+
+        spawnWarningCoreLayer.fillColor = UIColor.white.cgColor
+        spawnWarningCoreLayer.shadowColor = UIColor.systemRed.cgColor
+        spawnWarningCoreLayer.shadowOffset = .zero
+        spawnWarningCoreLayer.shadowRadius = 10
+        spawnWarningCoreLayer.shadowOpacity = 0
+        spawnWarningCoreLayer.isHidden = true
+        layer.addSublayer(spawnWarningCoreLayer)
 
         ballRingLayer.fillColor = UIColor.clear.cgColor
         ballRingLayer.strokeColor = UIColor.white.cgColor
@@ -657,6 +699,7 @@ private final class PianoTilesRenderView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         renderLanes()
+        renderSpawnWarning()
         renderTiles()
         renderBall()
         renderPrompt()
@@ -695,6 +738,71 @@ private final class PianoTilesRenderView: UIView {
             let layerSet = tileLayers[tile.id] ?? makeTileLayerSet(for: tile)
             update(layerSet: layerSet, with: tile)
         }
+    }
+
+    private func renderSpawnWarning() {
+        guard let spawnWarning, spawnWarning.lane >= 0, spawnWarning.lane < PianoTilesGameState.laneCount else {
+            spawnWarningOuterLayer.isHidden = true
+            spawnWarningOuterLayer.path = nil
+            spawnWarningInnerLayer.isHidden = true
+            spawnWarningInnerLayer.path = nil
+            spawnWarningCoreLayer.isHidden = true
+            spawnWarningCoreLayer.path = nil
+            return
+        }
+
+        let metrics = PianoTilesMetrics(size: bounds.size)
+        let laneX = metrics.horizontalInset
+            + CGFloat(spawnWarning.lane) * (metrics.laneWidth + metrics.laneGap)
+            + metrics.laneWidth * 0.5
+
+        let pulse = 0.5 + 0.5 * sin(spawnWarning.progress * .pi * 4)
+        let flareWidth = metrics.laneWidth * (1.10 + pulse * 0.34)
+        let flareY = max(14, bounds.height * 0.028)
+
+        let outerRect = CGRect(
+            x: laneX - flareWidth * 0.5,
+            y: flareY - 18,
+            width: flareWidth,
+            height: 36
+        )
+        let innerRect = CGRect(
+            x: laneX - flareWidth * 0.36,
+            y: flareY - 9,
+            width: flareWidth * 0.72,
+            height: 18
+        )
+        let coreRect = CGRect(
+            x: laneX - flareWidth * 0.22,
+            y: flareY - 2.5,
+            width: flareWidth * 0.44,
+            height: 5
+        )
+
+        let outerPath = UIBezierPath(ovalIn: outerRect).cgPath
+        let innerPath = UIBezierPath(ovalIn: innerRect).cgPath
+        let corePath = UIBezierPath(
+            roundedRect: coreRect,
+            cornerRadius: coreRect.height * 0.5
+        ).cgPath
+
+        spawnWarningOuterLayer.isHidden = false
+        spawnWarningOuterLayer.path = outerPath
+        spawnWarningOuterLayer.fillColor = UIColor.systemRed.withAlphaComponent(0.18 + pulse * 0.14).cgColor
+        spawnWarningOuterLayer.shadowPath = outerPath
+        spawnWarningOuterLayer.shadowOpacity = 0.26 + Float(pulse) * 0.22
+
+        spawnWarningInnerLayer.isHidden = false
+        spawnWarningInnerLayer.path = innerPath
+        spawnWarningInnerLayer.fillColor = UIColor.systemRed.withAlphaComponent(0.30 + pulse * 0.20).cgColor
+        spawnWarningInnerLayer.shadowPath = innerPath
+        spawnWarningInnerLayer.shadowOpacity = 0.34 + Float(pulse) * 0.26
+
+        spawnWarningCoreLayer.isHidden = false
+        spawnWarningCoreLayer.path = corePath
+        spawnWarningCoreLayer.fillColor = UIColor(red: 1.0, green: 0.72, blue: 0.72, alpha: 0.88 + pulse * 0.10).cgColor
+        spawnWarningCoreLayer.shadowPath = corePath
+        spawnWarningCoreLayer.shadowOpacity = 0.36 + Float(pulse) * 0.22
     }
 
     private func makeTileLayerSet(for tile: PianoTile) -> PianoTileLayerSet {
@@ -948,6 +1056,9 @@ private struct PianoTilesGameState {
     private static let minimumOverlapGrid = 18
     private static let maximumOverlapGrid = 36
     private static let maxQueuedTapTiles = 3
+    private static let warningLeadDuration: TimeInterval = 0.75
+    private static let spawnGapScale: Double = 1.5
+    private static let tileSpeedScale: CGFloat = 1.1
 
     var tiles: [PianoTile] = []
     private(set) var activeSequenceIndex = 0
@@ -956,6 +1067,7 @@ private struct PianoTilesGameState {
     private var sequence: [PianoTileSpec] = []
     private var nextSequenceIndex = 0
     private var nextSpawnElapsed: TimeInterval = 0
+    private var blockedSpawnNeedsReschedule = false
 
     mutating func reset() {
         tiles = []
@@ -963,7 +1075,8 @@ private struct PianoTilesGameState {
         score = 0
         sequence = Self.makeSequence()
         nextSequenceIndex = 0
-        nextSpawnElapsed = 0
+        nextSpawnElapsed = Self.warningLeadDuration
+        blockedSpawnNeedsReschedule = false
     }
 
     mutating func step(
@@ -1071,23 +1184,36 @@ private struct PianoTilesGameState {
     }
 
     private mutating func spawnTilesIfNeeded(in size: CGSize, elapsed: TimeInterval) {
-        guard !hasUnresolvedHoldTile else {
+        guard nextSequenceIndex < Self.totalTileCount else {
             return
         }
 
         let unresolvedTapCount = tiles.filter { $0.sequenceIndex >= activeSequenceIndex && $0.kind == .tap }.count
-        guard unresolvedTapCount < Self.maxQueuedTapTiles else {
+        let canSpawn = !hasUnresolvedHoldTile && unresolvedTapCount < Self.maxQueuedTapTiles
+
+        guard canSpawn else {
+            if elapsed >= nextSpawnElapsed {
+                blockedSpawnNeedsReschedule = true
+            }
             return
         }
 
-        if nextSequenceIndex < Self.totalTileCount, elapsed >= nextSpawnElapsed {
-            spawnTile(in: size)
-            let progress = Double(nextSequenceIndex) / Double(Self.totalTileCount)
-            let baseGap = Double.random(in: 1.08...1.82)
-            let lateGameTrim = min(progress * 0.18, 0.18)
-            let spawnGap = max(1.0, baseGap - lateGameTrim)
-            nextSpawnElapsed = elapsed + spawnGap
+        if blockedSpawnNeedsReschedule {
+            nextSpawnElapsed = elapsed + Self.warningLeadDuration
+            blockedSpawnNeedsReschedule = false
+            return
         }
+
+        guard elapsed >= nextSpawnElapsed else {
+            return
+        }
+
+        spawnTile(in: size)
+        let progress = Double(nextSequenceIndex) / Double(Self.totalTileCount)
+        let baseGap = Double.random(in: 1.08...1.82)
+        let lateGameTrim = min(progress * 0.18, 0.18)
+        let spawnGap = max(1.0, baseGap - lateGameTrim) * Self.spawnGapScale
+        nextSpawnElapsed = elapsed + spawnGap
     }
 
     private mutating func spawnTile(in size: CGSize) {
@@ -1097,7 +1223,7 @@ private struct PianoTilesGameState {
         let tapHeight = min(max(size.height * 0.18, 82), 124)
         let baseSpeed = CGFloat(82 + progress * 48)
         let tileHeight = tapHeight
-        let speed = baseSpeed * spec.speedMultiplier
+        let speed = baseSpeed * spec.speedMultiplier * Self.tileSpeedScale
         tiles.append(
             PianoTile(
                 sequenceIndex: nextSequenceIndex,
@@ -1110,6 +1236,32 @@ private struct PianoTilesGameState {
             )
         )
         nextSequenceIndex += 1
+    }
+
+    func spawnWarning(elapsed: TimeInterval) -> PianoTileSpawnWarning? {
+        guard nextSequenceIndex < Self.totalTileCount else {
+            return nil
+        }
+
+        guard !blockedSpawnNeedsReschedule, !hasUnresolvedHoldTile else {
+            return nil
+        }
+
+        let unresolvedTapCount = tiles.filter { $0.sequenceIndex >= activeSequenceIndex && $0.kind == .tap }.count
+        guard unresolvedTapCount < Self.maxQueuedTapTiles else {
+            return nil
+        }
+
+        let warningStart = nextSpawnElapsed - Self.warningLeadDuration
+        guard elapsed >= warningStart, elapsed < nextSpawnElapsed else {
+            return nil
+        }
+
+        let progress = CGFloat((elapsed - warningStart) / Self.warningLeadDuration)
+        return PianoTileSpawnWarning(
+            lane: sequence[nextSequenceIndex].lane,
+            progress: min(max(progress, 0), 1)
+        )
     }
 
     private mutating func completeActiveTile() {

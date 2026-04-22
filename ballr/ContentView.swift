@@ -439,40 +439,40 @@ private struct LevelsHomeView: View {
             .navigationDestination(item: $selectedDrill) { drill in
                 if drill.level == 1 {
                     LevelOneCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 2 {
                     HandTargetCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 3 {
                     FootTargetCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 4 {
                     LevelFourCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 5 {
                     LevelFiveCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 6 {
                     LevelSixCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 7 {
                     LevelSevenCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 8 {
                     LevelEightCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 9 {
                     LevelNineCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 10 {
                     LevelTenCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 19 {
                     TargetDrillCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 20 {
                     HunterCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 } else {
                     DrillPlaceholderView(drill: drill)
                 }
@@ -529,16 +529,19 @@ private struct LevelsHomeView: View {
 private struct PracticeHomeView: View {
     @State private var selectedDrill: Drill?
     @State private var isShowingDribbling = false
-    @State private var isShowingBallBlast = false
+    @State private var promptedRockDropDrill: Drill?
+    @State private var selectedRockDropDifficulty: BallBlastRockDropDifficulty?
     @State private var isShowingPrecisionTargets = false
+    @State private var isShowingMultiplayerPrecisionTargets = false
     @State private var isShowingPassingGates = false
     @State private var isShowingPianoTiles = false
 
     private let drills = [
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
         Drill(title: "Dribbling", subtitle: "Weave through targets", level: nil),
-        Drill(title: "Ball Blast", subtitle: "Hit targets fast", level: nil),
+        Drill(title: "Rock Drop", subtitle: "Dodge the falling rocks", level: nil),
         Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
+        Drill(title: "Precision VS", subtitle: "Alternate 5 shots each", level: nil),
         Drill(title: "Passing Gates", subtitle: "Pass through the gate", level: nil),
         Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil),
         Drill(title: "Dribble\nTiles", subtitle: "Navigate the grid", level: nil)
@@ -558,74 +561,136 @@ private struct PracticeHomeView: View {
                 LevelsScreenBackground()
                     .ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .center) {
-                            LevelsMapIcon()
-                                .frame(width: 64, height: 46)
+                GeometryReader { geometry in
+                    ZStack {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                HStack(alignment: .center) {
+                                    LevelsMapIcon()
+                                        .frame(width: 64, height: 46)
 
-                            Spacer()
+                                    Spacer()
 
-                            Text("FREE PRACTICE")
-                                .font(.system(size: 13, weight: .black, design: .rounded))
-                                .tracking(2)
-                                .foregroundStyle(Color.yellow)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 9)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                                .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.yellow.opacity(0.26), lineWidth: 1)
+                                    Text("FREE PRACTICE")
+                                        .font(.system(size: 13, weight: .black, design: .rounded))
+                                        .tracking(2)
+                                        .foregroundStyle(Color.yellow)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 9)
+                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.yellow.opacity(0.26), lineWidth: 1)
+                                        }
                                 }
-                        }
-                        .padding(.bottom, 26)
+                                .padding(.bottom, 26)
 
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
-                                Button {
-                                    if drill.title == "Dribbling" {
-                                        isShowingDribbling = true
-                                    } else if drill.title == "Ball Blast" {
-                                        isShowingBallBlast = true
-                                    } else if drill.title == "Precision Targets" {
-                                        isShowingPrecisionTargets = true
-                                    } else if drill.title == "Passing Gates" {
-                                        isShowingPassingGates = true
-                                    } else if drill.title == "Piano Tiles" {
-                                        isShowingPianoTiles = true
-                                    } else {
-                                        selectedDrill = drill
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
+                                        Button {
+                                            if drill.title == "Dribbling" {
+                                                isShowingDribbling = true
+                                            } else if drill.title == "Rock Drop" {
+                                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                                    if promptedRockDropDrill?.id == drill.id {
+                                                        promptedRockDropDrill = nil
+                                                    } else {
+                                                        promptedRockDropDrill = drill
+                                                    }
+                                                }
+                                            } else if drill.title == "Precision Targets" {
+                                                isShowingPrecisionTargets = true
+                                            } else if drill.title == "Precision VS" {
+                                                isShowingMultiplayerPrecisionTargets = true
+                                            } else if drill.title == "Passing Gates" {
+                                                isShowingPassingGates = true
+                                            } else if drill.title == "Piano Tiles" {
+                                                isShowingPianoTiles = true
+                                            } else {
+                                                selectedDrill = drill
+                                            }
+                                        } label: {
+                                            PracticeDrillCardView(drill: drill, style: PracticeDrillStyle(index: index))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .background(
+                                            GeometryReader { cardGeometry in
+                                                Color.clear.preference(
+                                                    key: PracticeDrillFramePreferenceKey.self,
+                                                    value: [drill.id: cardGeometry.frame(in: .named("PracticeHomeView"))]
+                                                )
+                                            }
+                                        )
                                     }
-                                } label: {
-                                    PracticeDrillCardView(drill: drill, style: PracticeDrillStyle(index: index))
                                 }
-                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 22)
+                            .padding(.bottom, 34)
+                        }
+                        .overlayPreferenceValue(PracticeDrillFramePreferenceKey.self) { frames in
+                            if
+                                let activePromptDrill = promptedRockDropDrill,
+                                let frame = frames[activePromptDrill.id]
+                            {
+                                let promptWidth = min(248, max(218, geometry.size.width * 0.62))
+                                let promptHeight: CGFloat = 176
+                                let promptCenterX = min(max(frame.midX, promptWidth * 0.5 + 16), geometry.size.width - promptWidth * 0.5 - 16)
+                                let promptCenterY = max(frame.minY - 98, promptHeight * 0.5 + 12)
+
+                                PracticeDifficultyPromptView(
+                                    drill: activePromptDrill,
+                                    onSelectEasy: {
+                                        promptedRockDropDrill = nil
+                                        selectedRockDropDifficulty = .easy
+                                    },
+                                    onSelectHard: {
+                                        promptedRockDropDrill = nil
+                                        selectedRockDropDifficulty = .hard
+                                    },
+                                    onCancel: {
+                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                            promptedRockDropDrill = nil
+                                        }
+                                    }
+                                )
+                                .frame(width: promptWidth)
+                                .position(x: promptCenterX, y: promptCenterY)
+                                .transition(.scale(scale: 0.94).combined(with: .opacity))
+                                .zIndex(2)
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 22)
-                    .padding(.bottom, 34)
                 }
             }
+            .coordinateSpace(name: "PracticeHomeView")
             .navigationDestination(item: $selectedDrill) { drill in
                 DrillPlaceholderView(drill: drill)
             }
             .fullScreenCover(isPresented: $isShowingDribbling) {
                 DribblingCameraView()
+                    .ballrCameraPresentationChrome()
             }
-            .fullScreenCover(isPresented: $isShowingBallBlast) {
-                BallBlastRockDropCameraView()
+            .fullScreenCover(item: $selectedRockDropDifficulty) { difficulty in
+                BallBlastRockDropCameraView(difficulty: difficulty)
+                    .ballrCameraPresentationChrome()
             }
             .fullScreenCover(isPresented: $isShowingPrecisionTargets) {
                 PrecisionTargetCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingMultiplayerPrecisionTargets) {
+                MultiplayerPrecisionTargetCameraView()
+                    .ballrCameraPresentationChrome()
             }
             .fullScreenCover(isPresented: $isShowingPassingGates) {
                 PassingGateCameraView()
+                    .ballrCameraPresentationChrome()
             }
             .fullScreenCover(isPresented: $isShowingPianoTiles) {
                 PianoTilesCameraView()
+                    .ballrCameraPresentationChrome()
             }
         }
     }
@@ -1618,6 +1683,8 @@ private struct LevelStartPromptView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
                 .padding(.bottom, 14)
+                .id(drill.id)
+                .transition(.opacity)
 
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
@@ -1642,6 +1709,7 @@ private struct LevelStartPromptView: View {
                 .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
                 .frame(width: 18, height: 12)
         }
+        .animation(.easeInOut(duration: 0.18), value: drill.id)
     }
 }
 
@@ -1721,12 +1789,13 @@ private struct LevelsMapView: View {
                         onStart: { onStart(promptedDrill) },
                         onCancel: onCancel
                     )
+                    .id("level-start-prompt")
                     .frame(width: promptWidth)
                     .position(
                         x: nodeX,
                         y: max(nodeY - 78, 82)
                     )
-                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: promptedDrill.id)
                     .zIndex(2)
                 }
             }
@@ -1967,6 +2036,18 @@ private struct PracticeDrillStyle {
             iconColor = .yellow
             iconForeground = Color.ballrBlack
             accentColor = .yellow
+            symbol = "person.2.fill"
+            playOpacity = 0.28
+        case 5:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "rectangle.split.3x1"
+            playOpacity = 0.28
+        case 6:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
             symbol = "pianokeys"
             playOpacity = 0.28
         default:
@@ -1975,6 +2056,93 @@ private struct PracticeDrillStyle {
             accentColor = Color.white.opacity(0.32)
             symbol = "square.grid.2x2.fill"
             playOpacity = 0.18
+        }
+    }
+}
+
+private struct PracticeDrillFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct PracticeDifficultyPromptView: View {
+    let drill: Drill
+    let onSelectEasy: () -> Void
+    let onSelectHard: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 12) {
+                    Text("\(drill.title) - Choose difficulty")
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 24)
+
+                    Text(drill.subtitle)
+                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11).opacity(0.72))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                        .padding(.horizontal, 24)
+
+                    HStack(spacing: 10) {
+                        Button(action: onSelectEasy) {
+                            Text("EASY")
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: onSelectHard) {
+                            Text("HARD")
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 18)
+                }
+                .padding(.top, 14)
+                .padding(.bottom, 14)
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                .padding(.trailing, 4)
+            }
+            .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                    .frame(height: 8)
+                    .offset(y: 6)
+            }
+
+            TrianglePointer()
+                .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                .frame(width: 18, height: 12)
         }
     }
 }

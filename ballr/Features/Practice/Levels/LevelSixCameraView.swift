@@ -66,7 +66,7 @@ struct LevelSixCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 PracticeLevelPlaceholderView(level: 7)
                     .navigationBarBackButtonHidden(false)
@@ -325,6 +325,10 @@ private final class LevelSixCoordinator: ObservableObject {
             return
         }
         cancelBombFailureWorkItem()
+
+        if state == .completed {
+            BallrDrillSoundPlayer.playWinner()
+        }
 
         finishState = state
         finishStartedAt = timestamp
