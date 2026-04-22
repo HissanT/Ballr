@@ -19,6 +19,7 @@ struct PassingGateCameraView: View {
                 )
             }
         }
+        .ballrCameraPresentationChrome()
     }
 }
 
@@ -185,18 +186,18 @@ private struct PassingGateLiveCameraView: View {
                         onDismiss: { dismiss() }
                     )
                 }
+
+                if coordinator.showsAlignmentPrompt {
+                    PassingGateAlignmentOverlay(
+                        onContinue: { coordinator.beginCalibrationFlow() }
+                    )
+                }
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onEnded { value in
-                        coordinator.handleTap(at: value.location, cameraController: cameraController)
-                    }
-            )
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(ballSpec: ballSpec, viewSize: geometry.size)
+                coordinator.configureFixedGate(cameraController: cameraController)
                 cameraController.publishesTrackingFramesToSwiftUI = false
                 cameraController.onTrackingFrame = { [weak coordinator, weak cameraController] frame in
                     guard let cameraController else {
@@ -214,6 +215,7 @@ private struct PassingGateLiveCameraView: View {
             }
             .onChange(of: geometry.size) { _, newSize in
                 coordinator.prepare(viewSize: newSize)
+                coordinator.configureFixedGate(cameraController: cameraController)
             }
             .alert("Are you sure you want to quit the drill?", isPresented: $showsQuitConfirmation) {
                 Button("Cancel", role: .cancel) {}
@@ -283,7 +285,7 @@ private struct PassingGateBallSpec: Identifiable, Equatable {
 }
 
 private enum PassingGatePhase {
-    case selectCenter
+    case alignment
     case reference
     case calibration
     case live
@@ -354,8 +356,9 @@ private final class PassingGateCoordinator: ObservableObject {
     @Published private(set) var score = 0
     @Published private(set) var ballLabel = "--"
     @Published private(set) var depthText = "--"
-    @Published private(set) var phaseTitle = "PLACE GATE"
-    @Published private(set) var statusText = "Tap the bottom center of the gate on the wall"
+    @Published private(set) var phaseTitle = "ADJUST CAMERA"
+    @Published private(set) var statusText = "Adjust your camera so the passing gate sits on the bottom middle of your wall or goal."
+    @Published private(set) var showsAlignmentPrompt = true
 
     private let defaultFocalLengthPX: CGFloat = 2400.0
     private let focalReferenceWidthPX: CGFloat = 1920.0
@@ -378,7 +381,7 @@ private final class PassingGateCoordinator: ObservableObject {
     private let maxLiveCenterJumpDiameters: CGFloat = 4.0
     private let maxLiveDiameterRatio: CGFloat = 2.35
 
-    private var phase: PassingGatePhase = .selectCenter
+    private var phase: PassingGatePhase = .alignment
     private var ballSpec: PassingGateBallSpec = PassingGateBallSpec.presets[2]
     private var viewSize: CGSize = .zero
     private var bullseyeTrackerPoint: CGPoint?
@@ -400,6 +403,7 @@ private final class PassingGateCoordinator: ObservableObject {
     private var throwState = PassingGateThrowState()
     private var lastImpact: PassingGateImpact?
     private var lastScore = 0
+    private var perfectHitChainActive = false
     private var trackerOverlay = PassingGateTrackerOverlay(
         displayRect: nil,
         rawDisplayRect: nil,
@@ -418,12 +422,13 @@ private final class PassingGateCoordinator: ObservableObject {
     func reset(ballSpec: PassingGateBallSpec, viewSize: CGSize) {
         self.ballSpec = ballSpec
         self.viewSize = viewSize
-        phase = .selectCenter
+        phase = .alignment
         score = 0
         ballLabel = ballSpec.label
         depthText = "--"
-        phaseTitle = "PLACE GATE"
-        statusText = "Tap the bottom center of the gate on the wall"
+        phaseTitle = "ADJUST CAMERA"
+        statusText = "Adjust your camera so the passing gate sits on the bottom middle of your wall or goal."
+        showsAlignmentPrompt = true
         bullseyeTrackerPoint = nil
         bullseyeDisplayPoint = nil
         wallCalibration = nil
@@ -443,6 +448,7 @@ private final class PassingGateCoordinator: ObservableObject {
         throwState = PassingGateThrowState()
         lastImpact = nil
         lastScore = 0
+        perfectHitChainActive = false
         trackerOverlay = PassingGateTrackerOverlay(
             displayRect: nil,
             rawDisplayRect: nil,
@@ -454,29 +460,45 @@ private final class PassingGateCoordinator: ObservableObject {
         publishRender()
     }
 
-    func prepare(viewSize: CGSize) {
-        self.viewSize = viewSize
-        publishRender()
-    }
-
-    func handleTap(at displayPoint: CGPoint, cameraController: BallTrackerCameraController) {
-        guard phase == .selectCenter else {
-            return
-        }
-        guard let trackerPoint = cameraController.trackerPoint(forDisplayPoint: displayPoint) else {
-            statusText = "Tap inside the camera view"
-            return
-        }
-
-        bullseyeTrackerPoint = trackerPoint
-        bullseyeDisplayPoint = displayPoint
+    func beginCalibrationFlow() {
         phase = .reference
         phaseTitle = "PASSING SPOT"
         statusText = "Hold the ball at your passing spot for 5 seconds"
+        showsAlignmentPrompt = false
         referenceStartedAt = nil
         referenceElapsed = 0
         referenceMissingFrames = 0
         referenceSamples.removeAll()
+        calibrationStartedAt = nil
+        calibrationElapsed = 0
+        calibrationMissingFrames = 0
+        calibrationDepthSamples.removeAll()
+        calibrationDiameterSamples.removeAll()
+        diameterWindow.removeAll()
+        smoothedDiameter = nil
+        throwState = PassingGateThrowState()
+        lastImpact = nil
+        lastScore = 0
+    }
+
+    func configureFixedGate(cameraController: BallTrackerCameraController) {
+        guard viewSize.width > 0, viewSize.height > 0 else {
+            return
+        }
+
+        let fixedGateVerticalAnchor: CGFloat = 0.3
+        let fixedDisplayPoint = CGPoint(
+            x: viewSize.width * 0.5,
+            y: viewSize.height * fixedGateVerticalAnchor
+        )
+        bullseyeDisplayPoint = fixedDisplayPoint
+        bullseyeTrackerPoint = cameraController.trackerPoint(forDisplayPoint: fixedDisplayPoint)
+            ?? CGPoint(x: 0.5, y: fixedGateVerticalAnchor)
+        publishRender()
+    }
+
+    func prepare(viewSize: CGSize) {
+        self.viewSize = viewSize
         publishRender()
     }
 
@@ -491,9 +513,9 @@ private final class PassingGateCoordinator: ObservableObject {
         updateHUDDepth()
 
         switch phase {
-        case .selectCenter:
-            phaseTitle = "PLACE GATE"
-            statusText = "Tap the bottom center of the gate on the wall"
+        case .alignment:
+            phaseTitle = "ADJUST CAMERA"
+            statusText = "Adjust your camera so the passing gate sits on the bottom middle of your wall or goal."
         case .reference:
             stepReference(sample: sample, timestamp: frame.timestamp)
         case .calibration:
@@ -880,6 +902,11 @@ private final class PassingGateCoordinator: ObservableObject {
         )
         lastScore = awardedScore
         score += awardedScore
+        let didStartPerfectHitChain = awardedScore == 5 && !perfectHitChainActive
+        perfectHitChainActive = awardedScore == 5
+        if didStartPerfectHitChain {
+            BallrDrillSoundPlayer.playCombo()
+        }
         throwState.phase = .cooldown
         throwState.missingFrames = 0
         statusText = awardedScore > 0
@@ -1036,6 +1063,43 @@ private final class PassingGateCoordinator: ObservableObject {
             return (sorted[middle - 1] + sorted[middle]) * 0.5
         }
         return sorted[middle]
+    }
+}
+
+private struct PassingGateAlignmentOverlay: View {
+    let onContinue: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.56)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                Text("Adjust your camera so the passing gate sits on the bottom middle of your wall or goal.")
+                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+
+                Button(action: onContinue) {
+                    Text("CONTINUE")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.10, green: 0.10, blue: 0.10))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 58)
+                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 520)
+            .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            }
+            .padding(.horizontal, 24)
+        }
     }
 }
 

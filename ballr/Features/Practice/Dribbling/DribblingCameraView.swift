@@ -49,7 +49,7 @@ struct DribblingCameraView: View {
                 BallrDrillReadinessOverlay(ballFoundStartedAt: ballFoundStartedAt)
             }
         }
-        .statusBarHidden(true)
+        .ballrCameraPresentationChrome()
         .onAppear {
             ballFoundStartedAt = nil
             countdownStartedAt = nil

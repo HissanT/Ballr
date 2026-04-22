@@ -71,15 +71,15 @@ struct FootTargetCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
                 case .levelFour:
                     LevelFourCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 case .levelNine:
                     LevelNineCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
                 }
             }
             .onAppear {
@@ -261,7 +261,11 @@ private final class FootTargetCoordinator: ObservableObject {
                 timestamp: frame.timestamp
             )
             if event == .hit {
-                FootTargetSoundPlayer.playScore()
+                if gameState.didStartComboOnLastHit {
+                    BallrDrillSoundPlayer.playCombo()
+                } else {
+                    FootTargetSoundPlayer.playScore()
+                }
                 successfulHits += 1
                 if successfulHits >= requiredSuccessfulHits {
                     completeLevel(at: frame.timestamp)
@@ -341,6 +345,7 @@ private final class FootTargetCoordinator: ObservableObject {
             return
         }
 
+        BallrDrillSoundPlayer.playWinner()
         completionStartedAt = timestamp
         showsCompletionButtons = false
         gameState.finish()
@@ -807,6 +812,8 @@ private struct FootTargetGameState {
     var misses = 0
     var lastEventText = "READY"
     var lastEventIsPositive = true
+    private(set) var didStartComboOnLastHit = false
+    private var lastAnnouncedComboMultiplier = 1
 
     private let fullValueWindow: TimeInterval = 2.0
     private let scoreStep: TimeInterval = 0.4
@@ -838,6 +845,7 @@ private struct FootTargetGameState {
         timestamp: Date
     ) -> FootTargetStepEvent? {
         scorePopups.removeAll { !$0.isActive(at: timestamp) }
+        didStartComboOnLastHit = false
         prepare(in: size)
 
         guard let currentTarget = target else {
@@ -849,8 +857,11 @@ private struct FootTargetGameState {
         }
 
         if feet.contains(where: { footIntersectsTarget($0, target: currentTarget) }) {
-            let points = basePoints(for: currentTarget, at: timestamp) * comboMultiplier
+            let awardedComboMultiplier = comboMultiplier
+            let points = basePoints(for: currentTarget, at: timestamp) * awardedComboMultiplier
             score += points
+            didStartComboOnLastHit = awardedComboMultiplier > lastAnnouncedComboMultiplier
+            lastAnnouncedComboMultiplier = awardedComboMultiplier
             hitStreak += 1
             lastEventText = "+\(points)"
             lastEventIsPositive = true

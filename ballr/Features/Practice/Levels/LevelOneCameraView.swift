@@ -61,10 +61,10 @@ struct LevelOneCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 HandTargetCameraView()
-                    .navigationBarBackButtonHidden(true)
+                    .ballrCameraPresentationChrome()
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -353,14 +353,14 @@ private final class LevelOneCoordinator: ObservableObject {
 
         switch axis {
         case .x:
-            let threshold = min(max(size.width * 0.075, sample.diameter * 0.45, 42), 96)
+            let threshold = min(max(size.width * 0.045, sample.diameter * 0.30, 28), 68)
             didCompleteRep = repTracker.register(value: sample.center.x, threshold: threshold)
         case .y:
             let threshold = min(max(size.height * 0.055, sample.diameter * 0.24, 22), 52)
             didCompleteRep = yRepTracker.register(value: sample.center.y, threshold: threshold)
         case .z:
             let baseline = repTracker.anchor ?? sample.diameter
-            let threshold = min(max(baseline * 0.10, 10), 28)
+            let threshold = min(max(baseline * 0.065, 6), 18)
             didCompleteRep = repTracker.register(value: sample.diameter, threshold: threshold)
         }
 
@@ -368,22 +368,23 @@ private final class LevelOneCoordinator: ObservableObject {
             return
         }
 
-        LevelOneSoundPlayer.playDing()
-
         switch axis {
         case .x:
             xRepsCompleted += 1
             if xRepsCompleted >= 3 {
+                LevelOneSoundPlayer.playDing()
                 scheduleAxisAdvance(from: .x)
             }
         case .y:
             yRepsCompleted += 1
             if yRepsCompleted >= 3 {
+                LevelOneSoundPlayer.playDing()
                 scheduleAxisAdvance(from: .y)
             }
         case .z:
             zRepsCompleted += 1
             if zRepsCompleted >= 3 {
+                LevelOneSoundPlayer.playDing()
                 startCompletionAnimation()
             }
         }
@@ -409,6 +410,7 @@ private final class LevelOneCoordinator: ObservableObject {
         cancelPendingTransition()
         motionSampler.reset()
         repTracker.reset()
+        BallrDrillSoundPlayer.playWinner()
         completionStartedAt = Date()
         transition(to: .completionAnimation)
         schedule(after: completionAnimationDuration + completionButtonRevealDelay) { [weak self] in
@@ -478,40 +480,25 @@ private struct LevelOneOverlayView: View {
             LevelOneIntroCardView(card: LevelOneIntroCard.cards[index])
                 .padding(.horizontal, 28)
         case .axis(let axis):
-            VStack {
-                Spacer()
-
-                VStack(spacing: 12) {
+            VStack(spacing: 0) {
+                VStack(spacing: 7) {
                     Text(axis.title)
-                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .font(.system(size: 24, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
-
-                    Text(axis.subtitle)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                        .multilineTextAlignment(.center)
+                        .shadow(color: .black.opacity(0.85), radius: 8, x: 0, y: 3)
 
                     Text("\(coordinator.repsCompleted(for: axis))/3")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.system(size: 28, weight: .black, design: .rounded))
                         .foregroundStyle(Color.yellow)
-                        .padding(.top, 6)
-
-                    Text(coordinator.hasConfidentTracking ? axis.helperText : "Find the ball again")
-                        .font(.system(size: 14, weight: .black, design: .rounded))
-                        .tracking(1.2)
-                        .foregroundStyle(coordinator.hasConfidentTracking ? Color.yellow : .white)
-                        .padding(.top, 4)
+                        .padding(.top, 2)
+                        .shadow(color: .black.opacity(0.9), radius: 8, x: 0, y: 3)
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
-                .frame(maxWidth: min(size.width * 0.72, 540))
-                .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 22))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22)
-                        .stroke(.white.opacity(0.12), lineWidth: 1)
-                )
-                .padding(.bottom, 36)
+                .padding(.horizontal, 120)
+                .frame(maxWidth: min(size.width * 0.82, 660))
+                .padding(.top, 22)
+
+                Spacer()
             }
         case .completionAnimation, .results:
             LevelOneCompletionOverlay(

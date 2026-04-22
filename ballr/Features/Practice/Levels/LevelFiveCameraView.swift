@@ -66,10 +66,10 @@ struct LevelFiveCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelSixCameraView()
-                    .navigationBarBackButtonHidden(true)
+                    .ballrCameraPresentationChrome()
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -317,6 +317,10 @@ private final class LevelFiveCoordinator: ObservableObject {
     private func finish(_ state: FinishState, at timestamp: Date) {
         guard finishState == .none else {
             return
+        }
+
+        if state == .completed {
+            BallrDrillSoundPlayer.playWinner()
         }
 
         finishState = state

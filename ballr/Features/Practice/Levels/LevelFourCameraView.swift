@@ -63,10 +63,10 @@ struct LevelFourCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelFiveCameraView()
-                    .navigationBarBackButtonHidden(true)
+                    .ballrCameraPresentationChrome()
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -287,6 +287,7 @@ private final class LevelFourCoordinator: ObservableObject {
             return
         }
 
+        BallrDrillSoundPlayer.playWinner()
         completionStartedAt = timestamp
         showsCompletionButtons = false
         gameState.finish()

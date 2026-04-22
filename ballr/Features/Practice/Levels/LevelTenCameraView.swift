@@ -65,7 +65,7 @@ struct LevelTenCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -312,6 +312,10 @@ private final class LevelTenCoordinator: ObservableObject {
     private func finish(_ state: FinishState, at timestamp: Date) {
         guard finishState == .none else {
             return
+        }
+
+        if state == .completed {
+            BallrDrillSoundPlayer.playWinner()
         }
 
         finishState = state

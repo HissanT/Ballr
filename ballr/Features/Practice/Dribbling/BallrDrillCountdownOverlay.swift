@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 enum BallrDrillStartPhase {
@@ -10,18 +11,20 @@ struct BallrDrillCountdownOverlay: View {
     let startedAt: Date
 
     private let duration: TimeInterval = 4.0
+    @State private var currentLabel = "3"
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let elapsed = timeline.date.timeIntervalSince(startedAt)
             let progress = min(max(elapsed / duration, 0), 1)
+            let label = label(for: elapsed)
 
             ZStack {
                 Color.black
                     .opacity(backgroundOpacity(progress: progress))
                     .ignoresSafeArea()
 
-                Text(label(for: elapsed))
+                Text(label)
                     .font(.system(size: labelSize(for: elapsed), weight: .black, design: .rounded))
                     .foregroundStyle(elapsed < 3 ? Color.yellow : .white)
                     .opacity(textOpacity(for: elapsed))
@@ -29,6 +32,21 @@ struct BallrDrillCountdownOverlay: View {
             }
             .opacity(elapsed < duration ? 1 : 0)
             .allowsHitTesting(false)
+            .onAppear {
+                currentLabel = label
+                if label == "START" {
+                    BallrDrillSoundPlayer.playWhistle()
+                }
+            }
+            .onChange(of: label) { _, newLabel in
+                guard newLabel != currentLabel else {
+                    return
+                }
+                currentLabel = newLabel
+                if newLabel == "START" {
+                    BallrDrillSoundPlayer.playWhistle()
+                }
+            }
         }
     }
 
@@ -63,6 +81,64 @@ struct BallrDrillCountdownOverlay: View {
 
     private func backgroundOpacity(progress: Double) -> Double {
         progress < 0.82 ? 0.86 : max(0, 0.86 * (1.0 - (progress - 0.82) / 0.18))
+    }
+}
+
+enum BallrDrillSoundPlayer {
+    private static var whistlePlayer: AVAudioPlayer?
+    private static var winnerPlayer: AVAudioPlayer?
+    private static var comboPlayer: AVAudioPlayer?
+    private static var rockDropGameOverPlayer: AVAudioPlayer?
+
+    static func playWhistle() {
+        play(resource: "Whistle", fileExtension: "mp3", player: &whistlePlayer, errorLabel: "Countdown whistle")
+    }
+
+    static func playWinner() {
+        play(resource: "Winner", fileExtension: "mp3", player: &winnerPlayer, errorLabel: "Winner sound")
+    }
+
+    static func playCombo() {
+        play(resource: "Combos", fileExtension: "mp3", player: &comboPlayer, errorLabel: "Combo sound")
+    }
+
+    static func playRockDropGameOver() {
+        play(
+            resource: "rockdrop_7Dl79Wsh",
+            fileExtension: "mp3",
+            player: &rockDropGameOverPlayer,
+            errorLabel: "Rock Drop game over sound"
+        )
+    }
+
+    private static func play(
+        resource: String,
+        fileExtension: String,
+        player: inout AVAudioPlayer?,
+        errorLabel: String
+    ) {
+        if player == nil {
+            guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension) else {
+                return
+            }
+
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+
+                let audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer.prepareToPlay()
+                player = audioPlayer
+            } catch {
+                print("\(errorLabel) failed to load: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        player?.stop()
+        player?.currentTime = 0
+        player?.play()
     }
 }
 

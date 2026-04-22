@@ -7,6 +7,7 @@ struct HunterCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
     @StateObject private var coordinator = HunterCoordinator()
+    @State private var showsQuitConfirmation = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -70,7 +71,7 @@ struct HunterCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -92,11 +93,27 @@ struct HunterCameraView: View {
             .onChange(of: geometry.size) { _, newSize in
                 coordinator.prepare(in: newSize)
             }
+            .alert("Are you sure you want to quit the drill?", isPresented: $showsQuitConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Quit", role: .destructive) {
+                    dismiss()
+                }
+            }
         }
     }
 
     private var topBar: some View {
         HStack {
+            Button {
+                showsQuitConfirmation = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(.black.opacity(0.58), in: Circle())
+            }
+
             Spacer()
 
             HunterHudChip(title: "TIME", value: coordinator.timerText, tint: .red)
@@ -308,6 +325,7 @@ private final class HunterCoordinator: ObservableObject {
             phase = .gameOver
         case .none:
             if liveElapsed >= roundDuration {
+                BallrDrillSoundPlayer.playWinner()
                 phase = .won
                 timerText = "0"
                 survivedTimeText = "60s"

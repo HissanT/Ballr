@@ -73,7 +73,7 @@ struct PianoTilesCameraView: View {
                     )
                 }
             }
-            .statusBarHidden(true)
+            .ballrCameraPresentationChrome()
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -395,6 +395,7 @@ private final class PianoTilesCoordinator: ObservableObject {
                 modeText = "MISS"
                 return
             case .won(_):
+                BallrDrillSoundPlayer.playWinner()
                 phase = .won
                 modeText = "CLEAR"
                 return
@@ -433,6 +434,7 @@ private final class PianoTilesCoordinator: ObservableObject {
             if let trigger {
                 PianoTilesSoundPlayer.playCompletion(for: trigger)
             }
+            BallrDrillSoundPlayer.playWinner()
             phase = .won
             modeText = "CLEAR"
         case .none:
