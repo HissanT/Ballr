@@ -39,11 +39,46 @@ private extension BallrTab {
     var systemImage: String {
         switch self {
         case .levels:
-            return "map"
+            return ""
         case .practice:
-            return "figure.soccer"
+            return ""
         case .profile:
-            return "person.text.rectangle"
+            return ""
+        }
+    }
+
+    var navigationAssetDimension: CGFloat {
+        switch self {
+        case .levels:
+            return 30
+        case .practice:
+            return 40
+        case .profile:
+            return 30
+        }
+    }
+
+    var navigationSymbolPointSize: CGFloat {
+        switch self {
+        case .levels:
+            return 27
+        case .practice:
+            return 27
+        case .profile:
+            return 27
+        }
+    }
+
+    func navigationAssetName(isSelected: Bool) -> String? {
+        switch self {
+        case .levels:
+            return isSelected ? "LevelsStackFilled" : "LevelsStackOutline"
+        case .practice:
+            return isSelected ? "PracticeHomeFilled" : "PracticeHomeOutline"
+        case .profile:
+            return isSelected ? "ProfileCardFilled" : "ProfileCardOutline"
+        default:
+            return nil
         }
     }
 
@@ -175,16 +210,29 @@ private struct BallrBottomNavigationBar: View {
                 Button {
                     selectedTab = tab
                 } label: {
-                    Image(systemName: tab.systemImage)
-                        .font(.system(size: 27, weight: .medium))
-                        .foregroundStyle(
-                            selectedTab == tab
-                            ? Color.ballrBlack
-                            : Color.ballrBlack.opacity(0.62)
-                        )
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 68)
-                        .contentShape(Rectangle())
+                    Group {
+                        if let assetName = tab.navigationAssetName(isSelected: selectedTab == tab) {
+                            Image(assetName)
+                                .renderingMode(.template)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(
+                                    width: tab.navigationAssetDimension,
+                                    height: tab.navigationAssetDimension
+                                )
+                        } else {
+                            Image(systemName: tab.systemImage)
+                                .font(.system(size: tab.navigationSymbolPointSize, weight: .medium))
+                        }
+                    }
+                    .foregroundStyle(
+                        selectedTab == tab
+                        ? Color.ballrBlack
+                        : Color.ballrBlack.opacity(0.9)
+                    )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 68)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tab.accessibilityLabel)
