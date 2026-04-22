@@ -1,0 +1,7 @@
+path: training/dataset_prepared_v5_all
+train: images/train
+val: images/train
+
+nc: 1
+names:
+  0: soccer-ball

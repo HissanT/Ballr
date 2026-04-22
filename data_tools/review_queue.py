@@ -9,9 +9,13 @@ import cv2
 import numpy as np
 
 from common.ballr_utils import build_gamma_lut, ensure_dir, preprocess_frame, training_path
-from runtime.ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
+try:
+    from runtime.ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
+except ModuleNotFoundError:
+    from ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
+DEFAULT_ACCEPTED_DIR_NAMES = ("captures", "saved")
 DEFAULT_DATASET_SPLITS = ("train", "val")
 DEFAULT_EXTERNAL_SPLIT_MAP = {
     "train": "train",
@@ -198,6 +202,33 @@ def resolve_target_path(target_dir: Path, name: str) -> Path:
         index += 1
 
 
+def resolve_queue_accept_dirs(review_root: Path, session_dir: Path) -> tuple[Path, Path]:
+    session_metadata_path = session_dir / "session.json"
+    accepted_dir_names: list[str] = []
+    if session_metadata_path.exists():
+        try:
+            payload = json.loads(session_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        accepted_dir_name = str(payload.get("accepted_dir_name", "")).strip()
+        if accepted_dir_name:
+            accepted_dir_names.append(accepted_dir_name)
+
+    accepted_dir_names.extend(
+        name for name in DEFAULT_ACCEPTED_DIR_NAMES if name not in accepted_dir_names
+    )
+
+    for accepted_dir_name in accepted_dir_names:
+        candidate_root = review_root.parent / accepted_dir_name / session_dir.name
+        image_dir = candidate_root / "images"
+        label_dir = candidate_root / "labels"
+        if image_dir.exists() and label_dir.exists():
+            return image_dir, label_dir
+
+    fallback_root = review_root.parent / accepted_dir_names[0] / session_dir.name
+    return fallback_root / "images", fallback_root / "labels"
+
+
 def find_review_items(review_root: Path, session_name: str | None) -> list[QueueReviewItem]:
     items: list[QueueReviewItem] = []
     if not review_root.exists():
@@ -213,8 +244,7 @@ def find_review_items(review_root: Path, session_name: str | None) -> list[Queue
         if not image_dir.exists() or not label_dir.exists():
             continue
 
-        capture_image_dir = review_root.parent / "captures" / session_dir.name / "images"
-        capture_label_dir = review_root.parent / "captures" / session_dir.name / "labels"
+        capture_image_dir, capture_label_dir = resolve_queue_accept_dirs(review_root, session_dir)
         for image_path in image_paths(image_dir):
             label_path = label_dir / f"{image_path.stem}.txt"
             if not label_path.exists():
@@ -343,12 +373,14 @@ def collect_external_import_specs(
     *,
     class_id: int,
     prefix: str,
+    include_empty: bool = False,
 ) -> tuple[list[ExternalImportSpec], dict[str, int]]:
     specs: list[ExternalImportSpec] = []
     stats = {
         "images_scanned": 0,
         "missing_labels": 0,
         "without_ball": 0,
+        "included_empty": 0,
     }
     for external_split, mapped_split in split_map.items():
         image_dir = external_root / external_split / "images"
@@ -361,8 +393,11 @@ def collect_external_import_specs(
                 continue
             boxes = filter_boxes_by_class(read_normalized_boxes(label_path), class_id=class_id)
             if not boxes:
-                stats["without_ball"] += 1
-                continue
+                if include_empty:
+                    stats["included_empty"] += 1
+                else:
+                    stats["without_ball"] += 1
+                    continue
             specs.append(
                 ExternalImportSpec(
                     source_image_path=image_path,
@@ -963,12 +998,14 @@ def import_external_yolo_dataset(
     class_id: int,
     name_prefix: str,
     model_path: str,
+    include_empty: bool = False,
 ) -> None:
     specs, stats = collect_external_import_specs(
         external_root,
         split_map,
         class_id=class_id,
         prefix=name_prefix,
+        include_empty=include_empty,
     )
     if not specs:
         print(
@@ -1048,7 +1085,8 @@ def import_external_yolo_dataset(
 
     print(
         f"External import complete. Added {imported} items, skipped existing {skipped_existing}, "
-        f"skipped without ball {stats['without_ball']}, missing labels {stats['missing_labels']}."
+        f"skipped without ball {stats['without_ball']}, included empty {stats['included_empty']}, "
+        f"missing labels {stats['missing_labels']}."
     )
     print(
         f"Imported source: '{external_root}' -> source_root='{source_root}', output_root='{output_root}'."
@@ -1232,7 +1270,7 @@ def draw_queue_review_frame(frame, boxes, item: QueueReviewItem, index: int, tot
     )
     draw_label(
         frame,
-        "K keep  D delete  S skip  B back  Q quit",
+        "K keep  R redraw  D delete  S skip  B back  Q quit",
         HUD_MARGIN_X,
         frame.shape[0] - HUD_MARGIN_BOTTOM,
     )
@@ -1395,6 +1433,10 @@ def promote_item(item: QueueReviewItem) -> None:
     shutil.move(str(item.label_path), str(target_label_path))
 
 
+def apply_queue_redraw_action(item: QueueReviewItem, boxes: list[NormalizedBox]) -> None:
+    write_normalized_boxes(item.label_path, boxes)
+
+
 def delete_item(item: QueueReviewItem) -> None:
     if item.image_path.exists():
         item.image_path.unlink()
@@ -1443,6 +1485,16 @@ def run_queue_mode(review_root: Path, session_name: str | None) -> None:
             if not items:
                 break
             index = min(index, len(items) - 1)
+            continue
+        if key == ord("r"):
+            new_boxes = redraw_boxes(
+                REVIEW_WINDOW_NAME,
+                frame,
+                read_normalized_boxes(item.label_path),
+                [],
+            )
+            if new_boxes is not None:
+                apply_queue_redraw_action(item, new_boxes)
             continue
         if key == ord("d"):
             delete_item(item)
@@ -1630,6 +1682,11 @@ def main() -> None:
         default="juggling_v7i",
         help="Prefix added to imported filenames to avoid collisions",
     )
+    parser.add_argument(
+        "--include-empty",
+        action="store_true",
+        help="Import images with empty labels as pending review items instead of skipping them",
+    )
     args = parser.parse_args()
 
     if args.mode == "queue":
@@ -1649,6 +1706,7 @@ def main() -> None:
             class_id=args.external_class_id,
             name_prefix=args.external_prefix,
             model_path=args.model,
+            include_empty=args.include_empty,
         )
         return
 

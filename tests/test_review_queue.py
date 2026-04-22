@@ -9,13 +9,16 @@ import pytest
 from data_tools.review_queue import (
     DatasetReviewItem,
     NormalizedBox,
+    QueueReviewItem,
     apply_empty_action,
     apply_exclude_action,
     apply_keep_action,
+    apply_queue_redraw_action,
     apply_redraw_action,
     build_dataset_review_item,
     determine_start_index,
     ensure_clean_dataset_copy,
+    find_review_items,
     order_dataset_items,
     read_normalized_boxes,
     suggest_tight_ball_box,
@@ -155,6 +158,75 @@ def test_exclude_keep_and_redraw_only_touch_cleaned_copy(workspace_tmp: Path):
     assert read_normalized_boxes(output_root / "labels" / "train" / "sample.txt") == redraw_boxes
     assert read_normalized_boxes(label_path) == original_boxes
     assert item.review_status == "redrawn"
+
+
+def test_find_review_items_uses_saved_dir_from_session_metadata(workspace_tmp: Path):
+    root = workspace_tmp / "soccer-field"
+    session_name = "session_a"
+    review_session_dir = root / "review" / session_name
+    saved_session_dir = root / "saved" / session_name
+    review_image_dir = review_session_dir / "images"
+    review_label_dir = review_session_dir / "labels"
+    saved_image_dir = saved_session_dir / "images"
+    saved_label_dir = saved_session_dir / "labels"
+
+    review_image_dir.mkdir(parents=True, exist_ok=True)
+    review_label_dir.mkdir(parents=True, exist_ok=True)
+    saved_image_dir.mkdir(parents=True, exist_ok=True)
+    saved_label_dir.mkdir(parents=True, exist_ok=True)
+
+    assert cv2.imwrite(
+        str(review_image_dir / "sample.jpg"),
+        np.zeros((100, 100, 3), dtype=np.uint8),
+    )
+    (review_label_dir / "sample.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (review_session_dir / "session.json").write_text(
+        '{"accepted_dir_name":"saved","review_dir_name":"review"}',
+        encoding="utf-8",
+    )
+
+    items = find_review_items(root / "review", session_name)
+
+    assert len(items) == 1
+    assert items[0].capture_image_dir == saved_image_dir
+    assert items[0].capture_label_dir == saved_label_dir
+
+
+def test_apply_queue_redraw_action_overwrites_review_label_only(workspace_tmp: Path):
+    root = workspace_tmp / "soccer-field"
+    session_name = "session_a"
+    review_session_dir = root / "review" / session_name
+    saved_session_dir = root / "saved" / session_name
+    review_image_dir = review_session_dir / "images"
+    review_label_dir = review_session_dir / "labels"
+    saved_image_dir = saved_session_dir / "images"
+    saved_label_dir = saved_session_dir / "labels"
+
+    review_image_dir.mkdir(parents=True, exist_ok=True)
+    review_label_dir.mkdir(parents=True, exist_ok=True)
+    saved_image_dir.mkdir(parents=True, exist_ok=True)
+    saved_label_dir.mkdir(parents=True, exist_ok=True)
+
+    image_path = review_image_dir / "sample.jpg"
+    label_path = review_label_dir / "sample.txt"
+    assert cv2.imwrite(str(image_path), np.zeros((100, 100, 3), dtype=np.uint8))
+
+    original_boxes = [NormalizedBox(0, 0.48, 0.42, 0.12, 0.12)]
+    redrawn_boxes = [NormalizedBox(0, 0.62, 0.37, 0.08, 0.08)]
+    write_normalized_boxes(label_path, original_boxes)
+
+    item = QueueReviewItem(
+        session_name=session_name,
+        image_path=image_path,
+        label_path=label_path,
+        capture_image_dir=saved_image_dir,
+        capture_label_dir=saved_label_dir,
+    )
+
+    apply_queue_redraw_action(item, redrawn_boxes)
+
+    assert read_normalized_boxes(label_path) == redrawn_boxes
+    assert not list(saved_label_dir.iterdir())
 
 
 def test_suggest_tight_ball_box_fits_synthetic_circle():
