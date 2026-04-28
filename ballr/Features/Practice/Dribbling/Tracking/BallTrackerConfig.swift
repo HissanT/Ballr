@@ -33,7 +33,7 @@ struct BallTrackerResources {
 }
 
 struct BallTrackerConfig: Decodable {
-    static let resourceBaseName = "ballr_v4_tune_cleaned"
+    static let resourceBaseName = "ballr_v5_cleaned_final"
 
     struct Input: Decodable {
         let shape: [Int]
@@ -155,11 +155,11 @@ enum BallTrackerConfigError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingMetadata:
-            return "Missing `ballr_v4_tune_cleaned.json` in the app bundle."
+            return "Missing `ballr_v5_cleaned_final.json` in the app bundle."
         case .invalidMetadata(let error):
             return "Unable to decode the ball tracker metadata: \(error.localizedDescription)"
         case .missingModelArtifact:
-            return "Missing `ballr_v4_tune_cleaned` CoreML model in the app bundle."
+            return "Missing `ballr_v5_cleaned_final` CoreML model in the app bundle."
         case .modelCompileFailed(let error):
             return "Unable to prepare the bundled CoreML package: \(error.localizedDescription)"
         case .modelLoadFailed(let error):

@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 enum BallrDrillStartPhase {
@@ -10,18 +11,20 @@ struct BallrDrillCountdownOverlay: View {
     let startedAt: Date
 
     private let duration: TimeInterval = 4.0
+    @State private var currentLabel = "3"
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let elapsed = timeline.date.timeIntervalSince(startedAt)
             let progress = min(max(elapsed / duration, 0), 1)
+            let label = label(for: elapsed)
 
             ZStack {
                 Color.black
                     .opacity(backgroundOpacity(progress: progress))
                     .ignoresSafeArea()
 
-                Text(label(for: elapsed))
+                Text(label)
                     .font(.system(size: labelSize(for: elapsed), weight: .black, design: .rounded))
                     .foregroundStyle(elapsed < 3 ? Color.yellow : .white)
                     .opacity(textOpacity(for: elapsed))
@@ -29,6 +32,21 @@ struct BallrDrillCountdownOverlay: View {
             }
             .opacity(elapsed < duration ? 1 : 0)
             .allowsHitTesting(false)
+            .onAppear {
+                currentLabel = label
+                if label == "START" {
+                    BallrDrillSoundPlayer.playWhistle()
+                }
+            }
+            .onChange(of: label) { _, newLabel in
+                guard newLabel != currentLabel else {
+                    return
+                }
+                currentLabel = newLabel
+                if newLabel == "START" {
+                    BallrDrillSoundPlayer.playWhistle()
+                }
+            }
         }
     }
 
@@ -66,10 +84,184 @@ struct BallrDrillCountdownOverlay: View {
     }
 }
 
+enum BallrDrillSoundPlayer {
+    private static let rockDropTargetVolume: Float = 0.7
+    private static let rockHitBallTargetVolume: Float = 1.0
+    private static var whistlePlayer: AVAudioPlayer?
+    private static var winnerPlayer: AVAudioPlayer?
+    private static var comboPlayer: AVAudioPlayer?
+    private static var incorrectPlayer: AVAudioPlayer?
+    private static var rockDropLoopPlayer: AVAudioPlayer?
+    private static var rockHitBallPlayer: AVAudioPlayer?
+    private static var freezeMusicPlayer: AVAudioPlayer?
+    private static var rockDropLoopStopWorkItem: DispatchWorkItem?
+    private static var rockHitBallFadeOutWorkItem: DispatchWorkItem?
+
+    static func playWhistle() {
+        play(resource: "Whistle", fileExtension: "mp3", player: &whistlePlayer, errorLabel: "Countdown whistle")
+    }
+
+    static func playWinner() {
+        play(resource: "Winner", fileExtension: "mp3", player: &winnerPlayer, errorLabel: "Winner sound")
+    }
+
+    static func playCombo() {
+        play(resource: "Combos", fileExtension: "mp3", player: &comboPlayer, errorLabel: "Combo sound")
+    }
+
+    static func playIncorrect() {
+        play(
+            resource: "lesiakower-error-mistake-sound-effect-incorrect-answer-437420",
+            fileExtension: "mp3",
+            player: &incorrectPlayer,
+            errorLabel: "Incorrect sound"
+        )
+    }
+
+    static func startRockDropLoop() {
+        rockDropLoopStopWorkItem?.cancel()
+        rockHitBallFadeOutWorkItem?.cancel()
+        play(
+            resource: "rockDrop1",
+            fileExtension: "mp3",
+            player: &rockDropLoopPlayer,
+            errorLabel: "Rock Drop loop sound",
+            loops: true,
+            initialVolume: 0
+        )
+        rockDropLoopPlayer?.setVolume(rockDropTargetVolume, fadeDuration: 3.0)
+    }
+
+    static func stopRockDropLoop(fadeOut: Bool = true) {
+        rockDropLoopStopWorkItem?.cancel()
+
+        guard let rockDropLoopPlayer else {
+            return
+        }
+
+        guard fadeOut, rockDropLoopPlayer.isPlaying else {
+            rockDropLoopPlayer.stop()
+            rockDropLoopPlayer.currentTime = 0
+            rockDropLoopPlayer.volume = rockDropTargetVolume
+            return
+        }
+
+        rockDropLoopPlayer.setVolume(0, fadeDuration: 3.0)
+        let stopWorkItem = DispatchWorkItem {
+            rockDropLoopPlayer.stop()
+            rockDropLoopPlayer.currentTime = 0
+            rockDropLoopPlayer.volume = rockDropTargetVolume
+        }
+        rockDropLoopStopWorkItem = stopWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: stopWorkItem)
+    }
+
+    static func playRockHitBall() {
+        rockHitBallFadeOutWorkItem?.cancel()
+        stopRockDropLoop(fadeOut: false)
+        play(
+            resource: "rockHitBall",
+            fileExtension: "mp3",
+            player: &rockHitBallPlayer,
+            errorLabel: "Rock hit ball sound",
+            initialVolume: 0
+        )
+        guard let rockHitBallPlayer else {
+            return
+        }
+
+        let fadeDuration = min(3.0, max(rockHitBallPlayer.duration * 0.5, 0.12))
+        let fadeOutDelay = max(rockHitBallPlayer.duration - fadeDuration, 0)
+        rockHitBallPlayer.setVolume(rockHitBallTargetVolume, fadeDuration: fadeDuration)
+
+        let fadeOutWorkItem = DispatchWorkItem {
+            rockHitBallPlayer.setVolume(0, fadeDuration: fadeDuration)
+        }
+        rockHitBallFadeOutWorkItem = fadeOutWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + fadeOutDelay, execute: fadeOutWorkItem)
+    }
+
+    static func stopRockDropSounds() {
+        rockDropLoopStopWorkItem?.cancel()
+        rockHitBallFadeOutWorkItem?.cancel()
+        stopRockDropLoop(fadeOut: false)
+        rockHitBallPlayer?.stop()
+        rockHitBallPlayer?.currentTime = 0
+        rockHitBallPlayer?.volume = rockHitBallTargetVolume
+    }
+
+    static func startFreezeMusicLoop() {
+        play(
+            resource: "Freeze music",
+            fileExtension: "wav",
+            player: &freezeMusicPlayer,
+            errorLabel: "Freeze Challenge music",
+            loops: true
+        )
+    }
+
+    static func pauseFreezeMusic() {
+        freezeMusicPlayer?.pause()
+    }
+
+    static func resumeFreezeMusic() {
+        guard let freezeMusicPlayer, !freezeMusicPlayer.isPlaying else {
+            return
+        }
+        freezeMusicPlayer.play()
+    }
+
+    static func stopFreezeMusic() {
+        freezeMusicPlayer?.stop()
+        freezeMusicPlayer?.currentTime = 0
+    }
+
+    private static func play(
+        resource: String,
+        fileExtension: String,
+        player: inout AVAudioPlayer?,
+        errorLabel: String,
+        loops: Bool = false,
+        initialVolume: Float? = nil
+    ) {
+        if player == nil {
+            guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension) else {
+                return
+            }
+
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+
+                let audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer.numberOfLoops = loops ? -1 : 0
+                audioPlayer.prepareToPlay()
+                player = audioPlayer
+            } catch {
+                print("\(errorLabel) failed to load: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        player?.stop()
+        player?.currentTime = 0
+        if let initialVolume {
+            player?.volume = initialVolume
+        }
+        player?.play()
+    }
+}
+
 struct BallrDrillReadinessOverlay: View {
     let ballFoundStartedAt: Date?
 
-    private let requiredLockSeconds: TimeInterval = 3.0
+    private let requiredLockSeconds: TimeInterval
+
+    init(ballFoundStartedAt: Date?, requiredLockSeconds: TimeInterval = 3.0) {
+        self.ballFoundStartedAt = ballFoundStartedAt
+        self.requiredLockSeconds = requiredLockSeconds
+    }
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -79,29 +271,43 @@ struct BallrDrillReadinessOverlay: View {
                 Color.black.opacity(0.86)
                     .ignoresSafeArea()
 
-                VStack(spacing: 18) {
-                    Text("Put the phone sideways")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
+                if ballFoundStartedAt == nil {
+                    VStack(spacing: 14) {
+                        Text("Find the ball")
+                            .font(.system(size: 36, weight: .black, design: .rounded))
+                            .foregroundStyle(Color.yellow)
 
-                    Text("Keep the ball in frame.")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.74))
-
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.white.opacity(0.16))
-
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.yellow)
-                            .frame(width: 220 * progress)
+                        Text("Put the phone sideways and keep the ball in frame.")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .multilineTextAlignment(.center)
                     }
-                    .frame(width: 220, height: 12)
+                    .padding(.horizontal, 24)
+                } else {
+                    VStack(spacing: 18) {
+                        Text("Put the phone sideways")
+                            .font(.system(size: 28, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
 
-                    Text(ballFoundStartedAt == nil ? "Find the ball" : "Hold still")
-                        .font(.system(size: 13, weight: .black, design: .rounded))
-                        .tracking(1.6)
-                        .foregroundStyle(Color.yellow)
+                        Text("Keep the ball in frame.")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.74))
+
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.white.opacity(0.16))
+
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.yellow)
+                                .frame(width: 220 * progress)
+                        }
+                        .frame(width: 220, height: 12)
+
+                        Text("Hold still")
+                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .tracking(1.6)
+                            .foregroundStyle(Color.yellow)
+                    }
                 }
             }
             .allowsHitTesting(false)

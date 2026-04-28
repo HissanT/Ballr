@@ -8,6 +8,7 @@ struct DribblingCameraView: View {
     @State private var ballFoundStartedAt: Date?
     @State private var countdownStartedAt: Date?
     @State private var startPhase: BallrDrillStartPhase = .readiness
+    @State private var showsQuitConfirmation = false
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
@@ -48,7 +49,7 @@ struct DribblingCameraView: View {
                 BallrDrillReadinessOverlay(ballFoundStartedAt: ballFoundStartedAt)
             }
         }
-        .statusBarHidden(true)
+        .ballrCameraPresentationChrome()
         .onAppear {
             ballFoundStartedAt = nil
             countdownStartedAt = nil
@@ -63,12 +64,18 @@ struct DribblingCameraView: View {
         .onReceive(cameraController.$overlayState) { overlayState in
             updateStartGate(isTracking: overlayState.isTracking, timestamp: Date())
         }
+        .alert("Are you sure you want to quit the drill?", isPresented: $showsQuitConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Quit", role: .destructive) {
+                dismiss()
+            }
+        }
     }
 
     private var topBar: some View {
         HStack(alignment: .top, spacing: 12) {
             Button {
-                dismiss()
+                showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 18, weight: .black))

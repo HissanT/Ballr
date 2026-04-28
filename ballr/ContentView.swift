@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var hasCompletedOnboarding = false
+    @State private var hasCompletedOnboarding = true
 
     var body: some View {
         Group {
@@ -18,18 +18,6 @@ private enum BallrTab: Hashable {
     case levels
     case practice
     case profile
-}
-
-private enum OnboardingStep {
-    case start
-    case avatar
-}
-
-private struct AvatarOption: Identifiable, Hashable {
-    let id = UUID()
-    let title: String
-    let symbol: String
-    let tint: Color
 }
 
 private struct Drill: Identifiable, Hashable {
@@ -52,49 +40,12 @@ private extension Color {
 
 private struct OnboardingFlowView: View {
     @Binding var hasCompletedOnboarding: Bool
-    @State private var step: OnboardingStep = .start
-    @State private var selectedBody = AvatarOption(title: "Body", symbol: "figure.soccer", tint: Color.ballrOrange)
-    @State private var selectedFace = AvatarOption(title: "Face", symbol: "face.smiling", tint: Color.ballrYellow)
-    @State private var selectedAccessory = AvatarOption(title: "Cap", symbol: "baseball.cap", tint: Color.ballrBlack)
-
-    private let bodyOptions = [
-        AvatarOption(title: "Body", symbol: "figure.soccer", tint: Color.ballrOrange),
-        AvatarOption(title: "Fast", symbol: "bolt.fill", tint: Color.ballrYellow),
-        AvatarOption(title: "Strong", symbol: "figure.strengthtraining.traditional", tint: .red)
-    ]
-
-    private let faceOptions = [
-        AvatarOption(title: "Smile", symbol: "face.smiling", tint: Color.ballrYellow),
-        AvatarOption(title: "Cool", symbol: "face.dashed", tint: Color.ballrOrange),
-        AvatarOption(title: "Focus", symbol: "eye.fill", tint: Color.ballrBlack)
-    ]
-
-    private let accessoryOptions = [
-        AvatarOption(title: "Cap", symbol: "baseball.cap", tint: Color.ballrBlack),
-        AvatarOption(title: "Star", symbol: "star.fill", tint: Color.ballrYellow),
-        AvatarOption(title: "Shades", symbol: "sunglasses", tint: Color.ballrOrange)
-    ]
 
     var body: some View {
         ZStack {
             BallrBackground()
-
-            switch step {
-            case .start:
-                StartPageView {
-                    step = .avatar
-                }
-            case .avatar:
-                BuildAvatarView(
-                    selectedBody: $selectedBody,
-                    selectedFace: $selectedFace,
-                    selectedAccessory: $selectedAccessory,
-                    bodyOptions: bodyOptions,
-                    faceOptions: faceOptions,
-                    accessoryOptions: accessoryOptions
-                ) {
-                    hasCompletedOnboarding = true
-                }
+            StartPageView {
+                hasCompletedOnboarding = true
             }
         }
         .fontDesign(.rounded)
@@ -102,7 +53,7 @@ private struct OnboardingFlowView: View {
 }
 
 private struct MainBallrView: View {
-    @State private var selectedTab: BallrTab = .levels
+    @State private var selectedTab: BallrTab = .practice
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -134,31 +85,23 @@ private struct StartPageView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.04, green: 0.04, blue: 0.04)
+            Color(red: 0.11, green: 0.10, blue: 0.11)
+                .ignoresSafeArea()
+
+            LevelsScreenBackground()
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer(minLength: 58)
 
-                ZStack {
-                    Circle()
-                        .fill(Color.yellow)
-                        .frame(width: 140, height: 140)
-
-                    Circle()
-                        .stroke(Color(red: 0.04, green: 0.04, blue: 0.04), lineWidth: 7)
-                        .frame(width: 64, height: 64)
-                }
+                LevelsMapIcon()
+                    .frame(width: 178, height: 128)
 
                 Spacer(minLength: 48)
 
-                HStack(spacing: 0) {
-                    Text("Ball")
-                        .foregroundStyle(Color.yellow)
-                    Text("r")
-                        .foregroundStyle(Color.orange)
-                }
-                .font(.system(size: 52, weight: .black, design: .rounded))
+                Text("Ballr")
+                    .font(.system(size: 52, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.yellow)
 
                 Text("SOCCER TRAINING")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
@@ -175,7 +118,13 @@ private struct StartPageView: View {
                         .foregroundStyle(Color(red: 0.04, green: 0.04, blue: 0.04))
                         .frame(maxWidth: .infinity)
                         .frame(height: 84)
-                        .background(Color.yellow, in: Capsule())
+                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(alignment: .bottom) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                                .frame(height: 8)
+                                .offset(y: 5)
+                        }
                 }
                 .padding(.horizontal, 42)
 
@@ -190,164 +139,50 @@ private struct StartPageView: View {
     }
 }
 
-private struct BuildAvatarView: View {
-    @Binding var selectedBody: AvatarOption
-    @Binding var selectedFace: AvatarOption
-    @Binding var selectedAccessory: AvatarOption
-
-    let bodyOptions: [AvatarOption]
-    let faceOptions: [AvatarOption]
-    let accessoryOptions: [AvatarOption]
-    let onContinue: () -> Void
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
-
-    var body: some View {
-        ZStack {
-            Color(red: 0.04, green: 0.04, blue: 0.04)
-                .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Build your avatar")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
-                    .foregroundStyle(Color.yellow)
-                    .padding(.top, 28)
-
-                AvatarPreview(
-                    bodyOption: selectedBody,
-                    faceOption: selectedFace,
-                    accessoryOption: selectedAccessory
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.top, 28)
-
-                Text("CHOOSE YOUR LOOK")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .tracking(1)
-                    .foregroundStyle(.white.opacity(0.38))
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 18)
-
-                AvatarStyleGrid(
-                    selectedBody: $selectedBody,
-                    selectedFace: $selectedFace,
-                    selectedAccessory: $selectedAccessory,
-                    bodyOptions: bodyOptions,
-                    faceOptions: faceOptions,
-                    accessoryOptions: accessoryOptions
-                )
-                .padding(.top, 18)
-
-                Button(action: onContinue) {
-                    Text("NEXT")
-                        .font(.system(size: 22, weight: .black, design: .rounded))
-                        .foregroundStyle(Color(red: 0.04, green: 0.04, blue: 0.04))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 76)
-                        .background(Color.yellow, in: Capsule())
-                }
-                .padding(.top, 26)
-
-                Spacer(minLength: 24)
-            }
-            .padding(.horizontal, 22)
-        }
-    }
-}
-
-private struct AvatarStyleGrid: View {
-    @Binding var selectedBody: AvatarOption
-    @Binding var selectedFace: AvatarOption
-    @Binding var selectedAccessory: AvatarOption
-
-    let bodyOptions: [AvatarOption]
-    let faceOptions: [AvatarOption]
-    let accessoryOptions: [AvatarOption]
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
-            AvatarStyleTile(
-                title: "SKIN",
-                colors: [Color(red: 0.95, green: 0.68, blue: 0.67), Color(red: 0.78, green: 0.50, blue: 0.26), Color(red: 0.45, green: 0.25, blue: 0.11)],
-                isSelected: selectedFace.id == faceOptions[1].id
-            ) {
-                selectedFace = faceOptions[1]
-            }
-
-            AvatarStyleTile(
-                title: "HAIR",
-                colors: [.clear, Color(red: 0.53, green: 0.28, blue: 0.11), .yellow],
-                isSelected: selectedAccessory.id == accessoryOptions[1].id
-            ) {
-                selectedAccessory = accessoryOptions[1]
-            }
-
-            AvatarStyleTile(
-                title: "KIT",
-                colors: [.yellow, .orange, .white],
-                isSelected: selectedBody.id == bodyOptions[0].id
-            ) {
-                selectedBody = bodyOptions[0]
-            }
-
-            AvatarStyleTile(
-                title: "BOOTS",
-                colors: [.yellow, .white, .orange],
-                isSelected: selectedAccessory.id == accessoryOptions[2].id
-            ) {
-                selectedAccessory = accessoryOptions[2]
-            }
-        }
-    }
-}
-
-private struct AvatarStyleTile: View {
-    let title: String
-    let colors: [Color]
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 14) {
-                Text(title)
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.42))
-
-                HStack(spacing: 10) {
-                    ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
-                        Circle()
-                            .fill(color)
-                            .frame(width: 20, height: 20)
-                            .overlay(
-                                Circle()
-                                    .stroke(color == .clear ? .white.opacity(0.35) : .clear, lineWidth: 2)
-                            )
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 78)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Color.yellow : .clear, lineWidth: 2)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct LevelsHomeView: View {
     @State private var selectedDrill: Drill?
-    @State private var isShowingSettings = false
-    @State private var playerName = "Ballr Kid"
-    @State private var soundEnabled = true
+    @State private var selectedHunterDifficulty: HunterDifficulty?
+    @State private var promptedDrill: Drill?
+    @State private var isShowingStreakResetMessage = false
+    @AppStorage("levelsDailyStreak") private var dailyStreak = 0
+    @AppStorage("levelsLastPlayedAt") private var lastPlayedAt = 0.0
+
+    private let currentLevel = 1
+    private let lockedLevels = Set(11...18)
 
     private let levelDrills = (1...20).map { level in
         Drill(
             title: "Level \(level)",
-            subtitle: ["Juggling", "Dribbling", "Ball Blast", "Dribble Tiles"][(level - 1) % 4],
+            subtitle: {
+                switch level {
+                case 1:
+                    return "Ball Basics"
+                case 2:
+                    return "Hand Targets"
+                case 3:
+                    return "Foot Targets"
+                case 4:
+                    return "Ball Targets"
+                case 5:
+                    return "Timed Targets"
+                case 6:
+                    return "Bomb Targets"
+                case 7:
+                    return "Timed Hand Targets"
+                case 8:
+                    return "Timed Foot Targets"
+                case 9:
+                    return "Combo Targets"
+                case 10:
+                    return "Timed Targets 45%"
+                case 19:
+                    return "Ball Blast"
+                case 20:
+                    return "The Hunter"
+                default:
+                    return ["Juggling", "Dribbling", "First Touch", "Dribble Tiles"][(level - 1) % 4]
+                }
+            }(),
             level: level
         )
     }
@@ -355,94 +190,182 @@ private struct LevelsHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.01, green: 0.12, blue: 0.03)
+                Color(red: 0.11, green: 0.10, blue: 0.11)
+                    .ignoresSafeArea()
+
+                LevelsScreenBackground()
                     .ignoresSafeArea()
 
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            HStack {
-                                HStack(spacing: 0) {
-                                    Text("Ball")
-                                        .foregroundStyle(Color.yellow)
-                                    Text("r")
-                                        .foregroundStyle(Color.orange)
-                                }
-                                .font(.system(size: 38, weight: .black, design: .rounded))
-
-                                Spacer()
-
-                                HStack(spacing: 8) {
-                                    HStack(spacing: 5) {
-                                        Text("🔥")
-                                            .font(.system(size: 15))
-                                        Text("5")
-                                            .font(.system(size: 14, weight: .black, design: .rounded))
-                                            .foregroundStyle(Color.yellow)
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 8)
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(Color.yellow.opacity(0.75), lineWidth: 2)
-                                    )
-
-                                    Button {
-                                        isShowingSettings.toggle()
-                                    } label: {
-                                        HStack(spacing: 8) {
-                                            Circle()
-                                                .fill(Color.yellow)
-                                                .frame(width: 14, height: 14)
-                                            Text("1,240 XP")
-                                                .font(.system(size: 14, weight: .black, design: .rounded))
-                                                .foregroundStyle(Color.yellow)
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 8)
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(Color.yellow, lineWidth: 2)
-                                        )
-                                    }
+                    ScrollView(showsIndicators: false) {
+                        LevelsMapView(
+                            drills: levelDrills,
+                            promptedDrill: promptedDrill,
+                            currentLevel: currentLevel,
+                            lockedLevels: lockedLevels
+                        ) { drill in
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                if promptedDrill?.id == drill.id {
+                                    promptedDrill = nil
+                                } else {
+                                    promptedDrill = drill
                                 }
                             }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 18)
-                            .padding(.bottom, 10)
-
-                            LevelsMapView(drills: levelDrills) { drill in
-                                selectedDrill = drill
+                        } onStart: { drill in
+                            updateStreakForLevelStart()
+                            promptedDrill = nil
+                            selectedDrill = drill
+                        } onSelectEasy: { drill in
+                            updateStreakForLevelStart()
+                            promptedDrill = nil
+                            if drill.level == 20 {
+                                selectedHunterDifficulty = .easy
                             }
-                            .frame(height: 2600)
+                        } onSelectHard: { drill in
+                            updateStreakForLevelStart()
+                            promptedDrill = nil
+                            if drill.level == 20 {
+                                selectedHunterDifficulty = .hard
+                            }
+                        } onCancel: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                promptedDrill = nil
+                            }
                         }
+                        .frame(height: 2460)
+                        .padding(.top, 78)
+                        .padding(.bottom, 28)
                     }
                     .onAppear {
-                        proxy.scrollTo(3, anchor: .center)
-                    }
-                    .onChange(of: playerName) { _, _ in
-                        if !isShowingSettings {
-                            proxy.scrollTo(3, anchor: .center)
-                        }
+                        proxy.scrollTo(1, anchor: .bottom)
                     }
                 }
 
-                if isShowingSettings {
-                    SettingsOverlay(
-                        playerName: $playerName,
-                        soundEnabled: $soundEnabled,
-                        dismiss: { isShowingSettings = false }
-                    )
+                VStack(spacing: 0) {
+                    HStack {
+                        LevelsMapIcon()
+                            .frame(width: 64, height: 46)
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            LevelsHeaderStatChip(
+                                systemImage: "flame.fill",
+                                value: "\(dailyStreak)",
+                                label: "Streak"
+                            )
+
+                            LevelsHeaderStatChip(
+                                systemImage: "bolt.fill",
+                                value: "1,240",
+                                label: "XP"
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.top, 18)
+                    .frame(height: 78)
+                    .background(.ultraThinMaterial)
+                    .background(Color(red: 0.11, green: 0.10, blue: 0.11).opacity(0.76))
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(.white.opacity(0.24))
+                            .frame(height: 1)
+                    }
+
+                    Spacer()
                 }
             }
             .navigationDestination(item: $selectedDrill) { drill in
-                if drill.level == 3 {
+                if drill.level == 1 {
+                    LevelOneCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 2 {
+                    HandTargetCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 3 {
+                    FootTargetCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 4 {
+                    LevelFourCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 5 {
+                    LevelFiveCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 6 {
+                    LevelSixCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 7 {
+                    LevelSevenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 8 {
+                    LevelEightCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 9 {
+                    LevelNineCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 10 {
+                    LevelTenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 19 {
                     TargetDrillCameraView()
-                        .navigationBarBackButtonHidden(true)
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 20 {
+                    HunterCameraView(difficulty: .hard)
+                        .ballrCameraPresentationChrome()
                 } else {
                     DrillPlaceholderView(drill: drill)
                 }
             }
+            .fullScreenCover(item: $selectedHunterDifficulty) { difficulty in
+                HunterCameraView(difficulty: difficulty)
+                    .ballrCameraPresentationChrome()
+            }
+            .onAppear(perform: resetMissedStreakIfNeeded)
+            .alert("Streak reset", isPresented: $isShowingStreakResetMessage) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("You missed a day, so your daily streak reset. Play once today to start it again.")
+            }
+        }
+    }
+
+    private func updateStreakForLevelStart() {
+        let now = Date()
+
+        guard lastPlayedAt > 0 else {
+            dailyStreak = 1
+            lastPlayedAt = now.timeIntervalSince1970
+            return
+        }
+
+        let lastPlayedDate = Date(timeIntervalSince1970: lastPlayedAt)
+        let calendar = Calendar.current
+
+        if calendar.isDateInToday(lastPlayedDate) {
+            return
+        }
+
+        if calendar.isDateInYesterday(lastPlayedDate) {
+            dailyStreak += 1
+        } else {
+            dailyStreak = 1
+        }
+
+        lastPlayedAt = now.timeIntervalSince1970
+    }
+
+    private func resetMissedStreakIfNeeded() {
+        guard lastPlayedAt > 0, dailyStreak > 0 else {
+            return
+        }
+
+        let lastPlayedDate = Date(timeIntervalSince1970: lastPlayedAt)
+        let calendar = Calendar.current
+
+        if !calendar.isDateInToday(lastPlayedDate) && !calendar.isDateInYesterday(lastPlayedDate) {
+            dailyStreak = 0
+            isShowingStreakResetMessage = true
         }
     }
 }
@@ -450,57 +373,218 @@ private struct LevelsHomeView: View {
 private struct PracticeHomeView: View {
     @State private var selectedDrill: Drill?
     @State private var isShowingDribbling = false
+    @State private var isShowingJumpingChallenge = false
+    @State private var isShowingAgilityChallenge = false
+    @State private var isShowingFastTouching = false
+    @State private var isShowingFreezeChallenge = false
+    @State private var promptedDifficultyDrill: Drill?
+    @State private var selectedRockDropDifficulty: BallBlastRockDropDifficulty?
+    @State private var selectedPianoTilesDifficulty: PianoTilesDifficulty?
+    @State private var isShowingPrecisionTargets = false
+    @State private var isShowingMultiplayerPrecisionTargets = false
+    @State private var isShowingPassingGates = false
 
     private let drills = [
+        Drill(title: "Jumping Challenge", subtitle: "Jump over the hurdles", level: nil),
+        Drill(title: "Agility Challenge", subtitle: "Cross side to side fast", level: nil),
+        Drill(title: "Fast Touching", subtitle: "Count every toe touch", level: nil),
+        Drill(title: "Freeze Challenge", subtitle: "Move, then freeze fast", level: nil),
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
         Drill(title: "Dribbling", subtitle: "Weave through targets", level: nil),
-        Drill(title: "Ball Blast", subtitle: "Hit targets fast", level: nil),
+        Drill(title: "Rock Drop", subtitle: "Dodge the falling rocks", level: nil),
+        Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
+        Drill(title: "Precision VS", subtitle: "Alternate 5 shots each", level: nil),
+        Drill(title: "Passing Gates", subtitle: "Pass through the gate", level: nil),
+        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil),
         Drill(title: "Dribble\nTiles", subtitle: "Navigate the grid", level: nil)
+    ]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
     ]
 
     var body: some View {
         NavigationStack {
             ZStack {
-                SoccerFieldBackground(showsStadiumLabels: false)
+                Color(red: 0.11, green: 0.10, blue: 0.11)
                     .ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .center) {
-                            BallrWordmark(size: 42)
+                LevelsScreenBackground()
+                    .ignoresSafeArea()
 
-                            Spacer()
+                GeometryReader { geometry in
+                    ZStack {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                HStack(alignment: .center) {
+                                    LevelsMapIcon()
+                                        .frame(width: 64, height: 46)
 
-                            Text("FREE PRACTICE")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
-                                .tracking(2)
-                                .foregroundStyle(.white.opacity(0.55))
-                        }
-                        .padding(.bottom, 58)
+                                    Spacer()
 
-                        ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
-                            Button {
-                                if drill.title == "Dribbling" {
-                                    isShowingDribbling = true
-                                } else {
-                                    selectedDrill = drill
+                                    Text("FREE PRACTICE")
+                                        .font(.system(size: 13, weight: .black, design: .rounded))
+                                        .tracking(2)
+                                        .foregroundStyle(Color.yellow)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 9)
+                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.yellow.opacity(0.26), lineWidth: 1)
+                                        }
                                 }
-                            } label: {
-                                PracticeDrillCardView(drill: drill, style: PracticeDrillStyle(index: index))
+                                .padding(.bottom, 26)
+
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
+                                        Button {
+                                            if drill.title == "Jumping Challenge" {
+                                                isShowingJumpingChallenge = true
+                                            } else if drill.title == "Agility Challenge" {
+                                                isShowingAgilityChallenge = true
+                                            } else if drill.title == "Fast Touching" {
+                                                isShowingFastTouching = true
+                                            } else if drill.title == "Freeze Challenge" {
+                                                isShowingFreezeChallenge = true
+                                            } else if drill.title == "Dribbling" {
+                                                isShowingDribbling = true
+                                            } else if drill.title == "Rock Drop" {
+                                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                                    if promptedDifficultyDrill?.id == drill.id {
+                                                        promptedDifficultyDrill = nil
+                                                    } else {
+                                                        promptedDifficultyDrill = drill
+                                                    }
+                                                }
+                                            } else if drill.title == "Piano Tiles" {
+                                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                                    if promptedDifficultyDrill?.id == drill.id {
+                                                        promptedDifficultyDrill = nil
+                                                    } else {
+                                                        promptedDifficultyDrill = drill
+                                                    }
+                                                }
+                                            } else if drill.title == "Precision Targets" {
+                                                isShowingPrecisionTargets = true
+                                            } else if drill.title == "Precision VS" {
+                                                isShowingMultiplayerPrecisionTargets = true
+                                            } else if drill.title == "Passing Gates" {
+                                                isShowingPassingGates = true
+                                            } else {
+                                                selectedDrill = drill
+                                            }
+                                        } label: {
+                                            PracticeDrillCardView(drill: drill, style: PracticeDrillStyle(index: index))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .background(
+                                            GeometryReader { cardGeometry in
+                                                Color.clear.preference(
+                                                    key: PracticeDrillFramePreferenceKey.self,
+                                                    value: [drill.id: cardGeometry.frame(in: .named("PracticeHomeView"))]
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
                             }
-                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 22)
+                            .padding(.bottom, 34)
+                        }
+                        .overlayPreferenceValue(PracticeDrillFramePreferenceKey.self) { frames in
+                            if
+                                let activePromptDrill = promptedDifficultyDrill,
+                                let frame = frames[activePromptDrill.id]
+                            {
+                                let promptWidth = min(248, max(218, geometry.size.width * 0.62))
+                                let promptHeight: CGFloat = 176
+                                let promptCenterX = min(max(frame.midX, promptWidth * 0.5 + 16), geometry.size.width - promptWidth * 0.5 - 16)
+                                let promptCenterY = max(frame.minY - 98, promptHeight * 0.5 + 12)
+
+                                PracticeDifficultyPromptView(
+                                    drill: activePromptDrill,
+                                    onSelectEasy: {
+                                        promptedDifficultyDrill = nil
+                                        if activePromptDrill.title == "Rock Drop" {
+                                            selectedRockDropDifficulty = .easy
+                                        } else if activePromptDrill.title == "Piano Tiles" {
+                                            selectedPianoTilesDifficulty = .easy
+                                        }
+                                    },
+                                    onSelectHard: {
+                                        promptedDifficultyDrill = nil
+                                        if activePromptDrill.title == "Rock Drop" {
+                                            selectedRockDropDifficulty = .hard
+                                        } else if activePromptDrill.title == "Piano Tiles" {
+                                            selectedPianoTilesDifficulty = .hard
+                                        }
+                                    },
+                                    onCancel: {
+                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                            promptedDifficultyDrill = nil
+                                        }
+                                    }
+                                )
+                                .frame(width: promptWidth)
+                                .position(x: promptCenterX, y: promptCenterY)
+                                .transition(.scale(scale: 0.94).combined(with: .opacity))
+                                .zIndex(2)
+                            }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 18)
-                    .padding(.bottom, 34)
                 }
             }
-            .navigationDestination(item: $selectedDrill) { drill in
-                DrillPlaceholderView(drill: drill)
+            .coordinateSpace(name: "PracticeHomeView")
+            .fullScreenCover(isPresented: $isShowingJumpingChallenge) {
+                JumpingChallengeCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingAgilityChallenge) {
+                AgilityChallengeCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingFastTouching) {
+                FastTouchingCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingFreezeChallenge) {
+                FreezeChallengeCameraView()
+                    .ballrCameraPresentationChrome()
             }
             .fullScreenCover(isPresented: $isShowingDribbling) {
                 DribblingCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(item: $selectedDrill) { drill in
+                if drill.title == "Juggling" {
+                    JugglingDrillIntroScreen()
+                } else {
+                    DrillPlaceholderView(drill: drill)
+                }
+            }
+            .fullScreenCover(item: $selectedRockDropDifficulty) { difficulty in
+                BallBlastRockDropCameraView(difficulty: difficulty)
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(item: $selectedPianoTilesDifficulty) { difficulty in
+                PianoTilesCameraView(difficulty: difficulty)
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingPrecisionTargets) {
+                PrecisionTargetCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingMultiplayerPrecisionTargets) {
+                MultiplayerPrecisionTargetCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingPassingGates) {
+                PassingGateCameraView()
+                    .ballrCameraPresentationChrome()
             }
         }
     }
@@ -512,13 +596,17 @@ private struct ProfileHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                SoccerFieldBackground(showsStadiumLabels: false)
+                Color(red: 0.11, green: 0.10, blue: 0.11)
+                    .ignoresSafeArea()
+
+                LevelsScreenBackground()
                     .ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack {
-                            BallrWordmark(size: 42)
+                            LevelsMapIcon()
+                                .frame(width: 64, height: 46)
 
                             Spacer()
 
@@ -529,6 +617,12 @@ private struct ProfileHomeView: View {
                                     .font(.system(size: 22, weight: .black))
                                     .foregroundStyle(Color.yellow)
                                     .frame(width: 48, height: 48)
+                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                    .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.yellow.opacity(0.24), lineWidth: 1)
+                                    }
                             }
                         }
                         .padding(.bottom, 28)
@@ -570,20 +664,306 @@ private struct ProfileHomeView: View {
                             }
                             .padding(.horizontal, 24)
                             .frame(height: 74)
-                            .background(Color.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 16))
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .background(Color.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 8))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 16)
+                                RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color.yellow.opacity(0.32), lineWidth: 2)
                             )
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 18)
+                    .padding(.top, 22)
                     .padding(.bottom, 34)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+}
+
+private struct JugglingDrillIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isCardPressed = false
+    @State private var showsInProgressScreen = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterPurple = Color(red: 0.631, green: 0.427, blue: 0.757)
+    private let cardPurple = Color(red: 0.463, green: 0.306, blue: 0.561)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let bodyWidth = isLandscape ? width * 0.82 : width * 1.05
+            let bodyHeight = isLandscape ? height * 1.95 : height * 1.25
+            let bodyCenterY = isLandscape ? height * 1.02 : height * 0.74
+            let cardWidth = isLandscape ? min(width * 0.30, 270) : width * 0.68
+            let cardHeight = isLandscape ? min(height * 0.54, 210) : min(height * 0.34, width * 0.80)
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let shapeOffset = characterEntryOffset + (isLaunchingDrill ? -height * (isLandscape ? 0.16 : 0.23) : 0)
+            let shapeScaleX = entryScale * (isLaunchingDrill ? 1.20 : 1.0)
+            let shapeScaleY = entryScale * (isLaunchingDrill ? 1.46 : 1.0)
+            let contentOffset = characterEntryOffset
+            let contentOpacity = 1.0
+            let faceOpacity = isLaunchingDrill ? 0.0 : 1.0
+            let faceScale = isLaunchingDrill ? 0.90 : 1.0
+            let faceLift = isLaunchingDrill ? -height * 0.035 : 0.0
+            let topContentSpacer = isLandscape ? height * 0.12 : height * 0.31
+            let eyeSpacing = isLandscape ? base * 0.16 : width * 0.09
+            let mouthTopPadding = isLandscape ? 14.0 : 20.0
+            let cardTopPadding = isLandscape ? 22.0 : 30.0
+            let faceScaleFactor = isLandscape ? 0.84 : 1.0
+            let logoWidth = isLandscape ? 54.0 : 60.0
+            let logoHeight = isLandscape ? 40.0 : 44.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                Group {
+                    Capsule()
+                        .fill(characterPurple)
+                        .frame(width: bodyWidth, height: bodyHeight)
+                        .position(x: width * 0.5, y: bodyCenterY)
+                        .offset(y: introBounceOffset)
+
+                    VStack(spacing: 0) {
+                        Spacer(minLength: height * 0.54)
+                        Rectangle()
+                            .fill(characterPurple)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .ignoresSafeArea()
+                }
+                .offset(y: shapeOffset)
+                .scaleEffect(x: shapeScaleX, y: shapeScaleY, anchor: .center)
+                .animation(.spring(response: 0.72, dampingFraction: 1.00), value: hasAnimatedCharacter)
+                .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                .animation(launchAnimation, value: isLaunchingDrill)
+
+                VStack(spacing: 0) {
+                    HStack {
+                        LevelsMapIcon(fillColor: logoBlack)
+                            .frame(width: logoWidth, height: logoHeight)
+                        Spacer()
+                    }
+                    .padding(.top, max(safeTop * 0.14, 4))
+                    .padding(.leading, 14)
+                    .padding(.trailing, 24)
+
+                    Spacer()
+                }
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: topContentSpacer)
+
+                    VStack(spacing: 0) {
+                        HStack(spacing: eyeSpacing) {
+                            JugglingFaceEyeView()
+                            JugglingFaceEyeView()
+                        }
+                        .padding(.leading, isLandscape ? 0 : width * 0.02)
+                        .scaleEffect(faceScaleFactor)
+
+                        Circle()
+                            .fill(logoBlack)
+                            .frame(width: isLandscape ? base * 0.075 : width * 0.085, height: isLandscape ? base * 0.075 : width * 0.085)
+                            .padding(.top, mouthTopPadding)
+                    }
+                    .opacity(faceOpacity)
+                    .scaleEffect(faceScale)
+                    .offset(y: faceLift)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsInProgressScreen = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardPurple)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 22) {
+                                    Text("POWER")
+                                        .font(.system(size: min(width * 0.12, 48), weight: .light, design: .rounded))
+                                        .foregroundStyle(.white)
+
+                                    Text("KEEP THE BALL\nIN THE AIR")
+                                        .font(.system(size: min(width * 0.06, 23), weight: .medium, design: .rounded))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundStyle(.white)
+                                }
+                                .tracking(0.8)
+                                .padding(.top, 8)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.22), radius: isCardPressed ? 0 : 16, x: 0, y: 0)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: contentOffset)
+                .opacity(contentOpacity)
+                .animation(.spring(response: 0.72, dampingFraction: 0.80), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsInProgressScreen, onDismiss: {
+            resetLaunchState(animated: true)
+        }) {
+            JugglingDrillInProgressScreen()
+        }
+        .onAppear {
+            resetLaunchState()
+            introBounceOffset = 0
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                hasAnimatedCharacter = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.72) {
+                withAnimation(.easeOut(duration: 0.24)) {
+                    introBounceOffset = 24
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                    withAnimation(.spring(response: 0.54, dampingFraction: 0.68)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct JugglingDrillInProgressScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.ballrBlack
+                .ignoresSafeArea()
+
+            Text("This drill is in progress.")
+                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 32)
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(Color.white.opacity(0.14), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 20)
+                    .padding(.trailing, 20)
+                }
+                Spacer()
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+private struct JugglingFaceEyeView: View {
+    private let faceBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(faceBlack)
+                .frame(width: 60, height: 60)
+
+            Circle()
+                .fill(.white)
+                .frame(width: 14, height: 14)
+                .offset(x: -8, y: -6)
+
+            Circle()
+                .fill(.white)
+                .frame(width: 8, height: 8)
+                .offset(x: -14, y: 8)
+
+            HStack(spacing: 2) {
+                Capsule().frame(width: 4, height: 14)
+                Capsule().frame(width: 4, height: 16)
+                Capsule().frame(width: 4, height: 13)
+            }
+            .foregroundStyle(faceBlack)
+            .rotationEffect(.degrees(-24))
+            .offset(x: -8, y: -30)
         }
     }
 }
@@ -605,18 +985,18 @@ private struct BallrWordmark: View {
 private struct ProfilePlayerCard: View {
     var body: some View {
         HStack(spacing: 20) {
-            Circle()
-                .fill(Color.yellow)
-                .frame(width: 86, height: 86)
-                .overlay(
-                    Circle()
-                        .stroke(Color.orange, lineWidth: 4)
-                )
-                .overlay {
-                    Text("B")
-                        .font(.system(size: 30, weight: .black, design: .rounded))
-                        .foregroundStyle(Color.ballrBlack)
-                }
+            ZStack {
+                Circle()
+                    .fill(Color.yellow)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 38, weight: .black))
+                    .foregroundStyle(Color.ballrBlack)
+            }
+            .frame(width: 86, height: 86)
+            .overlay(
+                Circle()
+                    .stroke(Color.orange, lineWidth: 4)
+            )
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Bishoy")
@@ -641,9 +1021,10 @@ private struct ProfilePlayerCard: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 20))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.yellow.opacity(0.32), lineWidth: 1.5)
         )
     }
@@ -667,9 +1048,10 @@ private struct ProfileStatCard: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 108)
-        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 14))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(valueColor.opacity(0.24), lineWidth: 1.5)
         )
     }
@@ -686,7 +1068,12 @@ private struct ProfileAchievementRow: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 16))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.yellow.opacity(0.18), lineWidth: 1)
+        }
     }
 }
 
@@ -961,16 +1348,6 @@ private struct BallrSettingsView: View {
 
                     SettingsDivider()
 
-                    SettingsNavigationRow(
-                        icon: "person.fill",
-                        title: "Change avatar",
-                        subtitle: "Edit your player",
-                        iconBackground: Color.orange.opacity(0.13),
-                        iconColor: Color.orange
-                    )
-
-                    SettingsDivider()
-
                     SettingsToggleRow(
                         icon: "speaker.wave.2.fill",
                         title: "Sound",
@@ -1110,84 +1487,328 @@ private struct SettingsDivider: View {
     }
 }
 
-private struct SettingsOverlay: View {
-    @Binding var playerName: String
-    @Binding var soundEnabled: Bool
-    let dismiss: () -> Void
+private struct LevelsHeaderStatChip: View {
+    let systemImage: String
+    let value: String
+    let label: String
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
-                .onTapGesture(perform: dismiss)
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(Color(red: 1.0, green: 0.32, blue: 0.18))
 
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("Settings")
-                        .font(.title.weight(.black))
-                    Spacer()
-                    Button(action: dismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(Color.ballrOrange)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(value)
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.yellow)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Change Name")
-                        .font(.headline.weight(.bold))
-                    TextField("Player name", text: $playerName)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Change Avatar")
-                        .font(.headline.weight(.bold))
-                    HStack(spacing: 12) {
-                        ForEach(["face.smiling", "figure.soccer", "star.fill"], id: \.self) { symbol in
-                            Image(systemName: symbol)
-                                .font(.title2)
-                                .foregroundStyle(Color.ballrOrange)
-                                .frame(width: 48, height: 48)
-                                .background(Color.ballrCream, in: RoundedRectangle(cornerRadius: 14))
-                        }
-                    }
-                }
-
-                Toggle(isOn: $soundEnabled) {
-                    Text("Sound")
-                        .font(.headline.weight(.bold))
-                }
-                .tint(Color.ballrOrange)
+                Text(label.uppercased())
+                    .font(.system(size: 7, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.46))
             }
-            .padding(20)
-            .background(.white, in: RoundedRectangle(cornerRadius: 24))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .stroke(Color.ballrBlack, lineWidth: 2)
-            )
-            .padding(.horizontal, 28)
         }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.yellow.opacity(0.28), lineWidth: 1)
+        }
+    }
+}
+
+private struct LevelsScreenBackground: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let fieldInset = width * 0.11
+            let fieldTop = height * 0.155
+            let fieldBottom = height * 0.90
+            let centerY = (fieldTop + fieldBottom) / 2
+
+            ZStack {
+                Color(red: 0.11, green: 0.10, blue: 0.11)
+
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.02, green: 0.10, blue: 0.04),
+                        Color(red: 0.03, green: 0.15, blue: 0.06),
+                        Color(red: 0.02, green: 0.09, blue: 0.04)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                VStack(spacing: 0) {
+                    ForEach(0..<14, id: \.self) { index in
+                        Rectangle()
+                            .fill(index.isMultiple(of: 2) ? Color.white.opacity(0.018) : Color.black.opacity(0.055))
+                    }
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(0..<4, id: \.self) { row in
+                        HStack(spacing: 8) {
+                            ForEach(0..<24, id: \.self) { seat in
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill((seat + row).isMultiple(of: 5) ? Color.yellow.opacity(0.16) : Color.white.opacity(0.055))
+                                    .frame(width: 6, height: 5)
+                            }
+                        }
+                        .offset(x: row.isMultiple(of: 2) ? -12 : 12)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 94)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .opacity(0.62)
+
+                VStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { row in
+                        HStack(spacing: 9) {
+                            ForEach(0..<22, id: \.self) { seat in
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill((seat + row * 2).isMultiple(of: 6) ? Color.yellow.opacity(0.12) : Color.white.opacity(0.04))
+                                    .frame(width: 6, height: 5)
+                            }
+                        }
+                        .offset(x: row.isMultiple(of: 2) ? 10 : -10)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 96)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(0.42)
+
+                Path { path in
+                    path.addRoundedRect(
+                        in: CGRect(
+                            x: fieldInset,
+                            y: fieldTop,
+                            width: width - fieldInset * 2,
+                            height: fieldBottom - fieldTop
+                        ),
+                        cornerSize: CGSize(width: 8, height: 8)
+                    )
+
+                    path.move(to: CGPoint(x: fieldInset, y: centerY))
+                    path.addLine(to: CGPoint(x: width - fieldInset, y: centerY))
+                    path.addEllipse(
+                        in: CGRect(
+                            x: width / 2 - 72,
+                            y: centerY - 72,
+                            width: 144,
+                            height: 144
+                        )
+                    )
+                    path.addEllipse(
+                        in: CGRect(
+                            x: width / 2 - 5,
+                            y: centerY - 5,
+                            width: 10,
+                            height: 10
+                        )
+                    )
+                    path.addRoundedRect(
+                        in: CGRect(
+                            x: width / 2 - 54,
+                            y: fieldTop + 2,
+                            width: 108,
+                            height: 46
+                        ),
+                        cornerSize: CGSize(width: 6, height: 6)
+                    )
+                    path.addRoundedRect(
+                        in: CGRect(
+                            x: width / 2 - 54,
+                            y: fieldBottom - 48,
+                            width: 108,
+                            height: 46
+                        ),
+                        cornerSize: CGSize(width: 6, height: 6)
+                    )
+                }
+                .stroke(Color.white.opacity(0.055), lineWidth: 2)
+
+                Path { path in
+                    path.move(to: CGPoint(x: fieldInset, y: fieldTop))
+                    path.addLine(to: CGPoint(x: width - fieldInset, y: fieldTop))
+                }
+                .stroke(Color.white.opacity(0.075), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+
+                ForEach(0..<10, id: \.self) { index in
+                    Path { path in
+                        let y = fieldTop + 28 + CGFloat(index) * (fieldBottom - fieldTop) / 10
+                        path.move(to: CGPoint(x: fieldInset + 12, y: y))
+                        path.addLine(to: CGPoint(x: width - fieldInset - 12, y: y - 18))
+                    }
+                    .stroke(Color.white.opacity(0.024), lineWidth: 1)
+                }
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.50),
+                        Color.clear,
+                        Color.clear,
+                        Color.black.opacity(0.38)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.30),
+                        Color.clear,
+                        Color.black.opacity(0.30)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+        }
+    }
+}
+
+private struct LevelsMapIcon: View {
+    var fillColor: Color = .yellow
+
+    var body: some View {
+        Image("Image")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(fillColor)
+    }
+}
+
+private struct LevelStartPromptView: View {
+    let drill: Drill
+    let onStart: () -> Void
+    let onSelectEasy: (() -> Void)?
+    let onSelectHard: (() -> Void)?
+    let onCancel: () -> Void
+
+    private var promptText: String {
+        if drill.level == 1 {
+            return "Tutorial - Learn how to use the ball tracker"
+        }
+
+        return "\(drill.title) - \(drill.subtitle)"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 10) {
+                    Text(promptText)
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 26)
+
+                    if drill.level == 20 {
+                        HStack(spacing: 10) {
+                            Button(action: { onSelectEasy?() }) {
+                                Text("EASY")
+                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
+                                    .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(action: { onSelectHard?() }) {
+                                Text("HARD")
+                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
+                                    .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 18)
+                    } else {
+                        Button(action: onStart) {
+                            Text("START")
+                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 52)
+                                .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, 14)
+                .id(drill.id)
+                .transition(.opacity)
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                .padding(.trailing, 4)
+            }
+            .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                    .frame(height: 8)
+                    .offset(y: 6)
+            }
+
+            TrianglePointer()
+                .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                .frame(width: 18, height: 12)
+        }
+        .animation(.easeInOut(duration: 0.18), value: drill.id)
+    }
+}
+
+private struct TrianglePointer: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
 private struct LevelsMapView: View {
     let drills: [Drill]
+    let promptedDrill: Drill?
+    let currentLevel: Int
+    let lockedLevels: Set<Int>
     let onSelect: (Drill) -> Void
+    let onStart: (Drill) -> Void
+    let onSelectEasy: (Drill) -> Void
+    let onSelectHard: (Drill) -> Void
+    let onCancel: () -> Void
 
     private var nodePositions: [CGPoint] {
         drills.indices.map { index in
-            let section = index / 5
-            let item = index % 5
-            let sectionHeight: CGFloat = 0.18
-            let sectionGap: CGFloat = 0.06
-            let bottomY: CGFloat = 0.94
-            let xPattern: [CGFloat] = [0.34, 0.66, 0.43, 0.72, 0.52]
-            let baseX = xPattern[item]
-
+            let xPattern: [CGFloat] = [0.68, 0.32, 0.68, 0.32]
             return CGPoint(
-                x: section.isMultiple(of: 2) ? baseX : 1 - baseX,
-                y: bottomY - CGFloat(section) * (sectionHeight + sectionGap) - CGFloat(item) * (sectionHeight / 4)
+                x: xPattern[index % xPattern.count],
+                y: 0.95 - CGFloat(index) * 0.049
             )
         }
     }
@@ -1195,30 +1816,59 @@ private struct LevelsMapView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                SoccerFieldBackground()
-
-                ForEach(0..<4, id: \.self) { section in
-                    let startIndex = section * 5
-                    let endIndex = min(startIndex + 5, nodePositions.count)
-                    let points = Array(nodePositions[startIndex..<endIndex])
-
-                    LevelPathShape(points: points)
-                        .stroke(
-                            Color.white.opacity(0.24),
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round, dash: [13, 13])
-                        )
-                }
+                LevelPathShape(points: nodePositions)
+                    .stroke(
+                        Color.white.opacity(0.25),
+                        style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                    )
 
                 ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
                     let point = nodePositions[index]
+                    let level = index + 1
+                    let isLocked = lockedLevels.contains(level)
 
                     Button {
-                        onSelect(drill)
+                        if !isLocked {
+                            onSelect(drill)
+                        }
                     } label: {
-                        LevelNodeView(level: index + 1)
+                        LevelNodeView(
+                            level: level,
+                            isOnLeftSide: point.x < 0.5,
+                            isLocked: isLocked,
+                            isCurrent: level == currentLevel
+                        )
                     }
-                    .id(index + 1)
+                    .buttonStyle(.plain)
+                    .disabled(isLocked)
+                    .id(level)
                     .position(x: point.x * geometry.size.width, y: point.y * geometry.size.height)
+                }
+
+                if
+                    let promptedDrill,
+                    let promptedIndex = drills.firstIndex(where: { $0.id == promptedDrill.id })
+                {
+                    let point = nodePositions[promptedIndex]
+                    let nodeX = point.x * geometry.size.width
+                    let nodeY = point.y * geometry.size.height
+                    let promptWidth = min(230, max(200, geometry.size.width * 0.58))
+
+                    LevelStartPromptView(
+                        drill: promptedDrill,
+                        onStart: { onStart(promptedDrill) },
+                        onSelectEasy: { onSelectEasy(promptedDrill) },
+                        onSelectHard: { onSelectHard(promptedDrill) },
+                        onCancel: onCancel
+                    )
+                    .id("level-start-prompt")
+                    .frame(width: promptWidth)
+                    .position(
+                        x: nodeX,
+                        y: max(nodeY - 78, 82)
+                    )
+                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: promptedDrill.id)
+                    .zIndex(2)
                 }
             }
         }
@@ -1307,72 +1957,62 @@ private struct SoccerFieldBackground: View {
 
 private struct LevelNodeView: View {
     let level: Int
-
-    private var status: String? {
-        if level < 3 {
-            "DONE"
-        } else if level == 3 {
-            "CURRENT"
-        } else if level <= 5 {
-            "LOCKED"
-        } else {
-            nil
-        }
-    }
-
-    private var isLocked: Bool {
-        level > 3
-    }
-
-    private var fillColor: Color {
-        if isLocked {
-            Color(red: 0.03, green: 0.12, blue: 0.04)
-        } else if level == 3 {
-            Color.orange
-        } else {
-            Color.yellow
-        }
-    }
+    let isOnLeftSide: Bool
+    let isLocked: Bool
+    let isCurrent: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let status {
-                Text(status)
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .foregroundStyle(level == 3 ? Color.ballrBlack : (isLocked ? .white.opacity(0.2) : Color.yellow))
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 6)
-                    .background(
-                        Group {
-                            if level == 3 {
-                                Capsule().fill(Color.yellow)
-                            } else {
-                                Capsule().fill(.clear)
-                            }
-                        }
-                    )
-                    .offset(y: 8)
-                    .zIndex(1)
-            }
+        TimelineView(.animation) { timeline in
+            let pulse = CGFloat((sin(timeline.date.timeIntervalSinceReferenceDate * 2.2) + 1) / 2)
+            let ringScale = 1.0 + pulse * 0.14
 
             ZStack {
-                Circle()
-                    .stroke(Color.yellow.opacity(isLocked ? 0.08 : 0.24), lineWidth: 14)
-                    .frame(width: level == 3 ? 90 : 76, height: level == 3 ? 90 : 76)
+                if isCurrent {
+                    RoundedRectangle(cornerRadius: 38)
+                        .stroke(Color.yellow.opacity(0.34 - pulse * 0.12), lineWidth: 5)
+                        .frame(width: 74, height: 69)
+                        .offset(x: isOnLeftSide ? -1.5 : 1.5, y: 2)
+                        .scaleEffect(ringScale)
+
+                    RoundedRectangle(cornerRadius: 34)
+                        .stroke(Color.white.opacity(0.13 + pulse * 0.10), lineWidth: 2)
+                        .frame(width: 66, height: 63)
+                        .offset(x: isOnLeftSide ? -1.5 : 1.5, y: 2)
+                        .scaleEffect(1.0 + pulse * 0.08)
+                }
 
                 Circle()
-                    .fill(fillColor.opacity(isLocked ? 0.16 : 1))
-                    .frame(width: level == 3 ? 58 : 50, height: level == 3 ? 58 : 50)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.orange.opacity(isLocked ? 0.08 : 1), lineWidth: 4)
-                    )
+                    .fill(isLocked ? Color.black.opacity(0.54) : Color(red: 1.0, green: 0.20, blue: 0.18))
+                    .frame(width: 58, height: 58)
+                    .offset(x: isOnLeftSide ? -3 : 3, y: 4)
+                    .shadow(color: .black.opacity(0.30), radius: 8, x: 0, y: 8)
 
-                Text("\(level)")
-                    .font(.system(size: level == 3 ? 22 : 18, weight: .black, design: .rounded))
-                    .foregroundStyle(isLocked ? .white.opacity(0.14) : (level == 3 ? .white : Color.ballrBlack))
+                Circle()
+                    .fill(isLocked ? Color.white.opacity(0.12) : Color.yellow)
+                    .frame(width: 58, height: 58)
+                    .overlay {
+                        if isLocked {
+                            Circle()
+                                .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                        }
+                }
+
+                VStack(spacing: 1) {
+                    Text("\(level)")
+                        .font(.system(size: level > 9 ? 16 : 20, weight: .black, design: .rounded))
+                        .foregroundStyle(isLocked ? .white.opacity(0.40) : Color(red: 0.11, green: 0.10, blue: 0.11))
+
+                    if isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundStyle(.white.opacity(0.40))
+                    }
+                }
             }
         }
+        .frame(width: 76, height: 76)
+        .contentShape(Circle())
+        .accessibilityLabel(isLocked ? "Level \(level), locked" : "Level \(level)")
     }
 }
 
@@ -1390,15 +2030,8 @@ private struct LevelPathShape: Shape {
         path.move(to: CGPoint(x: first.x * rect.width, y: first.y * rect.height))
 
         for index in 1..<resolvedPoints.count {
-            let previous = resolvedPoints[index - 1]
             let current = resolvedPoints[index]
-            let midY = (previous.y + current.y) / 2
-
-            path.addCurve(
-                to: current,
-                control1: CGPoint(x: previous.x, y: midY),
-                control2: CGPoint(x: current.x, y: midY)
-            )
+            path.addLine(to: current)
         }
 
         return path
@@ -1451,20 +2084,68 @@ private struct PracticeDrillStyle {
             iconColor = .yellow
             iconForeground = Color.ballrBlack
             accentColor = .yellow
+            symbol = "figure.jump"
+            playOpacity = 0.28
+        case 1:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "figure.run"
+            playOpacity = 0.28
+        case 2:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "shoeprints.fill"
+            playOpacity = 0.28
+        case 3:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "snowflake"
+            playOpacity = 0.28
+        case 4:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
             symbol = "circle.fill"
             playOpacity = 1
-        case 1:
+        case 5:
             iconColor = .orange
             iconForeground = .white
             accentColor = .orange
             symbol = "play.fill"
             playOpacity = 0.28
-        case 2:
-            iconColor = Color.white.opacity(0.10)
-            iconForeground = Color.white.opacity(0.38)
-            accentColor = Color.white.opacity(0.32)
-            symbol = "circle"
-            playOpacity = 0.18
+        case 6:
+            iconColor = .orange
+            iconForeground = .white
+            accentColor = .orange
+            symbol = "play.fill"
+            playOpacity = 0.28
+        case 7:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "scope"
+            playOpacity = 0.28
+        case 8:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "person.2.fill"
+            playOpacity = 0.28
+        case 9:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "rectangle.split.3x1"
+            playOpacity = 0.28
+        case 10:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "pianokeys"
+            playOpacity = 0.28
         default:
             iconColor = Color.white.opacity(0.10)
             iconForeground = Color.white.opacity(0.38)
@@ -1475,52 +2156,145 @@ private struct PracticeDrillStyle {
     }
 }
 
+private struct PracticeDrillFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct PracticeDifficultyPromptView: View {
+    let drill: Drill
+    let onSelectEasy: () -> Void
+    let onSelectHard: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 12) {
+                    Text("\(drill.title) - Choose difficulty")
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 24)
+
+                    Text(drill.subtitle)
+                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11).opacity(0.72))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                        .padding(.horizontal, 24)
+
+                    HStack(spacing: 10) {
+                        Button(action: onSelectEasy) {
+                            Text("EASY")
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: onSelectHard) {
+                            Text("HARD")
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 18)
+                }
+                .padding(.top, 14)
+                .padding(.bottom, 14)
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                .padding(.trailing, 4)
+            }
+            .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                    .frame(height: 8)
+                    .offset(y: 6)
+            }
+
+            TrianglePointer()
+                .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
+                .frame(width: 18, height: 12)
+        }
+    }
+}
+
 private struct PracticeDrillCardView: View {
     let drill: Drill
     let style: PracticeDrillStyle
 
     var body: some View {
-        HStack(spacing: 18) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(style.iconColor)
-                    .frame(width: 68, height: 68)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(style.iconColor)
+                        .frame(width: 46, height: 46)
 
-                Image(systemName: style.symbol)
-                    .font(.system(size: 28, weight: .black))
-                    .foregroundStyle(style.iconForeground)
+                    Image(systemName: style.symbol)
+                        .font(.system(size: 21, weight: .black))
+                        .foregroundStyle(style.iconForeground)
+                }
+
+                Spacer()
+
+                Circle()
+                    .fill(.white.opacity(style.playOpacity))
+                    .frame(width: 34, height: 34)
+                    .overlay {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundStyle(style.accentColor)
+                            .offset(x: 1.5)
+                    }
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(drill.title)
-                    .font(.system(size: 25, weight: .black, design: .rounded))
+                    .font(.system(size: 17, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.76)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(drill.subtitle)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.52))
                     .lineLimit(2)
+                    .minimumScaleFactor(0.78)
             }
-
-            Spacer()
-
-            Circle()
-                .fill(.white.opacity(style.playOpacity))
-                .frame(width: 48, height: 48)
-                .overlay {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 21, weight: .black))
-                        .foregroundStyle(style.accentColor)
-                        .offset(x: 2)
-                }
         }
-        .padding(.horizontal, 28)
-        .frame(height: 110)
-        .background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 20))
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 150)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(style.accentColor.opacity(0.8), lineWidth: 2)
                 .mask(
                     LinearGradient(
@@ -1529,6 +2303,10 @@ private struct PracticeDrillCardView: View {
                         endPoint: .trailing
                     )
                 )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -1632,86 +2410,6 @@ private struct BallrLogo: View {
         Text("Ballr")
             .font(.system(size: 36, weight: .black, design: .rounded))
             .foregroundStyle(Color.ballrOrange)
-    }
-}
-
-private struct AvatarPreview: View {
-    let bodyOption: AvatarOption
-    let faceOption: AvatarOption
-    let accessoryOption: AvatarOption
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.yellow, lineWidth: 4)
-                .frame(width: 158, height: 158)
-
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(faceOption.tint)
-                    .frame(width: 50, height: 50)
-                    .overlay {
-                        Image(systemName: accessoryOption.symbol)
-                            .font(.system(size: 18, weight: .black))
-                            .foregroundStyle(Color.ballrBlack.opacity(0.85))
-                            .offset(y: -28)
-                    }
-
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(bodyOption.tint)
-                    .frame(width: 92, height: 70)
-                    .overlay {
-                        Image(systemName: bodyOption.symbol)
-                            .font(.system(size: 30, weight: .black))
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
-            }
-        }
-        .frame(height: 180)
-    }
-}
-
-private struct AvatarOptionSection: View {
-    let title: String
-    let options: [AvatarOption]
-    @Binding var selection: AvatarOption
-    let columns: [GridItem]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased())
-                .font(.system(size: 14, weight: .black, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
-
-            LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(options, id: \.id) { option in
-                    Button {
-                        selection = option
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: option.symbol)
-                                .font(.title2)
-                                .foregroundStyle(option.tint)
-
-                            Text(option.title)
-                                .font(.footnote.weight(.bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            selection.id == option.id ? Color.yellow.opacity(0.18) : .white.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 18)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18)
-                                .stroke(selection.id == option.id ? Color.yellow : .white.opacity(0.1), lineWidth: 2)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
     }
 }
 
