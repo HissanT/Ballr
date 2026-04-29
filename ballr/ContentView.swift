@@ -901,39 +901,8 @@ private struct JugglingDrillIntroScreen: View {
 }
 
 private struct JugglingDrillInProgressScreen: View {
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
-        ZStack {
-            Color.ballrBlack
-                .ignoresSafeArea()
-
-            Text("This drill is in progress.")
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 32)
-
-            VStack {
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(Color.white.opacity(0.14), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 20)
-                    .padding(.trailing, 20)
-                }
-                Spacer()
-            }
-        }
-        .toolbar(.hidden, for: .navigationBar)
+        JugglingCameraView()
     }
 }
 
