@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         help="Request INT8 quantization during export when supported.",
     )
     parser.add_argument(
+        "--input-temporal-mode",
+        choices=("single_rgb", "temporal_gray_3"),
+        default="single_rgb",
+        help="Meaning of the 3 input channels. Keep single_rgb for production v5.",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Replace an existing exported package with the same destination name.",
@@ -84,6 +90,7 @@ def build_export_metadata(
     imgsz: int,
     nms_enabled: bool,
     int8_enabled: bool,
+    input_temporal_mode: str = "single_rgb",
 ) -> dict[str, object]:
     return {
         "format": "coreml",
@@ -93,6 +100,7 @@ def build_export_metadata(
         "input": {
             "type": "image",
             "color_layout": "RGB",
+            "temporal_mode": input_temporal_mode,
             "shape": [1, 3, imgsz, imgsz],
             "preprocess": "letterbox_preserve_aspect_ratio",
         },
@@ -189,6 +197,7 @@ def main() -> None:
         imgsz=args.imgsz,
         nms_enabled=not args.no_nms,
         int8_enabled=args.int8,
+        input_temporal_mode=args.input_temporal_mode,
     )
     write_metadata(metadata_path, metadata, overwrite=args.overwrite)
 

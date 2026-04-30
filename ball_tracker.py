@@ -1190,6 +1190,7 @@ def main() -> None:
         help="Gameplay mode to run",
     )
     parser.add_argument("--source", default="0", help="Webcam index or video file / stream URL")
+    parser.add_argument("--model", default=MODEL_PATH, help="Ball detector .pt path")
     parser.add_argument(
         "--camera-backend",
         choices=CAMERA_BACKEND_CHOICES,
@@ -1283,7 +1284,7 @@ def main() -> None:
             )
             return
 
-    model = YOLO(MODEL_PATH)
+    model = YOLO(args.model)
     predict_kwargs, device_name = _build_predict_kwargs(args.width, args.height)
     pose_model = None
     pose_predict_kwargs: Optional[dict[str, Any]] = None

@@ -18,8 +18,8 @@ def test_require_supported_platform_rejects_windows():
 
 def test_build_export_metadata_includes_frontend_and_runtime_defaults():
     metadata = build_export_metadata(
-        weights_path=Path("models/ballr_v4_tune_cleaned.pt"),
-        package_path=Path("models/coreml/ballr_v4_tune_cleaned.mlpackage"),
+        weights_path=Path("models/ballr_v5_cleaned_final.pt"),
+        package_path=Path("models/coreml/ballr_v5_cleaned_final.mlpackage"),
         imgsz=768,
         nms_enabled=True,
         int8_enabled=False,
@@ -28,9 +28,25 @@ def test_build_export_metadata_includes_frontend_and_runtime_defaults():
     assert metadata["format"] == "coreml"
     assert metadata["task"] == "object_detection"
     assert metadata["input"]["shape"] == [1, 3, 768, 768]
+    assert metadata["input"]["temporal_mode"] == "single_rgb"
     assert metadata["output"]["includes_nms"] is True
     assert metadata["frontend_notes"]["vision_crop_and_scale"] == "scaleFit"
     assert metadata["ballr_runtime_defaults"]["ball_class_id"] == 0
+
+
+def test_build_export_metadata_can_mark_temporal_gray_input():
+    metadata = build_export_metadata(
+        weights_path=Path("models/ballr_v6_temporal_768.pt"),
+        package_path=Path("models/coreml/ballr_v6_temporal_768.mlpackage"),
+        imgsz=768,
+        nms_enabled=True,
+        int8_enabled=False,
+        input_temporal_mode="temporal_gray_3",
+    )
+
+    assert metadata["input"]["shape"] == [1, 3, 768, 768]
+    assert metadata["input"]["temporal_mode"] == "temporal_gray_3"
+    assert metadata["export"]["imgsz"] == 768
 
 
 def test_move_exported_package_moves_directory_to_requested_destination(monkeypatch):
