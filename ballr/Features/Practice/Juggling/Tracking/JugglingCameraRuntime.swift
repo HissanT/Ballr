@@ -12,6 +12,14 @@ struct JugglingFrame {
 }
 
 enum JugglingBodyJoint: CaseIterable, Hashable {
+    case nose
+    case neck
+    case leftShoulder
+    case rightShoulder
+    case leftElbow
+    case rightElbow
+    case leftWrist
+    case rightWrist
     case leftAnkle
     case rightAnkle
     case leftKnee
@@ -21,6 +29,22 @@ enum JugglingBodyJoint: CaseIterable, Hashable {
 
     var jointName: VNHumanBodyPoseObservation.JointName {
         switch self {
+        case .nose:
+            return .nose
+        case .neck:
+            return .neck
+        case .leftShoulder:
+            return .leftShoulder
+        case .rightShoulder:
+            return .rightShoulder
+        case .leftElbow:
+            return .leftElbow
+        case .rightElbow:
+            return .rightElbow
+        case .leftWrist:
+            return .leftWrist
+        case .rightWrist:
+            return .rightWrist
         case .leftAnkle:
             return .leftAnkle
         case .rightAnkle:
@@ -33,6 +57,15 @@ enum JugglingBodyJoint: CaseIterable, Hashable {
             return .leftHip
         case .rightHip:
             return .rightHip
+        }
+    }
+
+    var isLowerBodyContactJoint: Bool {
+        switch self {
+        case .leftAnkle, .rightAnkle, .leftKnee, .rightKnee, .leftHip, .rightHip:
+            return true
+        case .nose, .neck, .leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist:
+            return false
         }
     }
 }
@@ -408,6 +441,13 @@ final class JugglingCameraController: NSObject, ObservableObject {
                     resolvedPoints[joint] = point
                 }
             }
+
+            for (joint, previousPoint) in previous.points where resolvedPoints[joint] == nil {
+                resolvedPoints[joint] = TrackedJugglingPoint(
+                    normalizedPoint: previousPoint.normalizedPoint,
+                    confidence: previousPoint.confidence * 0.72
+                )
+            }
             resolvedBody = TrackedJugglingBody(
                 points: resolvedPoints,
                 confidence: previous.confidence * Double(1 - pointBlendAmount) + candidate.confidence * Double(pointBlendAmount),
@@ -437,13 +477,15 @@ final class JugglingCameraController: NSObject, ObservableObject {
             )
         }
 
+        let lowerBodyPointCount = points.keys.filter(\.isLowerBodyContactJoint).count
+        let upperBodyPointCount = points.count - lowerBodyPointCount
         let hasUsefulLowerBody =
             (points[.leftAnkle] != nil && points[.leftKnee] != nil)
             || (points[.rightAnkle] != nil && points[.rightKnee] != nil)
             || (points[.leftKnee] != nil && points[.leftHip] != nil)
             || (points[.rightKnee] != nil && points[.rightHip] != nil)
 
-        guard points.count >= 3, hasUsefulLowerBody else {
+        guard points.count >= 5, lowerBodyPointCount >= 3, upperBodyPointCount >= 1, hasUsefulLowerBody else {
             return nil
         }
 

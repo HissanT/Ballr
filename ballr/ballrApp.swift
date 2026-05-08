@@ -10,10 +10,16 @@ import SwiftUI
 @main
 struct ballrApp: App {
     @UIApplicationDelegateAdaptor(BallrAppDelegate.self) private var appDelegate
+    @StateObject private var authSession = AuthSessionManager()
+
+    init() {
+        BallrFont.registerFontsIfNeeded()
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AuthGateView()
+                .environmentObject(authSession)
         }
     }
 }

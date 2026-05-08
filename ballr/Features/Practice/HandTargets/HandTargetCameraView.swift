@@ -7,6 +7,7 @@ import Combine
 enum HandTargetNextDestination {
     case footTargets
     case levelEight
+    case levelTen
 }
 
 struct HandTargetConfiguration {
@@ -22,6 +23,9 @@ struct HandTargetConfiguration {
     let spawnTopFraction: CGFloat
     let maxSpawnYFraction: CGFloat?
     let previousTargetDistanceMultiplier: CGFloat
+    let alternatesHorizontalSides: Bool
+    let topSafetyPadding: CGFloat
+    let showsBombDistractor: Bool
 
     static let levelTwo = HandTargetConfiguration(
         requiredHandLockSeconds: 3.0,
@@ -35,7 +39,10 @@ struct HandTargetConfiguration {
         comboStreakStep: 10,
         spawnTopFraction: 0.20,
         maxSpawnYFraction: 0.70,
-        previousTargetDistanceMultiplier: 4.0
+        previousTargetDistanceMultiplier: 4.0,
+        alternatesHorizontalSides: false,
+        topSafetyPadding: 86,
+        showsBombDistractor: false
     )
 
     static let levelSevenTimed = HandTargetConfiguration(
@@ -48,9 +55,30 @@ struct HandTargetConfiguration {
         scoreStep: 0.32,
         scoreValue: 5,
         comboStreakStep: 8,
-        spawnTopFraction: 0.16,
+        spawnTopFraction: 0.20,
         maxSpawnYFraction: nil,
-        previousTargetDistanceMultiplier: 4.6
+        previousTargetDistanceMultiplier: 4.6,
+        alternatesHorizontalSides: true,
+        topSafetyPadding: 20,
+        showsBombDistractor: false
+    )
+
+    static let levelElevenBombTimed = HandTargetConfiguration(
+        requiredHandLockSeconds: 2.0,
+        requiredSuccessfulHits: 25,
+        targetLifetime: 3.0,
+        allowedMisses: 5,
+        targetRadiusScale: 0.82,
+        fullValueWindow: 1.0,
+        scoreStep: 0.32,
+        scoreValue: 5,
+        comboStreakStep: 8,
+        spawnTopFraction: 0.05,
+        maxSpawnYFraction: 0.20,
+        previousTargetDistanceMultiplier: 4.6,
+        alternatesHorizontalSides: true,
+        topSafetyPadding: 20,
+        showsBombDistractor: true
     )
 }
 
@@ -92,6 +120,7 @@ struct HandTargetCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -130,6 +159,7 @@ struct HandTargetCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.didComplete)
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
                 case .footTargets:
@@ -137,6 +167,9 @@ struct HandTargetCameraView: View {
                         .ballrCameraPresentationChrome()
                 case .levelEight:
                     LevelEightCameraView()
+                        .ballrCameraPresentationChrome()
+                case .levelTen:
+                    PianoTilesCameraView(difficulty: .hard)
                         .ballrCameraPresentationChrome()
                 }
             }
@@ -183,7 +216,7 @@ struct HandTargetCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -285,6 +318,7 @@ private final class HandTargetCoordinator: ObservableObject {
             hands: lastDetectedHands,
             isTracking: isTracking,
             target: gameState.target,
+            bombPosition: gameState.bombPosition,
             scorePopups: gameState.scorePopups
         )
     }
@@ -325,6 +359,7 @@ private final class HandTargetCoordinator: ObservableObject {
             hands: lastDetectedHands,
             isTracking: isTracking,
             target: gameState.target,
+            bombPosition: gameState.bombPosition,
             scorePopups: gameState.scorePopups
         )
     }
@@ -386,6 +421,7 @@ private final class HandTargetCoordinator: ObservableObject {
             hands: detectedHands,
             isTracking: frame.overlayState.isTracking,
             target: gameState.target,
+            bombPosition: gameState.bombPosition,
             scorePopups: gameState.scorePopups
         )
     }
@@ -479,6 +515,7 @@ private final class HandTargetCoordinator: ObservableObject {
             hands: lastDetectedHands,
             isTracking: isTracking,
             target: gameState.target,
+            bombPosition: gameState.bombPosition,
             scorePopups: gameState.scorePopups
         )
 
@@ -518,12 +555,14 @@ private final class HandTargetRenderView: UIView {
     private let targetInnerLayer = CAShapeLayer()
     private let targetProgressLayer = CAShapeLayer()
     private let promptLabel = UILabel()
+    private let bombLabel = UILabel()
 
     private var popupLayers: [UUID: CATextLayer] = [:]
     private var displayLink: CADisplayLink?
     private var hands: [HandTargetDetectedHand] = []
     private var isTracking = false
     private var target: HandTargetTarget?
+    private var bombPosition: CGPoint?
     private var scorePopups: [HandTargetScorePopup] = []
     private var missingHandFrameCount = 0
     var onBoundsChange: ((CGSize) -> Void)?
@@ -563,11 +602,13 @@ private final class HandTargetRenderView: UIView {
         hands: [HandTargetDetectedHand],
         isTracking: Bool,
         target: HandTargetTarget?,
+        bombPosition: CGPoint?,
         scorePopups: [HandTargetScorePopup]
     ) {
         self.hands = hands
         self.isTracking = isTracking
         self.target = target
+        self.bombPosition = bombPosition
         self.scorePopups = scorePopups
         missingHandFrameCount = isTracking ? 0 : missingHandFrameCount + 1
         render(date: Date())
@@ -611,6 +652,15 @@ private final class HandTargetRenderView: UIView {
         promptLabel.layer.cornerRadius = 8
         promptLabel.layer.masksToBounds = true
         addSubview(promptLabel)
+
+        bombLabel.text = "💣"
+        bombLabel.textAlignment = .center
+        bombLabel.font = .systemFont(ofSize: 42)
+        bombLabel.layer.shadowColor = UIColor.black.cgColor
+        bombLabel.layer.shadowOpacity = 0.45
+        bombLabel.layer.shadowRadius = 8
+        bombLabel.layer.shadowOffset = CGSize(width: 0, height: 2)
+        addSubview(bombLabel)
     }
 
     private func reportBoundsIfNeeded() {
@@ -633,6 +683,7 @@ private final class HandTargetRenderView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         renderTarget(date: date)
+        renderBomb()
         renderHands()
         renderPopups(date: date)
         promptLabel.isHidden = isTracking || missingHandFrameCount < missingHandPromptFrameThreshold || target == nil
@@ -644,6 +695,22 @@ private final class HandTargetRenderView: UIView {
             height: promptSize.height
         )
         CATransaction.commit()
+    }
+
+    private func renderBomb() {
+        guard let bombPosition else {
+            bombLabel.isHidden = true
+            return
+        }
+
+        let side: CGFloat = 54
+        bombLabel.isHidden = false
+        bombLabel.frame = CGRect(
+            x: bombPosition.x - side * 0.5,
+            y: bombPosition.y - side * 0.5,
+            width: side,
+            height: side
+        )
     }
 
     private func renderTarget(date: Date) {
@@ -858,10 +925,10 @@ private struct HandTargetHudChip: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 36, weight: .black, design: .rounded))
+                .font(.ballr(size: 36, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 18)
@@ -894,11 +961,11 @@ private struct HandTargetReadinessOverlay: View {
 
                 VStack(spacing: 16) {
                     Text(handFoundStartedAt == nil ? "Find your hand" : "Hold your hand still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.ballr(size: 34, weight: .black))
                         .foregroundStyle(handFoundStartedAt == nil ? Color.yellow : .white)
 
                     Text(handFoundStartedAt == nil ? "Put your hand in frame to start." : "Starting in \(remainingText(at: timeline.date))")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 18, weight: .bold))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
 
@@ -941,7 +1008,7 @@ private struct HandTargetLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting hand targets...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -962,18 +1029,18 @@ private struct HandTargetErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -988,7 +1055,7 @@ private struct HandTargetErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -1005,9 +1072,24 @@ private struct HandTargetErrorOverlay: View {
     }
 }
 
+private enum HandTargetSpawnSide {
+    case left
+    case right
+
+    var opposite: HandTargetSpawnSide {
+        switch self {
+        case .left:
+            .right
+        case .right:
+            .left
+        }
+    }
+}
+
 private struct HandTargetGameState {
     let configuration: HandTargetConfiguration
     var target: HandTargetTarget?
+    var bombPosition: CGPoint?
     var scorePopups: [HandTargetScorePopup] = []
     var score = 0
     var hitStreak = 0
@@ -1016,6 +1098,7 @@ private struct HandTargetGameState {
     var lastEventIsPositive = true
     private(set) var didStartComboOnLastHit = false
     private var lastAnnouncedComboMultiplier = 1
+    private var nextSpawnSide: HandTargetSpawnSide = .left
 
     private let baseClearance: CGFloat = 24
 
@@ -1030,6 +1113,7 @@ private struct HandTargetGameState {
 
         guard allowSpawn else {
             target = nil
+            bombPosition = nil
             return
         }
 
@@ -1040,6 +1124,7 @@ private struct HandTargetGameState {
 
     mutating func finish() {
         target = nil
+        bombPosition = nil
     }
 
     mutating func step(
@@ -1136,14 +1221,15 @@ private struct HandTargetGameState {
     ) {
         let radius = targetRadius(for: size)
         let bounds = spawnBounds(in: size, radius: radius)
+        let activeBounds = spawnBoundsForActiveSide(bounds)
 
-        var bestCandidate = CGPoint(x: bounds.midX, y: bounds.midY)
+        var bestCandidate = CGPoint(x: activeBounds.midX, y: activeBounds.midY)
         var bestQuality = CGFloat.leastNonzeroMagnitude
 
         for _ in 0..<72 {
             let candidate = CGPoint(
-                x: CGFloat.random(in: bounds.minX...bounds.maxX),
-                y: CGFloat.random(in: bounds.minY...bounds.maxY)
+                x: CGFloat.random(in: activeBounds.minX...activeBounds.maxX),
+                y: CGFloat.random(in: activeBounds.minY...activeBounds.maxY)
             )
             let quality = candidateQuality(
                 candidate,
@@ -1167,6 +1253,8 @@ private struct HandTargetGameState {
                     spawnedAt: timestamp,
                     lifetime: configuration.targetLifetime
                 )
+                spawnBombIfNeeded(in: size, bounds: bounds, targetCenter: candidate, targetRadius: radius)
+                advanceSpawnSideIfNeeded()
                 return
             }
         }
@@ -1177,6 +1265,8 @@ private struct HandTargetGameState {
             spawnedAt: timestamp,
             lifetime: configuration.targetLifetime
         )
+        spawnBombIfNeeded(in: size, bounds: bounds, targetCenter: bestCandidate, targetRadius: radius)
+        advanceSpawnSideIfNeeded()
     }
 
     private func targetRadius(for size: CGSize) -> CGFloat {
@@ -1185,7 +1275,7 @@ private struct HandTargetGameState {
 
     private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
         let horizontalPadding = radius + 26
-        let top = max(size.height * configuration.spawnTopFraction + radius, radius + 86)
+        let top = max(size.height * configuration.spawnTopFraction + radius, radius + configuration.topSafetyPadding)
         let configuredBottom = configuration.maxSpawnYFraction.map { size.height * $0 - radius }
         let bottom = max(top, min(configuredBottom ?? (size.height - radius - 58), size.height - radius - 58))
         return CGRect(
@@ -1194,6 +1284,68 @@ private struct HandTargetGameState {
             width: max(1, size.width - horizontalPadding * 2),
             height: max(1, bottom - top)
         )
+    }
+
+    private func spawnBoundsForActiveSide(_ bounds: CGRect) -> CGRect {
+        guard configuration.alternatesHorizontalSides else {
+            return bounds
+        }
+
+        let sideGap = max(16, bounds.width * 0.08)
+        let sideWidth = max(1, (bounds.width - sideGap) * 0.5)
+        switch nextSpawnSide {
+        case .left:
+            return CGRect(x: bounds.minX, y: bounds.minY, width: sideWidth, height: bounds.height)
+        case .right:
+            return CGRect(x: bounds.maxX - sideWidth, y: bounds.minY, width: sideWidth, height: bounds.height)
+        }
+    }
+
+    private mutating func advanceSpawnSideIfNeeded() {
+        guard configuration.alternatesHorizontalSides else {
+            return
+        }
+
+        nextSpawnSide = nextSpawnSide.opposite
+    }
+
+    private mutating func spawnBombIfNeeded(
+        in size: CGSize,
+        bounds: CGRect,
+        targetCenter: CGPoint,
+        targetRadius: CGFloat
+    ) {
+        guard configuration.showsBombDistractor else {
+            bombPosition = nil
+            return
+        }
+
+        let bombBounds = CGRect(
+            x: targetRadius + 26,
+            y: max(targetRadius + configuration.topSafetyPadding, size.height * 0.08),
+            width: max(1, size.width - (targetRadius + 26) * 2),
+            height: max(1, min(size.height * 0.48, bounds.maxY + targetRadius * 3) - max(targetRadius + configuration.topSafetyPadding, size.height * 0.08))
+        )
+        var bestCandidate = CGPoint(x: bombBounds.midX, y: bombBounds.midY)
+        var bestDistance = CGFloat.leastNonzeroMagnitude
+
+        for _ in 0..<36 {
+            let candidate = CGPoint(
+                x: CGFloat.random(in: bombBounds.minX...bombBounds.maxX),
+                y: CGFloat.random(in: bombBounds.minY...bombBounds.maxY)
+            )
+            let distance = hypot(candidate.x - targetCenter.x, candidate.y - targetCenter.y)
+            if distance > bestDistance {
+                bestDistance = distance
+                bestCandidate = candidate
+            }
+            if distance >= targetRadius * 3.2 {
+                bombPosition = candidate
+                return
+            }
+        }
+
+        bombPosition = bestCandidate
     }
 
     private func candidateQuality(

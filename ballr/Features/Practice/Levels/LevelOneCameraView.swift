@@ -38,6 +38,7 @@ struct LevelOneCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -62,8 +63,9 @@ struct LevelOneCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.tutorialStage == .results)
             .navigationDestination(isPresented: $showsNextLevel) {
-                HandTargetCameraView()
+                LevelFourCameraView()
                     .ballrCameraPresentationChrome()
             }
             .onAppear {
@@ -101,12 +103,12 @@ struct LevelOneCameraView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("LEVEL 1")
-                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .font(.ballr(size: 13, weight: .black))
                     .tracking(2)
                     .foregroundStyle(Color.yellow)
 
                 Text("Ball Basics")
-                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .font(.ballr(size: 22, weight: .black))
                     .foregroundStyle(.white)
             }
             .padding(.horizontal, 14)
@@ -119,7 +121,7 @@ struct LevelOneCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -130,12 +132,21 @@ struct LevelOneCameraView: View {
 
     private var showsTopBar: Bool {
         switch coordinator.tutorialStage {
-        case .completionAnimation, .results:
+        case .axis, .intro, .completionAnimation, .results:
             return false
         default:
             return true
         }
     }
+}
+
+private enum LevelOneMovementDirection: Equatable {
+    case left
+    case right
+    case up
+    case down
+    case close
+    case far
 }
 
 private final class LevelOneCoordinator: ObservableObject {
@@ -153,6 +164,7 @@ private final class LevelOneCoordinator: ObservableObject {
     @Published private(set) var yRepsCompleted = 0
     @Published private(set) var zRepsCompleted = 0
     @Published private(set) var completionStartedAt: Date?
+    @Published private(set) var highlightedMovementDirection: LevelOneMovementDirection?
 
     private static let countdownDuration: TimeInterval = 4.0
     private let confidenceThreshold = 0.75
@@ -165,6 +177,8 @@ private final class LevelOneCoordinator: ObservableObject {
     private var motionSampler = LevelOneMotionSampler()
     private var repTracker = LevelOneRepTracker()
     private var yRepTracker = LevelOneYRepTracker()
+    private var closeFarRepTracker = LevelOneCloseFarRepTracker()
+    private var axisAnchorSample: LevelOneMotionSample?
     private var pendingTransitionWorkItem: DispatchWorkItem?
 
     func reset(in size: CGSize) {
@@ -182,9 +196,12 @@ private final class LevelOneCoordinator: ObservableObject {
         yRepsCompleted = 0
         zRepsCompleted = 0
         completionStartedAt = nil
+        highlightedMovementDirection = nil
+        axisAnchorSample = nil
         motionSampler.reset()
         repTracker.reset()
         yRepTracker.reset()
+        closeFarRepTracker.reset()
     }
 
     func tearDown() {
@@ -212,7 +229,7 @@ private final class LevelOneCoordinator: ObservableObject {
         }
 
         if tutorialStage == .idle {
-            startIntroCards()
+            beginAxis(.x)
             return
         }
 
@@ -332,6 +349,10 @@ private final class LevelOneCoordinator: ObservableObject {
         cancelPendingTransition()
         motionSampler.reset()
         repTracker.reset()
+        yRepTracker.reset()
+        closeFarRepTracker.reset()
+        axisAnchorSample = nil
+        highlightedMovementDirection = nil
         transition(to: .axis(axis))
     }
 
@@ -343,6 +364,9 @@ private final class LevelOneCoordinator: ObservableObject {
             motionSampler.reset()
             repTracker.reset()
             yRepTracker.reset()
+            closeFarRepTracker.reset()
+            axisAnchorSample = nil
+            highlightedMovementDirection = nil
             return
         }
 
@@ -351,17 +375,27 @@ private final class LevelOneCoordinator: ObservableObject {
         let sample = motionSampler.append(center: center, diameter: diameter)
         let didCompleteRep: Bool
 
+        if axisAnchorSample == nil {
+            axisAnchorSample = sample
+        }
+
         switch axis {
         case .x:
             let threshold = min(max(size.width * 0.035, sample.diameter * 0.24, 20), 56)
+            updateHighlightedMovement(axis: axis, sample: sample, threshold: threshold)
             didCompleteRep = repTracker.register(value: sample.center.x, threshold: threshold)
         case .y:
             let threshold = min(max(size.height * 0.055, sample.diameter * 0.24, 22), 52)
+            updateHighlightedMovement(axis: axis, sample: sample, threshold: threshold)
             didCompleteRep = yRepTracker.register(value: sample.center.y, threshold: threshold)
         case .z:
-            let baseline = repTracker.anchor ?? sample.diameter
+            let baseline = closeFarRepTracker.anchor ?? sample.diameter
             let threshold = min(max(baseline * 0.05, 4), 12)
-            didCompleteRep = repTracker.register(value: sample.diameter, threshold: threshold)
+            highlightedMovementDirection = closeFarRepTracker.highlightedDirection(
+                diameter: sample.diameter,
+                threshold: threshold
+            )
+            didCompleteRep = closeFarRepTracker.register(diameter: sample.diameter, threshold: threshold)
         }
 
         guard didCompleteRep else {
@@ -393,6 +427,10 @@ private final class LevelOneCoordinator: ObservableObject {
     private func scheduleAxisAdvance(from axis: LevelOneAxis) {
         motionSampler.reset()
         repTracker.reset()
+        yRepTracker.reset()
+        closeFarRepTracker.reset()
+        axisAnchorSample = nil
+        highlightedMovementDirection = nil
         let nextAxis = axis.nextAxis
         schedule(after: axisTransitionDelay) { [weak self] in
             guard let self else {
@@ -410,6 +448,10 @@ private final class LevelOneCoordinator: ObservableObject {
         cancelPendingTransition()
         motionSampler.reset()
         repTracker.reset()
+        yRepTracker.reset()
+        closeFarRepTracker.reset()
+        axisAnchorSample = nil
+        highlightedMovementDirection = nil
         BallrDrillSoundPlayer.playWinner()
         completionStartedAt = Date()
         transition(to: .completionAnimation)
@@ -421,6 +463,48 @@ private final class LevelOneCoordinator: ObservableObject {
     private func transition(to stage: LevelOneTutorialStage) {
         withAnimation(.easeInOut(duration: 0.28)) {
             tutorialStage = stage
+        }
+    }
+
+    private func updateHighlightedMovement(axis: LevelOneAxis, sample: LevelOneMotionSample, threshold: CGFloat) {
+        guard let axisAnchorSample else {
+            highlightedMovementDirection = nil
+            return
+        }
+
+        let direction: LevelOneMovementDirection?
+        switch axis {
+        case .x:
+            let delta = sample.center.x - axisAnchorSample.center.x
+            if delta <= -threshold {
+                direction = .left
+            } else if delta >= threshold {
+                direction = .right
+            } else {
+                direction = nil
+            }
+        case .y:
+            let delta = sample.center.y - axisAnchorSample.center.y
+            if delta <= -threshold {
+                direction = .up
+            } else if delta >= threshold {
+                direction = .down
+            } else {
+                direction = nil
+            }
+        case .z:
+            let delta = sample.diameter - axisAnchorSample.diameter
+            if delta >= threshold {
+                direction = .close
+            } else if delta <= -threshold {
+                direction = .far
+            } else {
+                direction = nil
+            }
+        }
+
+        if highlightedMovementDirection != direction {
+            highlightedMovementDirection = direction
         }
     }
 
@@ -447,7 +531,7 @@ private struct LevelOneOverlayView: View {
         TimelineView(.animation) { timeline in
             GeometryReader { geometry in
                 ZStack {
-                    if let ballDisplayRect = coordinator.ballDisplayRect {
+                    if showsBallIndicator, let ballDisplayRect = coordinator.ballDisplayRect {
                         LevelOneBallIndicator(
                             ballDisplayRect: ballDisplayRect,
                             isConfidentTracking: coordinator.hasConfidentTracking
@@ -460,6 +544,15 @@ private struct LevelOneOverlayView: View {
             }
         }
         .allowsHitTesting(shouldAllowHitTesting)
+    }
+
+    private var showsBallIndicator: Bool {
+        switch coordinator.tutorialStage {
+        case .axis, .intro:
+            return false
+        default:
+            return true
+        }
     }
 
     private var shouldAllowHitTesting: Bool {
@@ -476,30 +569,15 @@ private struct LevelOneOverlayView: View {
         switch coordinator.tutorialStage {
         case .idle:
             EmptyView()
-        case .intro(let index):
-            LevelOneIntroCardView(card: LevelOneIntroCard.cards[index])
-                .padding(.horizontal, 28)
+        case .intro:
+            EmptyView()
         case .axis(let axis):
-            VStack(spacing: 0) {
-                VStack(spacing: 7) {
-                    Text(axis.title)
-                        .font(.system(size: 24, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .shadow(color: .black.opacity(0.85), radius: 8, x: 0, y: 3)
-
-                    Text("\(coordinator.repsCompleted(for: axis))/3")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
-                        .foregroundStyle(Color.yellow)
-                        .padding(.top, 2)
-                        .shadow(color: .black.opacity(0.9), radius: 8, x: 0, y: 3)
-                }
-                .padding(.horizontal, 120)
-                .frame(maxWidth: min(size.width * 0.82, 660))
-                .padding(.top, 22)
-
-                Spacer()
-            }
+            LevelOneAxisPracticeOverlay(
+                axis: axis,
+                repsCompleted: coordinator.repsCompleted(for: axis),
+                highlightedDirection: coordinator.highlightedMovementDirection,
+                size: size
+            )
         case .completionAnimation, .results:
             LevelOneCompletionOverlay(
                 stage: coordinator.tutorialStage,
@@ -511,6 +589,191 @@ private struct LevelOneOverlayView: View {
                 onBackToLevels: onBackToLevels
             )
         }
+    }
+}
+
+private struct LevelOneAxisPracticeOverlay: View {
+    let axis: LevelOneAxis
+    let repsCompleted: Int
+    let highlightedDirection: LevelOneMovementDirection?
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            progressLabel
+                .position(x: size.width * 0.5, y: size.height * 0.12)
+
+            arrows
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var progressLabel: some View {
+        HStack(spacing: 10) {
+            Text(axis.shortTitle)
+                .font(.ballr(size: 15, weight: .black))
+                .tracking(1.3)
+                .foregroundStyle(.white.opacity(0.78))
+
+            Text("\(repsCompleted)/3")
+                .font(.ballr(size: 18, weight: .black))
+                .monospacedDigit()
+                .foregroundStyle(Color.yellow)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.36), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var arrows: some View {
+        let arrowSize = min(max(min(size.width, size.height) * 0.105, 42), 66)
+        switch axis {
+        case .x:
+            ZStack {
+                LevelOneMovementArrow(
+                    systemImageName: "arrow.left",
+                    size: arrowSize,
+                    isActive: highlightedDirection == .left
+                )
+                .position(x: size.width * 0.40, y: size.height * 0.50)
+
+                LevelOneMovementArrow(
+                    systemImageName: "arrow.right",
+                    size: arrowSize,
+                    isActive: highlightedDirection == .right
+                )
+                .position(x: size.width * 0.60, y: size.height * 0.50)
+            }
+        case .y:
+            ZStack {
+                LevelOneMovementArrow(
+                    systemImageName: "arrow.up",
+                    size: arrowSize,
+                    isActive: highlightedDirection == .up
+                )
+                .position(x: size.width * 0.50, y: size.height * 0.24)
+
+                LevelOneMovementArrow(
+                    systemImageName: "arrow.down",
+                    size: arrowSize,
+                    isActive: highlightedDirection == .down
+                )
+                .position(x: size.width * 0.50, y: size.height * 0.50)
+            }
+        case .z:
+            LevelOneDepthGroundArrows(
+                size: size,
+                arrowSize: arrowSize,
+                highlightedDirection: highlightedDirection
+            )
+        }
+    }
+}
+
+private struct LevelOneDepthGroundArrows: View {
+    let size: CGSize
+    let arrowSize: CGFloat
+    let highlightedDirection: LevelOneMovementDirection?
+
+    var body: some View {
+        ZStack {
+            LevelOneGroundLane()
+                .frame(width: min(size.width * 0.42, 340), height: min(size.height * 0.42, 230))
+                .position(x: size.width * 0.50, y: size.height * 0.55)
+
+            LevelOneGroundArrow(
+                systemImageName: "arrow.up",
+                label: "FAR",
+                size: arrowSize * 0.82,
+                isActive: highlightedDirection == .far
+            )
+            .position(x: size.width * 0.50, y: size.height * 0.39)
+
+            LevelOneGroundArrow(
+                systemImageName: "arrow.down",
+                label: "CLOSE",
+                size: arrowSize * 1.10,
+                isActive: highlightedDirection == .close
+            )
+            .position(x: size.width * 0.50, y: size.height * 0.62)
+        }
+    }
+}
+
+private struct LevelOneGroundLane: View {
+    var body: some View {
+        Canvas { context, size in
+            let centerX = size.width * 0.5
+            let topY = size.height * 0.12
+            let bottomY = size.height * 0.94
+            let topWidth = size.width * 0.24
+            let bottomWidth = size.width * 0.88
+
+            var lane = Path()
+            lane.move(to: CGPoint(x: centerX - topWidth * 0.5, y: topY))
+            lane.addLine(to: CGPoint(x: centerX + topWidth * 0.5, y: topY))
+            lane.addLine(to: CGPoint(x: centerX + bottomWidth * 0.5, y: bottomY))
+            lane.addLine(to: CGPoint(x: centerX - bottomWidth * 0.5, y: bottomY))
+            lane.closeSubpath()
+
+            context.fill(lane, with: .color(Color.white.opacity(0.035)))
+            context.stroke(lane, with: .color(Color.white.opacity(0.10)), lineWidth: 2)
+
+            for index in 1...4 {
+                let progress = CGFloat(index) / 5
+                let y = topY + (bottomY - topY) * progress
+                let width = topWidth + (bottomWidth - topWidth) * progress
+                var line = Path()
+                line.move(to: CGPoint(x: centerX - width * 0.5, y: y))
+                line.addLine(to: CGPoint(x: centerX + width * 0.5, y: y))
+                context.stroke(line, with: .color(Color.white.opacity(0.07)), lineWidth: 1)
+            }
+        }
+    }
+}
+
+private struct LevelOneGroundArrow: View {
+    let systemImageName: String
+    let label: String
+    let size: CGFloat
+    let isActive: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImageName)
+                .font(.system(size: size, weight: .black))
+                .foregroundStyle(isActive ? Color.yellow : .white.opacity(0.24))
+                .shadow(color: Color.yellow.opacity(isActive ? 0.90 : 0), radius: isActive ? 18 : 0)
+                .shadow(color: Color.yellow.opacity(isActive ? 0.48 : 0), radius: isActive ? 32 : 0)
+
+            Text(label)
+                .font(.ballr(size: max(size * 0.20, 10), weight: .black))
+                .tracking(1.1)
+                .foregroundStyle(isActive ? Color.yellow : .white.opacity(0.20))
+        }
+        .rotation3DEffect(.degrees(58), axis: (x: 1, y: 0, z: 0), perspective: 0.72)
+        .opacity(isActive ? 1 : 0.58)
+        .scaleEffect(isActive ? 1.12 : 1.0)
+        .animation(.spring(response: 0.24, dampingFraction: 0.70), value: isActive)
+    }
+}
+
+private struct LevelOneMovementArrow: View {
+    let systemImageName: String
+    let size: CGFloat
+    let isActive: Bool
+
+    var body: some View {
+        Image(systemName: systemImageName)
+            .font(.system(size: size, weight: .black))
+            .foregroundStyle(isActive ? Color.yellow : .white.opacity(0.24))
+            .frame(width: size * 1.45, height: size * 1.45)
+            .opacity(isActive ? 1 : 0.58)
+            .scaleEffect(isActive ? 1.14 : 1.0)
+            .shadow(color: Color.yellow.opacity(isActive ? 0.90 : 0.0), radius: isActive ? 18 : 0)
+            .shadow(color: Color.yellow.opacity(isActive ? 0.48 : 0.0), radius: isActive ? 34 : 0)
+            .animation(.spring(response: 0.24, dampingFraction: 0.70), value: isActive)
     }
 }
 
@@ -542,12 +805,12 @@ private struct LevelOneIntroCardView: View {
     var body: some View {
         VStack(spacing: 18) {
             Text(card.title)
-                .font(.system(size: 34, weight: .black, design: .rounded))
+                .font(.ballr(size: 34, weight: .black))
                 .foregroundStyle(Color.yellow)
                 .multilineTextAlignment(.center)
 
             Text(card.subtitle)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.ballr(size: 22, weight: .bold))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
@@ -595,7 +858,7 @@ private struct LevelOneCompletionOverlay: View {
                     Spacer()
 
                     Text("DONE")
-                        .font(.system(size: 54, weight: .black, design: .rounded))
+                        .font(.ballr(size: 54, weight: .black))
                         .foregroundStyle(Color.black.opacity(0.88))
                         .opacity(showDone ? 1 : 0)
                         .scaleEffect(showDone ? 1 : 0.84)
@@ -604,7 +867,7 @@ private struct LevelOneCompletionOverlay: View {
                         HStack(spacing: 10) {
                             Button(action: onBackToLevels) {
                                 Text("BACK TO LEVELS")
-                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 14, weight: .black))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 18)
                                     .frame(height: 44)
@@ -613,7 +876,7 @@ private struct LevelOneCompletionOverlay: View {
 
                             Button(action: onTryAgain) {
                                 Text("TRY AGAIN")
-                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 14, weight: .black))
                                     .foregroundStyle(.black)
                                     .padding(.horizontal, 18)
                                     .frame(height: 44)
@@ -622,7 +885,7 @@ private struct LevelOneCompletionOverlay: View {
 
                             Button(action: onNextLevel) {
                                 Text("NEXT LEVEL")
-                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 14, weight: .black))
                                     .foregroundStyle(.black)
                                     .padding(.horizontal, 18)
                                     .frame(height: 44)
@@ -708,7 +971,7 @@ private struct LevelOneLoadingOverlay: View {
                 .tint(.white)
 
             Text("Starting level 1...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -729,18 +992,18 @@ private struct LevelOneErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -755,7 +1018,7 @@ private struct LevelOneErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -793,6 +1056,17 @@ private enum LevelOneAxis: CaseIterable, Equatable {
             return "Move up and down"
         case .z:
             return "Move closer and away"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .x:
+            return "LEFT / RIGHT"
+        case .y:
+            return "UP / DOWN"
+        case .z:
+            return "CLOSE / FAR"
         }
     }
 
@@ -1005,6 +1279,69 @@ private struct LevelOneRepTracker {
         self.anchor = anchor + shift
         self.negativeExtreme = nil
         self.positiveExtreme = nil
+    }
+}
+
+private struct LevelOneCloseFarRepTracker {
+    private enum Phase {
+        case waitingForClose
+        case waitingForFar(closeDiameter: CGFloat)
+    }
+
+    private(set) var anchor: CGFloat?
+    private var phase: Phase = .waitingForClose
+
+    func highlightedDirection(diameter: CGFloat, threshold: CGFloat) -> LevelOneMovementDirection? {
+        guard let anchor, threshold > 0 else {
+            return nil
+        }
+
+        switch phase {
+        case .waitingForClose:
+            return diameter - anchor >= threshold ? .close : nil
+        case .waitingForFar(let closeDiameter):
+            if closeDiameter - diameter >= max(threshold * 0.45, 4) {
+                return .far
+            }
+            return .close
+        }
+    }
+
+    mutating func register(diameter: CGFloat, threshold: CGFloat) -> Bool {
+        guard threshold > 0 else {
+            return false
+        }
+
+        guard let anchor else {
+            self.anchor = diameter
+            phase = .waitingForClose
+            return false
+        }
+
+        switch phase {
+        case .waitingForClose:
+            if diameter - anchor >= threshold {
+                phase = .waitingForFar(closeDiameter: diameter)
+            } else if diameter < anchor {
+                self.anchor = diameter
+            }
+            return false
+        case .waitingForFar(let closeDiameter):
+            let updatedCloseDiameter = max(closeDiameter, diameter)
+            if updatedCloseDiameter - diameter >= max(threshold * 0.95, 7) {
+                self.anchor = diameter
+                phase = .waitingForClose
+                return true
+            }
+
+            phase = .waitingForFar(closeDiameter: updatedCloseDiameter)
+            return false
+        }
+    }
+
+    mutating func reset() {
+        anchor = nil
+        phase = .waitingForClose
     }
 }
 

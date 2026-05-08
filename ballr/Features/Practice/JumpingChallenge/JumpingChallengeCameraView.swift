@@ -31,6 +31,7 @@ struct JumpingChallengeCameraView: View {
                         Spacer()
                     }
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -76,6 +77,7 @@ struct JumpingChallengeCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .won)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -113,7 +115,7 @@ struct JumpingChallengeCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -883,11 +885,11 @@ private struct JumpingChallengeHudChip: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text(title)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.ballr(size: 11, weight: .black))
                 .foregroundStyle(.white.opacity(0.68))
 
             Text(value)
-                .font(.system(size: 26, weight: .black, design: .rounded))
+                .font(.ballr(size: 26, weight: .black))
                 .foregroundStyle(tint)
         }
         .padding(.horizontal, 14)
@@ -909,7 +911,7 @@ private struct JumpingChallengeLoadingOverlay: View {
                     .scaleEffect(1.4)
 
                 Text("Starting camera...")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
             }
         }
@@ -928,18 +930,18 @@ private struct JumpingChallengeErrorOverlay: View {
 
             VStack(spacing: 20) {
                 Text(permissionDenied ? "CAMERA ACCESS NEEDED" : "CAMERA ERROR")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.ballr(size: 28, weight: .black))
                     .foregroundStyle(Color.yellow)
                     .multilineTextAlignment(.center)
 
                 Text(message)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 18, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
 
                 Button(action: onDismiss) {
                     Text("CLOSE")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(.ballr(size: 16, weight: .black))
                         .foregroundStyle(.black)
                         .frame(width: 148, height: 50)
                         .background(Color.yellow, in: RoundedRectangle(cornerRadius: 12))
@@ -970,11 +972,11 @@ private struct JumpingChallengeReadinessOverlay: View {
                 if legsFoundStartedAt == nil {
                     VStack(spacing: 14) {
                         Text("Find both legs")
-                            .font(.system(size: 36, weight: .black, design: .rounded))
+                            .font(.ballr(size: 36, weight: .black))
                             .foregroundStyle(Color.yellow)
 
                         Text("Stand sideways with both legs visible, then hold still.")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.ballr(size: 18, weight: .bold))
                             .foregroundStyle(.white.opacity(0.78))
                             .multilineTextAlignment(.center)
                     }
@@ -982,11 +984,11 @@ private struct JumpingChallengeReadinessOverlay: View {
                 } else {
                     VStack(spacing: 18) {
                         Text("Hold still")
-                            .font(.system(size: 34, weight: .black, design: .rounded))
+                            .font(.ballr(size: 34, weight: .black))
                             .foregroundStyle(.white)
 
                         Text("Starting in \(remainingText(at: timeline.date))")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.ballr(size: 18, weight: .bold))
                             .foregroundStyle(Color.yellow)
 
                         ZStack(alignment: .leading) {
@@ -1038,24 +1040,24 @@ private struct JumpingChallengeFinishedOverlay: View {
                 Spacer()
 
                 Text(title)
-                    .font(.system(size: 46, weight: .black, design: .rounded))
+                    .font(.ballr(size: 46, weight: .black))
                     .foregroundStyle(Color.yellow)
                     .multilineTextAlignment(.center)
 
                 Text(subtitle)
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 19, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
 
                 Text(timeText)
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .font(.ballr(size: 32, weight: .black))
                     .foregroundStyle(.orange)
                     .padding(.top, 4)
 
                 HStack(spacing: 10) {
                     Button(action: onDone) {
                         Text("DONE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
@@ -1064,7 +1066,7 @@ private struct JumpingChallengeFinishedOverlay: View {
 
                     Button(action: onPrimary) {
                         Text(primaryTitle)
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)

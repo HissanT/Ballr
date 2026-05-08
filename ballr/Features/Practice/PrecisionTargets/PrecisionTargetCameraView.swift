@@ -114,11 +114,11 @@ private struct PrecisionTargetSetupView: View {
                 Spacer(minLength: 10)
 
                 Text("Precision Targets")
-                    .font(.system(size: 36, weight: .black, design: .rounded))
+                    .font(.ballr(size: 36, weight: .black))
                     .foregroundStyle(.white)
 
                 Text("Choose the ball size before calibration.")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.62))
 
                 PrecisionTargetBallSelectionList(onSelect: onSelect)
@@ -153,11 +153,11 @@ private struct MultiplayerPrecisionTargetSetupView: View {
                 Spacer(minLength: 10)
 
                 Text("Multiplayer Targets")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .font(.ballr(size: 34, weight: .black))
                     .foregroundStyle(.white)
 
                 Text("Choose the ball size, then both players share the same target and calibration.")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.62))
 
                 PrecisionTargetBallSelectionList(onSelect: onSelect)
@@ -200,24 +200,24 @@ private struct MultiplayerPrecisionNameEntryView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text(title)
-                        .font(.system(size: 36, weight: .black, design: .rounded))
+                        .font(.ballr(size: 36, weight: .black))
                         .foregroundStyle(.white)
 
                     Text(subtitle)
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 17, weight: .bold))
                         .foregroundStyle(.white.opacity(0.62))
                 }
 
                 VStack(alignment: .leading, spacing: 14) {
                     Text("PLAYER NAME")
-                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .font(.ballr(size: 14, weight: .black))
                         .tracking(2)
                         .foregroundStyle(Color.yellow.opacity(0.92))
 
                     TextField(placeholder, text: $name)
                         .textInputAutocapitalization(.words)
                         .disableAutocorrection(true)
-                        .font(.system(size: 24, weight: .black, design: .rounded))
+                        .font(.ballr(size: 24, weight: .black))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 18)
                         .frame(height: 72)
@@ -228,13 +228,13 @@ private struct MultiplayerPrecisionNameEntryView: View {
                         )
 
                     Text("Leave it blank to use \(placeholder).")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 14, weight: .bold))
                         .foregroundStyle(.white.opacity(0.52))
                 }
 
                 Button(action: onContinue) {
                     Text(buttonTitle)
-                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .font(.ballr(size: 22, weight: .black))
                         .tracking(2)
                         .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.05))
                         .frame(maxWidth: .infinity)
@@ -275,25 +275,25 @@ private struct PrecisionTargetBallSelectionList: View {
                             Circle()
                                 .stroke(Color.orange, lineWidth: 4)
                             Text(spec.sizeName)
-                                .font(.system(size: 20, weight: .black, design: .rounded))
+                                .font(.ballr(size: 20, weight: .black))
                                 .foregroundStyle(Color(red: 0.08, green: 0.08, blue: 0.08))
                         }
                         .frame(width: 58, height: 58)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(spec.label)
-                                .font(.system(size: 22, weight: .black, design: .rounded))
+                                .font(.ballr(size: 22, weight: .black))
                                 .foregroundStyle(.white)
 
                             Text("\(String(format: "%.1f", spec.diameterCM)) cm diameter")
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .font(.ballr(size: 15, weight: .bold))
                                 .foregroundStyle(.white.opacity(0.55))
                         }
 
                         Spacer()
 
                         Image(systemName: "play.fill")
-                            .font(.system(size: 20, weight: .black))
+                            .font(.ballr(size: 20, weight: .black))
                             .foregroundStyle(.orange)
                     }
                     .padding(.horizontal, 18)
@@ -325,7 +325,7 @@ private struct PrecisionTargetSetupIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 18, weight: .black))
+                .font(.ballr(size: 18, weight: .black))
                 .foregroundStyle(.white)
                 .frame(width: 46, height: 46)
                 .background(.black.opacity(0.65), in: Circle())
@@ -398,6 +398,7 @@ private struct PrecisionTargetLiveCameraView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
+                .zIndex(100)
 
                 if cameraController.isStarting {
                     PrecisionTargetLoadingOverlay()
@@ -414,7 +415,18 @@ private struct PrecisionTargetLiveCameraView: View {
                 if let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
                 }
+
+                if coordinator.requiresPassingSpotReturn {
+                    PrecisionFullscreenPromptOverlay(message: "MOVE BACK TO THE\nSHOOTING SPOT")
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .move(edge: .bottom).combined(with: .opacity)
+                        ))
+                        .zIndex(250)
+                }
+
             }
+            .animation(.easeInOut(duration: 0.28), value: coordinator.requiresPassingSpotReturn)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -423,6 +435,7 @@ private struct PrecisionTargetLiveCameraView: View {
                     }
             )
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.score > 0)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(ballSpec: ballSpec, viewSize: geometry.size)
@@ -459,7 +472,7 @@ private struct PrecisionTargetLiveCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -475,14 +488,15 @@ private struct PrecisionTargetLiveCameraView: View {
         }
     }
 
+    @ViewBuilder
     private var bottomStatus: some View {
         VStack(spacing: 8) {
             Text(coordinator.phaseTitle)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.ballr(size: 18, weight: .black))
                 .foregroundStyle(Color.yellow)
 
             Text(coordinator.statusText)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.ballr(size: 16, weight: .bold))
                 .foregroundStyle(.white.opacity(0.82))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
@@ -528,13 +542,18 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                 PrecisionTargetRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
-                    bottomStatus
+                if finalResult == nil {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                        if coordinator.phaseTitle != "LIVE" {
+                            bottomStatus
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
 
                 if cameraController.isStarting {
                     PrecisionTargetLoadingOverlay()
@@ -544,12 +563,13 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
                 }
 
-                if let pendingShotResolution {
-                    MultiplayerPrecisionTurnOverlay(
-                        state: pendingShotResolution.overlayState,
-                        onContinue: confirmPendingShot,
-                        onReplayShot: replayPendingShot
-                    )
+                if coordinator.requiresPassingSpotReturn, finalResult == nil {
+                    PrecisionFullscreenPromptOverlay(message: "MOVE BACK TO THE\nSHOOTING SPOT")
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .move(edge: .bottom).combined(with: .opacity)
+                        ))
+                        .zIndex(250)
                 }
 
                 if let finalResult {
@@ -568,6 +588,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                     )
                 }
             }
+            .animation(.easeInOut(duration: 0.28), value: coordinator.requiresPassingSpotReturn)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -576,6 +597,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                     }
             )
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(finalResult != nil)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(ballSpec: ballSpec, viewSize: geometry.size)
@@ -630,17 +652,29 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                     showsQuitConfirmation = true
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .black))
+                        .font(.ballr(size: 16, weight: .black))
                         .foregroundStyle(.white)
                         .frame(width: 40, height: 40)
                         .background(.black.opacity(0.62), in: Circle())
                 }
                 .buttonStyle(.plain)
 
-                HStack(spacing: 8) {
-                    PrecisionTargetHudChip(title: "TURN", value: activePlayerName, tint: .yellow, width: 126)
-                    PrecisionTargetHudChip(title: "BALL", value: coordinator.ballLabel, tint: .orange)
-                    PrecisionTargetHudChip(title: "DEPTH", value: coordinator.depthText, tint: .white)
+                PrecisionTargetHudChip(title: "TURN", value: activePlayerName, tint: .yellow, width: 140)
+
+                if pendingShotResolution != nil {
+                    Button(action: replayPendingShot) {
+                        Text("REPLAY SHOT")
+                            .font(.ballr(size: 13, weight: .black))
+                            .tracking(0.8)
+                            .foregroundStyle(.white)
+                            .frame(width: 140, height: 34)
+                            .background(.black.opacity(0.64), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.yellow.opacity(0.82), lineWidth: 1.4)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -660,11 +694,11 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
     private var bottomStatus: some View {
         VStack(spacing: 8) {
             Text(coordinator.phaseTitle)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.ballr(size: 18, weight: .black))
                 .foregroundStyle(Color.yellow)
 
             Text(coordinator.statusText)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.ballr(size: 16, weight: .bold))
                 .foregroundStyle(.white.opacity(0.82))
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
@@ -680,9 +714,11 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
     }
 
     private func handleLockedShot(_ impact: PrecisionImpact) {
-        guard pendingShotResolution == nil, finalResult == nil else {
+        guard finalResult == nil else {
             return
         }
+
+        pendingShotResolution = nil
 
         let completedPlayerIndex = currentPlayerIndex
         playerScores[completedPlayerIndex] += impact.score
@@ -693,12 +729,6 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
 
         let nextPlayerIndex = 1 - completedPlayerIndex
         let isRoundEnding = finishedShots >= shotsPerPlayer * 2
-        coordinator.pauseLive(
-            phaseTitle: isRoundEnding ? "ROUND COMPLETE" : "TURN COMPLETE",
-            statusText: impact.score > 0
-                ? "\(completedPlayerName) scored +\(impact.score)."
-                : "\(completedPlayerName) missed."
-        )
         pendingShotResolution = MultiplayerPendingShotResolution(
             playerIndex: completedPlayerIndex,
             scoredPoints: impact.score,
@@ -710,6 +740,22 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                 nextPlayerName: nextPlayerIndex == 0 ? playerOneName : playerTwoName,
                 isRoundEnding: isRoundEnding
             )
+        )
+
+        if isRoundEnding {
+            BallrDrillSoundPlayer.playWinner()
+            finalResult = MultiplayerPrecisionResult(
+                playerOneName: playerOneName,
+                playerTwoName: playerTwoName,
+                playerOneScore: playerScores[0],
+                playerTwoScore: playerScores[1]
+            )
+            return
+        }
+
+        currentPlayerIndex = nextPlayerIndex
+        coordinator.resumeLiveAfterTurn(
+            instruction: "\(activePlayerName), reset the ball to the passing spot before the next shot"
         )
     }
 
@@ -732,7 +778,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
 
         currentPlayerIndex = pendingShotResolution.nextPlayerIndex
         coordinator.resumeLiveAfterTurn(
-            instruction: "\(activePlayerName), reset the ball and throw toward the wall"
+            instruction: "\(activePlayerName), reset the ball to the passing spot before the next shot"
         )
     }
 
@@ -744,7 +790,9 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
         let playerIndex = pendingShotResolution.playerIndex
         playerScores[playerIndex] -= pendingShotResolution.scoredPoints
         playerShots[playerIndex] = max(playerShots[playerIndex] - 1, 0)
+        currentPlayerIndex = playerIndex
         self.pendingShotResolution = nil
+        coordinator.clearPreviousShotMarker()
         coordinator.resumeLiveAfterTurn(
             instruction: "\(activePlayerName), replay the shot toward the wall"
         )
@@ -886,6 +934,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
     @Published private(set) var phaseTitle = "SELECT TARGET"
     @Published private(set) var statusText = "Tap the center of the target on the wall"
     @Published private(set) var countdownStartedAt: Date?
+    @Published private(set) var requiresPassingSpotReturn = false
 
     var onShotLocked: ((PrecisionImpact) -> Void)?
 
@@ -900,10 +949,10 @@ private final class PrecisionTargetCoordinator: ObservableObject {
     private let minValidCalibrationSamples = 12
     private let minCalibrationDiameterPX: CGFloat = 16.0
     private let minWallDistanceM: CGFloat = 1.5
-    private let maxWallDistanceM: CGFloat = 12.0
+    private let maxWallDistanceM: CGFloat = 14.0
     private let outboundMinimumFrames = 4
     private let impactReversalM: CGFloat = 0.04
-    private let resetReturnDepthM: CGFloat = 0.75
+    private let passingSpotReturnDistanceMargin: CGFloat = 0.20
     private let cooldownMissingFrames = 6
     private let impactDisappearFrames = 4
     private let impactMarkerHoldSeconds: TimeInterval = 5.0
@@ -933,6 +982,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
     private var isLivePaused = false
     private var throwState = PrecisionThrowState()
     private var lastImpact: PrecisionImpact?
+    private var previousShotMarker: PrecisionImpact?
     private var lastScore = 0
     private var trackerOverlay = PrecisionTrackerOverlay(
         displayRect: nil,
@@ -973,11 +1023,13 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         calibrationDepthSamples.removeAll()
         calibrationDiameterSamples.removeAll()
         countdownStartedAt = nil
+        setRequiresPassingSpotReturn(false)
         diameterWindow.removeAll()
         smoothedDiameter = nil
         isLivePaused = false
         throwState = PrecisionThrowState()
         lastImpact = nil
+        previousShotMarker = nil
         lastScore = 0
         trackerOverlay = PrecisionTrackerOverlay(
             displayRect: nil,
@@ -1000,6 +1052,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
             return
         }
         isLivePaused = true
+        setRequiresPassingSpotReturn(false)
         self.phaseTitle = phaseTitle
         self.statusText = statusText
         publishRender()
@@ -1014,7 +1067,13 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         statusText = instruction
         throwState.phase = .cooldown
         throwState.missingFrames = 0
+        setRequiresPassingSpotReturn(true)
+        publishRender()
+    }
+
+    func clearPreviousShotMarker() {
         lastImpact = nil
+        previousShotMarker = nil
         lastScore = 0
         publishRender()
     }
@@ -1033,6 +1092,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         phase = .reference
         phaseTitle = "PASSING SPOT"
         statusText = "Hold the ball at your passing spot for 5 seconds"
+        setRequiresPassingSpotReturn(false)
         referenceStartedAt = nil
         referenceElapsed = 0
         referenceMissingFrames = 0
@@ -1054,6 +1114,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         case .selectCenter:
             phaseTitle = "SELECT TARGET"
             statusText = "Tap the center of the target on the wall"
+            setRequiresPassingSpotReturn(false)
         case .reference:
             stepReference(sample: sample, timestamp: frame.timestamp)
         case .calibration:
@@ -1192,11 +1253,18 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         guard
             calibrationDepthSamples.count >= minValidCalibrationSamples,
             let wallDistance = median(calibrationDepthSamples),
-            let impactDiameter = median(calibrationDiameterSamples),
-            impactDiameter >= minCalibrationDiameterPX,
-            wallDistance >= minWallDistanceM,
-            wallDistance <= maxWallDistanceM
+            let impactDiameter = median(calibrationDiameterSamples)
         else {
+            resetCalibration(message: "Wall calibration failed. Hold the ball at the wall again.")
+            return
+        }
+
+        if wallDistance > maxWallDistanceM || impactDiameter < minCalibrationDiameterPX {
+            resetCalibration(message: "Wall calibration failed. Hold the ball at the wall again.")
+            return
+        }
+
+        guard wallDistance >= minWallDistanceM else {
             resetCalibration(message: "Wall calibration failed. Hold the ball at the wall again.")
             return
         }
@@ -1219,6 +1287,11 @@ private final class PrecisionTargetCoordinator: ObservableObject {
     }
 
     private func resetCalibration(message: String) {
+        resetCalibrationProgress()
+        statusText = message
+    }
+
+    private func resetCalibrationProgress() {
         calibrationStartedAt = nil
         calibrationElapsed = 0
         calibrationMissingFrames = 0
@@ -1227,7 +1300,6 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         countdownStartedAt = nil
         diameterWindow.removeAll()
         smoothedDiameter = nil
-        statusText = message
     }
 
     private func stepCountdown(timestamp: Date) {
@@ -1254,10 +1326,12 @@ private final class PrecisionTargetCoordinator: ObservableObject {
             phase = .calibration
             phaseTitle = "WALL DEPTH"
             statusText = "Precision target needs calibration"
+            setRequiresPassingSpotReturn(false)
             return
         }
 
         if isLivePaused {
+            setRequiresPassingSpotReturn(false)
             return
         }
 
@@ -1283,14 +1357,10 @@ private final class PrecisionTargetCoordinator: ObservableObject {
                 }
             } else if throwState.phase == .cooldown {
                 throwState.missingFrames += 1
+                setRequiresPassingSpotReturn(true)
                 if throwState.missingFrames > cooldownMissingFrames {
-                    let holdRemaining = impactMarkerHoldRemaining(at: frame.timestamp)
-                    if holdRemaining > 0 {
-                        throwState.missingFrames = cooldownMissingFrames
-                        statusText = "Last shot locked: \(remainingText(holdRemaining))"
-                    } else {
-                        throwState = PrecisionThrowState()
-                    }
+                    throwState.missingFrames = cooldownMissingFrames
+                    statusText = "Bring the ball back to the passing spot"
                 }
             }
             return
@@ -1301,6 +1371,9 @@ private final class PrecisionTargetCoordinator: ObservableObject {
             throwState.nearStartDepthM = min(nearStart, sample.rawDistanceM)
         } else {
             throwState.nearStartDepthM = sample.rawDistanceM
+        }
+        if throwState.phase != .cooldown {
+            setRequiresPassingSpotReturn(false)
         }
 
         switch throwState.phase {
@@ -1371,19 +1444,24 @@ private final class PrecisionTargetCoordinator: ObservableObject {
                 statusText = "Throw toward the wall"
             }
         case .cooldown:
-            let holdRemaining = impactMarkerHoldRemaining(at: sample.timestamp)
-            if holdRemaining > 0 {
-                statusText = "Last shot locked: \(remainingText(holdRemaining))"
-                return
-            }
-
-            if sample.rawDistanceM <= max(wallDistance - resetReturnDepthM, 0) {
+            if isBackAtPassingSpot(sample.rawDistanceM, zeroDepth: zeroDepth) {
                 throwState = PrecisionThrowState(nearStartDepthM: sample.rawDistanceM)
+                lastImpact = nil
+                setRequiresPassingSpotReturn(false)
                 statusText = "Ready for the next throw"
             } else {
-                statusText = "Waiting for ball reset"
+                setRequiresPassingSpotReturn(true)
+                statusText = "Bring the ball back to the passing spot"
             }
         }
+    }
+
+    private func isBackAtPassingSpot(
+        _ distance: CGFloat,
+        zeroDepth: CGFloat
+    ) -> Bool {
+        let margin = max(zeroDepth * passingSpotReturnDistanceMargin, 0.12)
+        return distance >= zeroDepth - margin && distance <= zeroDepth + margin
     }
 
     private func appendEligibleSample(_ sample: PrecisionDepthSample) {
@@ -1430,6 +1508,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         if holdRemaining > 0 {
             throwState.phase = .cooldown
             throwState.missingFrames = 0
+            setRequiresPassingSpotReturn(true)
             statusText = "Last shot locked: \(remainingText(holdRemaining))"
             return
         }
@@ -1461,6 +1540,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
             score: awardedScore,
             timestamp: impactSample.timestamp
         )
+        previousShotMarker = lastImpact
         lastScore = awardedScore
         score += awardedScore
         if awardedScore > 0 {
@@ -1470,10 +1550,18 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         }
         throwState.phase = .cooldown
         throwState.missingFrames = 0
+        setRequiresPassingSpotReturn(true)
         statusText = awardedScore > 0 ? "Hit scored: +\(awardedScore)" : "Missed: \(String(format: "%.1f", radialCM)) cm off center"
         if let lastImpact {
             onShotLocked?(lastImpact)
         }
+    }
+
+    private func setRequiresPassingSpotReturn(_ isRequired: Bool) {
+        guard requiresPassingSpotReturn != isRequired else {
+            return
+        }
+        requiresPassingSpotReturn = isRequired
     }
 
     private func impactMarkerHoldRemaining(at timestamp: Date) -> TimeInterval {
@@ -1529,7 +1617,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         renderView?.update(
             bullseye: bullseyeDisplayPoint,
             targetRadii: targetRadii,
-            lastImpact: lastImpact,
+            lastImpact: previousShotMarker,
             trackerOverlay: trackerOverlay,
             lastScore: lastScore,
             phase: phase,
@@ -1622,6 +1710,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         }
         return sorted[middle]
     }
+
 }
 
 private enum PrecisionTargetScoring {
@@ -1740,7 +1829,7 @@ private final class PrecisionTargetRenderView: UIView {
 
         trackerTextLayer.contentsScale = UIScreen.main.scale
         trackerTextLayer.alignmentMode = .center
-        trackerTextLayer.font = UIFont.systemFont(ofSize: 11, weight: .black)
+        trackerTextLayer.font = BallrFont.uiFont(size: 11, weight: .black)
         trackerTextLayer.fontSize = 11
         trackerTextLayer.foregroundColor = UIColor.white.cgColor
         trackerTextLayer.shadowColor = UIColor.black.cgColor
@@ -1762,7 +1851,7 @@ private final class PrecisionTargetRenderView: UIView {
 
         scoreLayer.contentsScale = UIScreen.main.scale
         scoreLayer.alignmentMode = .center
-        scoreLayer.font = UIFont.systemFont(ofSize: 30, weight: .black)
+        scoreLayer.font = BallrFont.uiFont(size: 30, weight: .black)
         scoreLayer.fontSize = 30
         scoreLayer.foregroundColor = UIColor.yellow.cgColor
         scoreLayer.shadowColor = UIColor.black.cgColor
@@ -1830,7 +1919,7 @@ private final class PrecisionTargetRenderView: UIView {
             let label = CATextLayer()
             label.contentsScale = UIScreen.main.scale
             label.alignmentMode = .center
-            label.font = UIFont.systemFont(ofSize: 16, weight: .black)
+            label.font = BallrFont.uiFont(size: 16, weight: .black)
             label.fontSize = 16
             label.foregroundColor = UIColor.white.cgColor
             label.string = text
@@ -1907,6 +1996,48 @@ private final class PrecisionTargetRenderView: UIView {
     }
 }
 
+private struct PrecisionFullscreenPromptOverlay: View {
+    let message: String
+
+    @State private var isPresented = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            let safeInsets = geometry.safeAreaInsets
+            let safeTextWidth = max(geometry.size.width - safeInsets.leading - safeInsets.trailing - 96, 260)
+
+            ZStack {
+                Color.black.opacity(0.76)
+                    .ignoresSafeArea()
+                    .offset(y: isPresented ? 0 : geometry.size.height)
+
+                Text(message)
+                    .font(.ballr(size: min(max(geometry.size.width * 0.115, 50), 104), weight: .black))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.58)
+                    .frame(width: safeTextWidth)
+                    .position(
+                        x: safeInsets.leading + (geometry.size.width - safeInsets.leading - safeInsets.trailing) / 2,
+                        y: geometry.size.height / 2
+                    )
+                    .offset(y: isPresented ? 0 : geometry.size.height * 0.38)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .onAppear {
+                isPresented = false
+                withAnimation(.easeOut(duration: 0.42)) {
+                    isPresented = true
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
 private struct MultiplayerPrecisionScoreCard: View {
     let name: String
     let score: Int
@@ -1916,24 +2047,24 @@ private struct MultiplayerPrecisionScoreCard: View {
     let isLeading: Bool
 
     var body: some View {
-        VStack(alignment: isLeading ? .leading : .trailing, spacing: 5) {
+        VStack(alignment: isLeading ? .leading : .trailing, spacing: 3) {
             Text(name.uppercased())
-                .font(.system(size: 14, weight: .black, design: .rounded))
+                .font(.ballr(size: 15, weight: .black))
                 .foregroundStyle(isActive ? Color.yellow : .white.opacity(0.86))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             Text("\(score)")
-                .font(.system(size: 34, weight: .black, design: .rounded))
+                .font(.ballr(size: 38, weight: .black))
                 .foregroundStyle(.white)
 
             Text("SHOTS \(shotsTaken)/\(shotsPerPlayer)")
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.ballr(size: 13, weight: .black))
                 .foregroundStyle(.white.opacity(0.58))
         }
-        .frame(width: 150, alignment: isLeading ? .leading : .trailing)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .frame(width: 118, alignment: isLeading ? .leading : .trailing)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(.black.opacity(isActive ? 0.74 : 0.58), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -1954,19 +2085,19 @@ private struct MultiplayerPrecisionTurnOverlay: View {
 
             VStack(spacing: 18) {
                 Text(state.scoredPoints > 0 ? "\(state.completedPlayerName) scored +\(state.scoredPoints)" : "\(state.completedPlayerName) missed")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.ballr(size: 28, weight: .black))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
 
                 Text(state.isRoundEnding ? "Accept this shot to finish the round." : "\(state.nextPlayerName), you're up next.")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 20, weight: .bold))
                     .foregroundStyle(Color.yellow)
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 12) {
                     Button(action: onReplayShot) {
                         Text("REPLAY THIS SHOT")
-                            .font(.system(size: 17, weight: .black, design: .rounded))
+                            .font(.ballr(size: 17, weight: .black))
                             .tracking(1)
                             .foregroundStyle(.white)
                             .frame(width: 190, height: 66)
@@ -1976,7 +2107,7 @@ private struct MultiplayerPrecisionTurnOverlay: View {
 
                     Button(action: onContinue) {
                         Text("CONTINUE")
-                            .font(.system(size: 20, weight: .black, design: .rounded))
+                            .font(.ballr(size: 20, weight: .black))
                             .tracking(2)
                             .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.05))
                             .frame(width: 170, height: 66)
@@ -2009,11 +2140,11 @@ private struct MultiplayerPrecisionResultsOverlay: View {
 
             VStack(spacing: 20) {
                 Text(result.headline)
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .font(.ballr(size: 34, weight: .black))
                     .foregroundStyle(Color.yellow)
 
                 Text(result.summary)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 18, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
 
@@ -2025,7 +2156,7 @@ private struct MultiplayerPrecisionResultsOverlay: View {
                 HStack(spacing: 12) {
                     Button(action: onExit) {
                         Text("EXIT")
-                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .font(.ballr(size: 18, weight: .black))
                             .foregroundStyle(.white)
                             .frame(width: 150, height: 60)
                             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
@@ -2034,7 +2165,7 @@ private struct MultiplayerPrecisionResultsOverlay: View {
 
                     Button(action: onReplay) {
                         Text("REPLAY")
-                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .font(.ballr(size: 18, weight: .black))
                             .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.05))
                             .frame(width: 150, height: 60)
                             .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
@@ -2061,13 +2192,13 @@ private struct MultiplayerPrecisionResultScore: View {
     var body: some View {
         VStack(spacing: 6) {
             Text(name.uppercased())
-                .font(.system(size: 13, weight: .black, design: .rounded))
+                .font(.ballr(size: 13, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             Text("\(score)")
-                .font(.system(size: 32, weight: .black, design: .rounded))
+                .font(.ballr(size: 32, weight: .black))
                 .foregroundStyle(Color.yellow)
         }
         .frame(width: 150, height: 94)
@@ -2088,12 +2219,12 @@ private struct PrecisionTargetHudChip: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .font(.ballr(size: 10, weight: .black))
                 .tracking(1.2)
                 .foregroundStyle(.white.opacity(0.55))
 
             Text(value)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.ballr(size: 18, weight: .black))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
@@ -2113,7 +2244,7 @@ private struct PrecisionTargetLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting Precision Targets...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -2134,18 +2265,18 @@ private struct PrecisionTargetErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -2160,7 +2291,7 @@ private struct PrecisionTargetErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)

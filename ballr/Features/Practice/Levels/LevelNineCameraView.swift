@@ -34,6 +34,7 @@ struct LevelNineCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -65,6 +66,7 @@ struct LevelNineCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.isCompleted)
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelTenCameraView()
                     .ballrCameraPresentationChrome()
@@ -108,7 +110,7 @@ struct LevelNineCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -794,10 +796,10 @@ private struct LevelNineHudChip: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 36, weight: .black, design: .rounded))
+                .font(.ballr(size: 36, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 18)
@@ -825,12 +827,12 @@ private struct LevelNineReadinessOverlay: View {
 
                 VStack(spacing: 16) {
                     Text(pairFoundStartedAt == nil ? "Find the ball and your hand" : "Hold both still")
-                        .font(.system(size: 32, weight: .black, design: .rounded))
+                        .font(.ballr(size: 32, weight: .black))
                         .foregroundStyle(pairFoundStartedAt == nil ? Color.yellow : .white)
                         .multilineTextAlignment(.center)
 
                     Text(pairFoundStartedAt == nil ? "Get the ball and a hand in frame to start." : "Starting in \(remainingText(at: timeline.date))")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 18, weight: .bold))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
 
@@ -873,7 +875,7 @@ private struct LevelNineLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting level 9...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -894,18 +896,18 @@ private struct LevelNineErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -920,7 +922,7 @@ private struct LevelNineErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -1512,7 +1514,7 @@ private struct LevelNineGameState {
     private let pairValue = 1
     private let spawnTopFractionBall: CGFloat = 0.75
     private let spawnTopFractionHand: CGFloat = 0.0
-    private let handMaxFraction: CGFloat = 0.5
+    private let handBottomSafeFraction: CGFloat = 0.2
     private let ballClearance: CGFloat = 24
     private let handClearance: CGFloat = 24
     private let previousPairDistanceMultiplier: CGFloat = 3.0
@@ -1624,10 +1626,6 @@ private struct LevelNineGameState {
             guard xDifference <= radius * maxPairXSeparationMultiplier else {
                 continue
             }
-            guard handCandidate.y < size.height * handMaxFraction else {
-                continue
-            }
-
             guard isBallCandidateValid(
                 ballCandidate,
                 ballCenter: ballCenter,
@@ -1808,8 +1806,11 @@ private struct LevelNineGameState {
 
     private func handSpawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
         let horizontalPadding = radius + 26
-        let top = max(radius + 76, 0)
-        let bottom = min(max(top + 1, size.height * handMaxFraction - radius), size.height - radius - 58)
+        let top = max(size.height * spawnTopFractionHand + radius, radius + 76)
+        let bottom = min(
+            max(top + 1, size.height * (1 - handBottomSafeFraction) - radius),
+            size.height - radius - 58
+        )
         return CGRect(
             x: horizontalPadding,
             y: top,

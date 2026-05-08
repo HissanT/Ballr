@@ -4,12 +4,31 @@ import Foundation
 import SwiftUI
 import UIKit
 
+enum LevelFiveNextDestination {
+    case levelSix
+    case rockDropEasy
+}
+
+enum LevelFiveTargetPattern {
+    case far
+    case mixed
+}
+
 struct LevelFiveCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
-    @StateObject private var coordinator = LevelFiveCoordinator()
+    @StateObject private var coordinator: LevelFiveCoordinator
     @State private var showsQuitConfirmation = false
     @State private var showsNextLevel = false
+    private let nextDestination: LevelFiveNextDestination
+
+    init(
+        nextDestination: LevelFiveNextDestination = .levelSix,
+        targetPattern: LevelFiveTargetPattern = .mixed
+    ) {
+        self.nextDestination = nextDestination
+        _coordinator = StateObject(wrappedValue: LevelFiveCoordinator(targetPattern: targetPattern))
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -33,6 +52,7 @@ struct LevelFiveCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -67,9 +87,16 @@ struct LevelFiveCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.didComplete)
             .navigationDestination(isPresented: $showsNextLevel) {
-                LevelSixCameraView()
-                    .ballrCameraPresentationChrome()
+                switch nextDestination {
+                case .levelSix:
+                    BallBlastRockDropCameraView(difficulty: .medium)
+                        .ballrCameraPresentationChrome()
+                case .rockDropEasy:
+                    BallBlastRockDropCameraView(difficulty: .easy)
+                        .ballrCameraPresentationChrome()
+                }
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -115,7 +142,7 @@ struct LevelFiveCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -158,10 +185,16 @@ private final class LevelFiveCoordinator: ObservableObject {
     private let finishAnimationDuration: TimeInterval = 1.2
     private let finishButtonRevealDelay: TimeInterval = 0.28
 
-    private var gameState = LevelFiveGameState()
+    private let targetPattern: LevelFiveTargetPattern
+    private var gameState: LevelFiveGameState
     private var size: CGSize = .zero
     private weak var renderView: LevelFiveRenderView?
     private var finishWorkItem: DispatchWorkItem?
+
+    init(targetPattern: LevelFiveTargetPattern = .mixed) {
+        self.targetPattern = targetPattern
+        gameState = LevelFiveGameState(targetPattern: targetPattern)
+    }
 
     var hasEnded: Bool {
         finishState != .none
@@ -187,7 +220,7 @@ private final class LevelFiveCoordinator: ObservableObject {
 
     func reset(in size: CGSize) {
         cancelFinishWorkItem()
-        gameState = LevelFiveGameState()
+        gameState = LevelFiveGameState(targetPattern: targetPattern)
         startPhase = .readiness
         ballFoundStartedAt = nil
         countdownStartedAt = nil
@@ -616,10 +649,10 @@ private struct LevelFiveHudChip: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 36, weight: .black, design: .rounded))
+                .font(.ballr(size: 36, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 18)
@@ -638,7 +671,7 @@ private struct LevelFiveLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting level 5...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -659,18 +692,18 @@ private struct LevelFiveErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -685,7 +718,7 @@ private struct LevelFiveErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -702,9 +735,29 @@ private struct LevelFiveErrorOverlay: View {
     }
 }
 
+private enum LevelFiveTargetSide {
+    case left
+    case right
+
+    var opposite: LevelFiveTargetSide {
+        switch self {
+        case .left:
+            .right
+        case .right:
+            .left
+        }
+    }
+}
+
+private struct LevelFiveTargetCandidate {
+    let center: CGPoint
+    let side: LevelFiveTargetSide
+}
+
 private struct LevelFiveGameState {
     static let targetLifetime: TimeInterval = 4.0
 
+    let targetPattern: LevelFiveTargetPattern
     var target: LevelFiveTarget?
     var scorePopups: [LevelFiveScorePopup] = []
     var hitStreak = 0
@@ -714,8 +767,13 @@ private struct LevelFiveGameState {
 
     private let popupValue = 5
     private let comboStreakStep = 10
-    private let spawnTopFraction: CGFloat = 0.75
     private let clearance: CGFloat = 20
+    private var nextTargetIndex = 0
+    private var nextTargetSide: LevelFiveTargetSide = .left
+
+    init(targetPattern: LevelFiveTargetPattern = .mixed) {
+        self.targetPattern = targetPattern
+    }
 
     mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
         guard size.width > 0, size.height > 0 else {
@@ -804,20 +862,20 @@ private struct LevelFiveGameState {
         avoiding ballRect: CGRect? = nil
     ) {
         let radius = targetRadius(for: size)
-        let bounds = spawnBounds(in: size, radius: radius)
+        let candidates = targetCandidates(in: size, radius: radius)
         let ballCenter = ballRect.map { CGPoint(x: $0.midX, y: $0.midY) }
         let ballRadius = ballRect.map { max($0.width, $0.height) * 0.5 } ?? 0
 
-        var bestCandidate = CGPoint(x: bounds.midX, y: bounds.midY)
+        var bestCandidate = candidates.first ?? LevelFiveTargetCandidate(
+            center: CGPoint(x: size.width * 0.5, y: size.height * 0.82),
+            side: .left
+        )
         var bestQuality = CGFloat.leastNonzeroMagnitude
+        let orderedCandidates = candidatesInSpawnOrder(candidates)
 
-        for _ in 0..<64 {
-            let candidate = CGPoint(
-                x: CGFloat.random(in: bounds.minX...bounds.maxX),
-                y: CGFloat.random(in: bounds.minY...bounds.maxY)
-            )
+        for (candidateIndex, candidate) in orderedCandidates {
             let quality = candidateQuality(
-                candidate,
+                candidate.center,
                 previousCenter: previousCenter,
                 ballCenter: ballCenter,
                 ballRadius: ballRadius,
@@ -828,34 +886,65 @@ private struct LevelFiveGameState {
                 bestQuality = quality
             }
             if isCandidateValid(
-                candidate,
+                candidate.center,
                 previousCenter: previousCenter,
                 ballCenter: ballCenter,
                 ballRadius: ballRadius,
                 targetRadius: radius
             ) {
-                target = LevelFiveTarget(center: candidate, radius: radius, spawnedAt: timestamp)
+                nextTargetIndex = (candidateIndex + 1) % candidates.count
+                nextTargetSide = candidate.side.opposite
+                target = LevelFiveTarget(center: candidate.center, radius: radius, spawnedAt: timestamp)
                 return
             }
         }
 
-        target = LevelFiveTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
+        if let fallbackIndex = candidates.firstIndex(where: { $0.center == bestCandidate.center }) {
+            nextTargetIndex = (fallbackIndex + 1) % candidates.count
+        }
+        nextTargetSide = bestCandidate.side.opposite
+        target = LevelFiveTarget(center: bestCandidate.center, radius: radius, spawnedAt: timestamp)
     }
 
     private func targetRadius(for size: CGSize) -> CGFloat {
         min(max(min(size.width, size.height) * 0.091, 36), 62)
     }
 
-    private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
-        let horizontalPadding = radius + 26
-        let top = max(size.height * spawnTopFraction + radius, radius + 76)
-        let bottom = max(top, size.height - radius - 58)
-        return CGRect(
-            x: horizontalPadding,
-            y: top,
-            width: max(1, size.width - horizontalPadding * 2),
-            height: max(1, bottom - top)
-        )
+    private func targetCandidates(in size: CGSize, radius: CGFloat) -> [LevelFiveTargetCandidate] {
+        let minX = radius + 26
+        let maxX = max(minX, size.width - radius - 26)
+        let minY = radius + 76
+        let maxY = max(minY, size.height - radius - 58)
+        let y = min(max(size.height * 0.82, minY), maxY)
+        let farCenters = [
+            LevelFiveTargetCandidate(center: CGPoint(x: min(max(size.width * 0.20, minX), maxX), y: y), side: .left),
+            LevelFiveTargetCandidate(center: CGPoint(x: min(max(size.width * 0.92, minX), maxX), y: y), side: .right)
+        ]
+
+        guard targetPattern == .mixed else {
+            return farCenters
+        }
+
+        return [
+            LevelFiveTargetCandidate(center: CGPoint(x: min(max(size.width * 0.38, minX), maxX), y: y), side: .left),
+            LevelFiveTargetCandidate(center: CGPoint(x: min(max(size.width * 0.70, minX), maxX), y: y), side: .right),
+            farCenters[0],
+            farCenters[1]
+        ]
+    }
+
+    private func candidatesInSpawnOrder(
+        _ candidates: [LevelFiveTargetCandidate]
+    ) -> [(Int, LevelFiveTargetCandidate)] {
+        let indexedCandidates = candidates.indices.map { ($0, candidates[$0]) }
+        let preferredSideCandidates = indexedCandidates
+            .dropFirst(nextTargetIndex)
+            .filter { $0.1.side == nextTargetSide }
+        let wrappedPreferredSideCandidates = indexedCandidates
+            .prefix(nextTargetIndex)
+            .filter { $0.1.side == nextTargetSide }
+        let remainingCandidates = indexedCandidates.filter { $0.1.side != nextTargetSide }
+        return preferredSideCandidates + wrappedPreferredSideCandidates + remainingCandidates
     }
 
     private func candidateQuality(

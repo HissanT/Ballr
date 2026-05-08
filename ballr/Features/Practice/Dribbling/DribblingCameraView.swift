@@ -30,6 +30,7 @@ struct DribblingCameraView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
+            .zIndex(100)
 
             if cameraController.isStarting {
                 DribblingLoadingOverlay()
@@ -78,7 +79,7 @@ struct DribblingCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -88,7 +89,7 @@ struct DribblingCameraView: View {
 
             VStack(alignment: .trailing, spacing: 10) {
                 Text("DRIBBLING")
-                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .font(.ballr(size: 22, weight: .black))
                     .foregroundStyle(.white)
 
                 HStack(spacing: 8) {
@@ -185,10 +186,10 @@ private struct DribblingHudChip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .font(.ballr(size: 10, weight: .black))
                 .foregroundStyle(.white.opacity(0.62))
             Text(value)
-                .font(.system(size: 13, weight: .black, design: .rounded))
+                .font(.ballr(size: 13, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 12)
@@ -212,7 +213,7 @@ private struct DribblingLoadingOverlay: View {
                     .tint(.white)
 
                 Text("Starting camera and tracker...")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .font(.ballr(size: 16, weight: .black))
                     .foregroundStyle(.white)
             }
             .padding(.horizontal, 22)
@@ -234,18 +235,18 @@ private struct DribblingErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
@@ -260,7 +261,7 @@ private struct DribblingErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 12)

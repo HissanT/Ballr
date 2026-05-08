@@ -76,6 +76,7 @@ struct HunterCameraView: View {
                     Spacer()
                 }
                 .padding(.vertical, 14)
+                .zIndex(100)
 
                 if cameraController.isStarting {
                     HunterLoadingOverlay()
@@ -118,6 +119,7 @@ struct HunterCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .won)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -154,7 +156,7 @@ struct HunterCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -851,11 +853,11 @@ private struct HunterHudChip: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(title)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.ballr(size: 11, weight: .black))
                 .tracking(1.3)
                 .foregroundStyle(.white.opacity(0.58))
             Text(value)
-                .font(.system(size: 26, weight: .black, design: .rounded))
+                .font(.ballr(size: 26, weight: .black))
                 .foregroundStyle(.white)
                 .monospacedDigit()
         }
@@ -874,7 +876,7 @@ private struct HunterLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting The Hunter...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -895,18 +897,18 @@ private struct HunterErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -921,7 +923,7 @@ private struct HunterErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -953,22 +955,22 @@ private struct HunterFinishedOverlay: View {
 
             VStack(spacing: 14) {
                 Text(title)
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.ballr(size: 28, weight: .black))
                     .foregroundStyle(Color.yellow)
 
                 Text(subtitle)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 16, weight: .bold))
                     .foregroundStyle(.white.opacity(0.76))
 
                 Text(timeText)
-                    .font(.system(size: 54, weight: .black, design: .rounded))
+                    .font(.ballr(size: 54, weight: .black))
                     .foregroundStyle(.white)
                     .monospacedDigit()
 
                 HStack(spacing: 10) {
                     Button(action: onPrimary) {
                         Text(primaryTitle)
-                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .font(.ballr(size: 14, weight: .black))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -977,7 +979,7 @@ private struct HunterFinishedOverlay: View {
 
                     Button(action: onDone) {
                         Text("DONE")
-                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .font(.ballr(size: 14, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)

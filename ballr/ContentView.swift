@@ -11,6 +11,7 @@ struct ContentView: View {
                 OnboardingFlowView(hasCompletedOnboarding: $hasCompletedOnboarding)
             }
         }
+        .font(.ballr(size: 16, weight: .regular))
     }
 }
 
@@ -48,7 +49,6 @@ private struct OnboardingFlowView: View {
                 hasCompletedOnboarding = true
             }
         }
-        .fontDesign(.rounded)
     }
 }
 
@@ -76,7 +76,6 @@ private struct MainBallrView: View {
                 .tag(BallrTab.profile)
         }
         .tint(Color.ballrOrange)
-        .fontDesign(.rounded)
     }
 }
 
@@ -100,11 +99,11 @@ private struct StartPageView: View {
                 Spacer(minLength: 48)
 
                 Text("Ballr")
-                    .font(.system(size: 52, weight: .black, design: .rounded))
+                    .font(.ballr(size: 52, weight: .black))
                     .foregroundStyle(Color.yellow)
 
                 Text("SOCCER TRAINING")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 18, weight: .bold))
                     .tracking(4)
                     .foregroundStyle(.white.opacity(0.35))
                     .padding(.top, 14)
@@ -113,7 +112,7 @@ private struct StartPageView: View {
 
                 Button(action: onStart) {
                     Text("START")
-                        .font(.system(size: 27, weight: .black, design: .rounded))
+                        .font(.ballr(size: 27, weight: .black))
                         .tracking(3)
                         .foregroundStyle(Color(red: 0.04, green: 0.04, blue: 0.04))
                         .frame(maxWidth: .infinity)
@@ -129,7 +128,7 @@ private struct StartPageView: View {
                 .padding(.horizontal, 42)
 
                 Text("Already have an account? Sign in")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .font(.ballr(size: 16, weight: .medium))
                     .foregroundStyle(.white.opacity(0.28))
                     .padding(.top, 32)
 
@@ -140,6 +139,7 @@ private struct StartPageView: View {
 }
 
 private struct LevelsHomeView: View {
+    @EnvironmentObject private var authSession: AuthSessionManager
     @State private var selectedDrill: Drill?
     @State private var selectedHunterDifficulty: HunterDifficulty?
     @State private var promptedDrill: Drill?
@@ -148,7 +148,7 @@ private struct LevelsHomeView: View {
     @AppStorage("levelsLastPlayedAt") private var lastPlayedAt = 0.0
 
     private let currentLevel = 1
-    private let lockedLevels = Set(11...18)
+    private let lockedLevels = Set(12...18)
 
     private let levelDrills = (1...20).map { level in
         Drill(
@@ -158,29 +158,31 @@ private struct LevelsHomeView: View {
                 case 1:
                     return "Ball Basics"
                 case 2:
-                    return "Hand Targets"
-                case 3:
-                    return "Foot Targets"
-                case 4:
                     return "Ball Targets"
+                case 3:
+                    return "Ball Timed Targets"
+                case 4:
+                    return "Rock Drop"
                 case 5:
-                    return "Timed Targets"
+                    return "Timed Ball Targets"
                 case 6:
-                    return "Bomb Targets"
+                    return "Rock Drop Medium"
                 case 7:
-                    return "Timed Hand Targets"
+                    return "Ball Magician"
                 case 8:
-                    return "Timed Foot Targets"
+                    return "Piano Tiles Medium"
                 case 9:
-                    return "Combo Targets"
+                    return "Timed Hand Targets"
                 case 10:
-                    return "Timed Targets 45%"
+                    return "Piano Tiles Hard"
+                case 11:
+                    return "Bomb Hand Targets"
                 case 19:
                     return "Ball Blast"
                 case 20:
                     return "The Hunter"
                 default:
-                    return ["Juggling", "Dribbling", "First Touch", "Dribble Tiles"][(level - 1) % 4]
+                    return ["Juggling", "Dribbling", "First Touch"][(level - 1) % 3]
                 }
             }(),
             level: level
@@ -257,7 +259,7 @@ private struct LevelsHomeView: View {
 
                             LevelsHeaderStatChip(
                                 systemImage: "bolt.fill",
-                                value: "1,240",
+                                value: "\(authSession.xp)",
                                 label: "XP"
                             )
                         }
@@ -275,37 +277,56 @@ private struct LevelsHomeView: View {
 
                     Spacer()
                 }
+
+                if isShowingStreakResetMessage {
+                    LevelsStreakLostOverlay {
+                        withAnimation(.easeInOut(duration: 0.20)) {
+                            isShowingStreakResetMessage = false
+                        }
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(20)
+                }
             }
             .navigationDestination(item: $selectedDrill) { drill in
                 if drill.level == 1 {
                     LevelOneCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 2 {
-                    HandTargetCameraView()
-                        .ballrCameraPresentationChrome()
-                } else if drill.level == 3 {
-                    FootTargetCameraView()
-                        .ballrCameraPresentationChrome()
-                } else if drill.level == 4 {
                     LevelFourCameraView()
                         .ballrCameraPresentationChrome()
+                } else if drill.level == 3 {
+                    LevelFiveCameraView(nextDestination: .rockDropEasy, targetPattern: .far)
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 4 {
+                    BallBlastRockDropCameraView(difficulty: .easy)
+                        .ballrCameraPresentationChrome()
                 } else if drill.level == 5 {
-                    LevelFiveCameraView()
+                    LevelFiveCameraView(targetPattern: .mixed)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 6 {
-                    LevelSixCameraView()
+                    BallBlastRockDropCameraView(difficulty: .medium)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 7 {
                     LevelSevenCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 8 {
-                    LevelEightCameraView()
+                    PianoTilesCameraView(difficulty: .medium)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 9 {
-                    LevelNineCameraView()
+                    HandTargetCameraView(
+                        nextDestination: .levelTen,
+                        configuration: .levelSevenTimed
+                    )
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 10 {
-                    LevelTenCameraView()
+                    PianoTilesCameraView(difficulty: .hard)
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 11 {
+                    HandTargetCameraView(
+                        nextDestination: .levelTen,
+                        configuration: .levelElevenBombTimed
+                    )
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 19 {
                     TargetDrillCameraView()
@@ -321,12 +342,21 @@ private struct LevelsHomeView: View {
                 HunterCameraView(difficulty: difficulty)
                     .ballrCameraPresentationChrome()
             }
-            .onAppear(perform: resetMissedStreakIfNeeded)
-            .alert("Streak reset", isPresented: $isShowingStreakResetMessage) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("You missed a day, so your daily streak reset. Play once today to start it again.")
+            .onAppear {
+                resetMissedStreakIfNeeded()
+                syncLocalStreakToSupabaseIfNeeded()
             }
+            .onChange(of: authSession.isSignedIn) { _, isSignedIn in
+                if isSignedIn {
+                    syncLocalStreakToSupabaseIfNeeded()
+                }
+            }
+            .onChange(of: authSession.isLoadingAccount) { _, isLoadingAccount in
+                if !isLoadingAccount {
+                    syncLocalStreakToSupabaseIfNeeded()
+                }
+            }
+            .animation(.easeInOut(duration: 0.20), value: isShowingStreakResetMessage)
         }
     }
 
@@ -336,6 +366,7 @@ private struct LevelsHomeView: View {
         guard lastPlayedAt > 0 else {
             dailyStreak = 1
             lastPlayedAt = now.timeIntervalSince1970
+            persistDailyStreak()
             return
         }
 
@@ -353,6 +384,7 @@ private struct LevelsHomeView: View {
         }
 
         lastPlayedAt = now.timeIntervalSince1970
+        persistDailyStreak()
     }
 
     private func resetMissedStreakIfNeeded() {
@@ -365,7 +397,79 @@ private struct LevelsHomeView: View {
 
         if !calendar.isDateInToday(lastPlayedDate) && !calendar.isDateInYesterday(lastPlayedDate) {
             dailyStreak = 0
-            isShowingStreakResetMessage = true
+            persistDailyStreak()
+            withAnimation(.easeInOut(duration: 0.20)) {
+                isShowingStreakResetMessage = true
+            }
+        }
+    }
+
+    private func persistDailyStreak() {
+        let streak = dailyStreak
+        Task {
+            await authSession.updateDailyStreakCount(streak)
+        }
+    }
+
+    private func syncLocalStreakToSupabaseIfNeeded() {
+        guard dailyStreak > authSession.streakCount else {
+            return
+        }
+
+        persistDailyStreak()
+    }
+}
+
+private struct LevelsStreakLostOverlay: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                ZStack {
+                    Circle()
+                        .fill(Color.yellow.opacity(0.16))
+                        .frame(width: 72, height: 72)
+
+                    Image(systemName: "flame.fill")
+                        .font(.ballr(size: 32, weight: .black))
+                        .foregroundStyle(Color(red: 1.0, green: 0.32, blue: 0.18))
+                }
+
+                VStack(spacing: 8) {
+                    Text("STREAK LOST")
+                        .font(.ballr(size: 30, weight: .black))
+                        .foregroundStyle(Color.yellow)
+
+                    Text("You missed a day.\nPlay today to start it again.")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                }
+
+                Button(action: onDismiss) {
+                    Text("OK")
+                        .font(.ballr(size: 16, weight: .black))
+                        .foregroundStyle(Color.ballrBlack)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+            .padding(24)
+            .frame(maxWidth: 360)
+            .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.yellow.opacity(0.34), lineWidth: 1.5)
+            }
+            .padding(.horizontal, 28)
         }
     }
 }
@@ -376,27 +480,26 @@ private struct PracticeHomeView: View {
     @State private var isShowingJumpingChallenge = false
     @State private var isShowingAgilityChallenge = false
     @State private var isShowingFastTouching = false
-    @State private var isShowingFreezeChallenge = false
     @State private var promptedDifficultyDrill: Drill?
     @State private var selectedRockDropDifficulty: BallBlastRockDropDifficulty?
     @State private var selectedPianoTilesDifficulty: PianoTilesDifficulty?
     @State private var isShowingPrecisionTargets = false
     @State private var isShowingMultiplayerPrecisionTargets = false
-    @State private var isShowingPassingGates = false
+    @State private var isShowingBallMagician = false
+    @State private var isShowingPassingCones = false
 
     private let drills = [
         Drill(title: "Jumping Challenge", subtitle: "Jump over the hurdles", level: nil),
         Drill(title: "Agility Challenge", subtitle: "Cross side to side fast", level: nil),
         Drill(title: "Fast Touching", subtitle: "Count every toe touch", level: nil),
-        Drill(title: "Freeze Challenge", subtitle: "Move, then freeze fast", level: nil),
+        Drill(title: "Ball Magician", subtitle: "Follow the arrows", level: nil),
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
         Drill(title: "Dribbling", subtitle: "Weave through targets", level: nil),
         Drill(title: "Rock Drop", subtitle: "Dodge the falling rocks", level: nil),
         Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
         Drill(title: "Precision VS", subtitle: "Alternate 5 shots each", level: nil),
-        Drill(title: "Passing Gates", subtitle: "Pass through the gate", level: nil),
-        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil),
-        Drill(title: "Dribble\nTiles", subtitle: "Navigate the grid", level: nil)
+        Drill(title: "Passing Cones", subtitle: "Pass through the cones", level: nil),
+        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil)
     ]
 
     private let columns = [
@@ -424,7 +527,7 @@ private struct PracticeHomeView: View {
                                     Spacer()
 
                                     Text("FREE PRACTICE")
-                                        .font(.system(size: 13, weight: .black, design: .rounded))
+                                        .font(.ballr(size: 13, weight: .black))
                                         .tracking(2)
                                         .foregroundStyle(Color.yellow)
                                         .padding(.horizontal, 12)
@@ -447,8 +550,8 @@ private struct PracticeHomeView: View {
                                                 isShowingAgilityChallenge = true
                                             } else if drill.title == "Fast Touching" {
                                                 isShowingFastTouching = true
-                                            } else if drill.title == "Freeze Challenge" {
-                                                isShowingFreezeChallenge = true
+                                            } else if drill.title == "Ball Magician" {
+                                                isShowingBallMagician = true
                                             } else if drill.title == "Dribbling" {
                                                 isShowingDribbling = true
                                             } else if drill.title == "Rock Drop" {
@@ -471,8 +574,8 @@ private struct PracticeHomeView: View {
                                                 isShowingPrecisionTargets = true
                                             } else if drill.title == "Precision VS" {
                                                 isShowingMultiplayerPrecisionTargets = true
-                                            } else if drill.title == "Passing Gates" {
-                                                isShowingPassingGates = true
+                                            } else if drill.title == "Passing Cones" {
+                                                isShowingPassingCones = true
                                             } else {
                                                 selectedDrill = drill
                                             }
@@ -540,23 +643,20 @@ private struct PracticeHomeView: View {
             }
             .coordinateSpace(name: "PracticeHomeView")
             .fullScreenCover(isPresented: $isShowingJumpingChallenge) {
-                JumpingChallengeCameraView()
-                    .ballrCameraPresentationChrome()
+                JumpingChallengeIntroScreen()
             }
             .fullScreenCover(isPresented: $isShowingAgilityChallenge) {
-                AgilityChallengeCameraView()
-                    .ballrCameraPresentationChrome()
+                AgilityChallengeIntroScreen()
             }
             .fullScreenCover(isPresented: $isShowingFastTouching) {
-                FastTouchingCameraView()
-                    .ballrCameraPresentationChrome()
-            }
-            .fullScreenCover(isPresented: $isShowingFreezeChallenge) {
-                FreezeChallengeCameraView()
-                    .ballrCameraPresentationChrome()
+                FastTouchingIntroScreen()
             }
             .fullScreenCover(isPresented: $isShowingDribbling) {
                 DribblingCameraView()
+                    .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingBallMagician) {
+                BallMagicianCameraView()
                     .ballrCameraPresentationChrome()
             }
             .fullScreenCover(item: $selectedDrill) { drill in
@@ -567,23 +667,20 @@ private struct PracticeHomeView: View {
                 }
             }
             .fullScreenCover(item: $selectedRockDropDifficulty) { difficulty in
-                BallBlastRockDropCameraView(difficulty: difficulty)
-                    .ballrCameraPresentationChrome()
+                BallBlastRockDropIntroScreen(difficulty: difficulty)
             }
             .fullScreenCover(item: $selectedPianoTilesDifficulty) { difficulty in
-                PianoTilesCameraView(difficulty: difficulty)
-                    .ballrCameraPresentationChrome()
+                PianoTilesIntroScreen(difficulty: difficulty)
             }
             .fullScreenCover(isPresented: $isShowingPrecisionTargets) {
-                PrecisionTargetCameraView()
-                    .ballrCameraPresentationChrome()
+                PrecisionTargetIntroScreen()
             }
             .fullScreenCover(isPresented: $isShowingMultiplayerPrecisionTargets) {
                 MultiplayerPrecisionTargetCameraView()
                     .ballrCameraPresentationChrome()
             }
-            .fullScreenCover(isPresented: $isShowingPassingGates) {
-                PassingGateCameraView()
+            .fullScreenCover(isPresented: $isShowingPassingCones) {
+                PassingConesCameraView()
                     .ballrCameraPresentationChrome()
             }
         }
@@ -591,6 +688,7 @@ private struct PracticeHomeView: View {
 }
 
 private struct ProfileHomeView: View {
+    @EnvironmentObject private var authSession: AuthSessionManager
     private let slots = (0..<5).map { _ in AchievementSlot() }
 
     var body: some View {
@@ -614,7 +712,7 @@ private struct ProfileHomeView: View {
                                 BallrSettingsView()
                             } label: {
                                 Image(systemName: "line.3.horizontal")
-                                    .font(.system(size: 22, weight: .black))
+                                    .font(.ballr(size: 22, weight: .black))
                                     .foregroundStyle(Color.yellow)
                                     .frame(width: 48, height: 48)
                                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -627,16 +725,20 @@ private struct ProfileHomeView: View {
                         }
                         .padding(.bottom, 28)
 
-                        ProfilePlayerCard()
+                        ProfilePlayerCard(
+                            name: authSession.profileName,
+                            accountLabel: authSession.accountLabel,
+                            xp: authSession.xp
+                        )
 
                         HStack(spacing: 12) {
-                            ProfileStatCard(value: "47", label: "BEST\nJUGGLES", valueColor: Color.yellow)
-                            ProfileStatCard(value: "12", label: "DRILLS DONE", valueColor: Color.orange)
-                            ProfileStatCard(value: "5", label: "DAY STREAK", valueColor: .white)
+                            ProfileStatCard(value: "0", label: "BEST\nJUGGLES", valueColor: Color.yellow)
+                            ProfileStatCard(value: "0", label: "DRILLS DONE", valueColor: Color.orange)
+                            ProfileStatCard(value: "\(authSession.streakCount)", label: "DAY STREAK", valueColor: .white)
                         }
 
                         Text("ACHIEVEMENTS")
-                            .font(.system(size: 16, weight: .black, design: .rounded))
+                            .font(.ballr(size: 16, weight: .black))
                             .tracking(2)
                             .foregroundStyle(Color.yellow.opacity(0.58))
                             .padding(.top, 2)
@@ -648,7 +750,7 @@ private struct ProfileHomeView: View {
                         } label: {
                             HStack {
                                 Text("VIEW BALLR CARD")
-                                    .font(.system(size: 20, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 20, weight: .black))
                                     .foregroundStyle(Color.yellow)
 
                                 Spacer()
@@ -658,7 +760,7 @@ private struct ProfileHomeView: View {
                                     .frame(width: 42, height: 42)
                                     .overlay {
                                         Image(systemName: "chevron.right")
-                                            .font(.system(size: 16, weight: .black))
+                                            .font(.ballr(size: 16, weight: .black))
                                             .foregroundStyle(Color.ballrBlack)
                                     }
                             }
@@ -693,6 +795,7 @@ private struct JugglingDrillIntroScreen: View {
 
     private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterPurple = Color(red: 0.631, green: 0.427, blue: 0.757)
+    private let characterStrokePurple = Color(red: 0.463, green: 0.306, blue: 0.561)
     private let cardPurple = Color(red: 0.463, green: 0.306, blue: 0.561)
     private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
     private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
@@ -724,8 +827,9 @@ private struct JugglingDrillIntroScreen: View {
             let safeTop = geometry.safeAreaInsets.top
             let safeBottom = geometry.safeAreaInsets.bottom
             let bodyWidth = isLandscape ? width * 0.82 : width * 1.05
-            let bodyHeight = isLandscape ? height * 1.95 : height * 1.25
-            let bodyCenterY = isLandscape ? height * 1.02 : height * 0.74
+            let bodyHeight = isLandscape ? height * 2.04 : height * 1.36
+            let bodyCenterY = isLandscape ? height * 1.03 : height * 0.74
+            let characterStrokeWidth = isLandscape ? 12.0 : 16.0
             let cardWidth = isLandscape ? min(width * 0.30, 270) : width * 0.68
             let cardHeight = isLandscape ? min(height * 0.54, 210) : min(height * 0.34, width * 0.80)
             let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
@@ -738,13 +842,11 @@ private struct JugglingDrillIntroScreen: View {
             let faceOpacity = isLaunchingDrill ? 0.0 : 1.0
             let faceScale = isLaunchingDrill ? 0.90 : 1.0
             let faceLift = isLaunchingDrill ? -height * 0.035 : 0.0
-            let topContentSpacer = isLandscape ? height * 0.12 : height * 0.31
+            let topContentSpacer = isLandscape ? height * 0.105 : height * 0.285
             let eyeSpacing = isLandscape ? base * 0.16 : width * 0.09
             let mouthTopPadding = isLandscape ? 14.0 : 20.0
             let cardTopPadding = isLandscape ? 22.0 : 30.0
             let faceScaleFactor = isLandscape ? 0.84 : 1.0
-            let logoWidth = isLandscape ? 54.0 : 60.0
-            let logoHeight = isLandscape ? 40.0 : 44.0
 
             ZStack(alignment: .topLeading) {
                 backgroundYellow
@@ -753,6 +855,12 @@ private struct JugglingDrillIntroScreen: View {
                 Group {
                     Capsule()
                         .fill(characterPurple)
+                        .frame(width: bodyWidth, height: bodyHeight)
+                        .position(x: width * 0.5, y: bodyCenterY)
+                        .offset(y: introBounceOffset)
+
+                    Capsule()
+                        .stroke(characterStrokePurple, lineWidth: characterStrokeWidth)
                         .frame(width: bodyWidth, height: bodyHeight)
                         .position(x: width * 0.5, y: bodyCenterY)
                         .offset(y: introBounceOffset)
@@ -771,24 +879,11 @@ private struct JugglingDrillIntroScreen: View {
                 .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
                 .animation(launchAnimation, value: isLaunchingDrill)
 
-                VStack(spacing: 0) {
-                    HStack {
-                        LevelsMapIcon(fillColor: logoBlack)
-                            .frame(width: logoWidth, height: logoHeight)
-                        Spacer()
-                    }
-                    .padding(.top, max(safeTop * 0.14, 4))
-                    .padding(.leading, 14)
-                    .padding(.trailing, 24)
-
-                    Spacer()
-                }
-
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .black))
+                        .font(.ballr(size: 18, weight: .black))
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
                         .background(Color.black.opacity(0.35), in: Circle())
@@ -840,18 +935,19 @@ private struct JugglingDrillIntroScreen: View {
                             .fill(cardPurple)
                             .frame(width: cardWidth, height: cardHeight)
                             .overlay {
-                                VStack(spacing: 22) {
-                                    Text("POWER")
-                                        .font(.system(size: min(width * 0.12, 48), weight: .light, design: .rounded))
+                                VStack(spacing: 16) {
+                                    Text("JUGGLING")
+                                        .font(.ballr(size: min(width * 0.098, 42), weight: .black))
                                         .foregroundStyle(.white)
-
-                                    Text("KEEP THE BALL\nIN THE AIR")
-                                        .font(.system(size: min(width * 0.06, 23), weight: .medium, design: .rounded))
                                         .multilineTextAlignment(.center)
-                                        .foregroundStyle(.white)
+
+                                    Text("KEEP IT UP, JUGGLE THE BALL")
+                                        .font(.ballr(size: min(width * 0.040, 18), weight: .semibold))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundStyle(.white.opacity(0.86))
                                 }
                                 .tracking(0.8)
-                                .padding(.top, 8)
+                                .padding(.horizontal, 20)
                             }
                             .scaleEffect(isCardPressed ? 0.96 : 1.0)
                             .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.22), radius: isCardPressed ? 0 : 16, x: 0, y: 0)
@@ -875,7 +971,7 @@ private struct JugglingDrillIntroScreen: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .fullScreenCover(isPresented: $showsInProgressScreen, onDismiss: {
-            resetLaunchState(animated: true)
+            resetLaunchState()
         }) {
             JugglingDrillInProgressScreen()
         }
@@ -903,6 +999,1721 @@ private struct JugglingDrillIntroScreen: View {
 private struct JugglingDrillInProgressScreen: View {
     var body: some View {
         JugglingCameraView()
+    }
+}
+
+private struct JumpingChallengeIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isCardPressed = false
+    @State private var showsCamera = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterCyan = Color(red: 0.10, green: 0.70, blue: 0.84)
+    private let cardTeal = Color(red: 0.13, green: 0.52, blue: 0.60)
+    private let faceWhite = Color(red: 0.96, green: 0.95, blue: 0.95)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let shapeOffset = characterEntryOffset
+            let shapeScaleX = entryScale * (isLaunchingDrill ? 1.20 : 1.0)
+            let shapeScaleY = entryScale * (isLaunchingDrill ? 1.46 : 1.0)
+            let contentOffset = characterEntryOffset
+            let faceOpacity = isLaunchingDrill ? 0.0 : 1.0
+            let faceScale = isLaunchingDrill ? 0.90 : 1.0
+            let faceLift = isLaunchingDrill ? -height * 0.035 : 0.0
+            let topContentSpacer = isLandscape ? height * 0.235 : height * 0.292
+            let eyeSize = isLandscape ? base * 0.118 : width * 0.205
+            let eyeSpacing = isLandscape ? base * 0.098 : width * 0.155
+            let eyebrowWidth = eyeSize * 0.72
+            let eyebrowHeight = max(7.0, eyeSize * 0.095)
+            let mouthWidth = isLandscape ? base * 0.155 : width * 0.305
+            let mouthHeight = isLandscape ? base * 0.070 : width * 0.130
+            let cardWidth = isLandscape ? min(width * 0.36, 340) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 16.0 : 48.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                JumpingChallengeCharacterShape()
+                    .fill(characterCyan)
+                    .ignoresSafeArea()
+                    .offset(y: shapeOffset + introBounceOffset)
+                    .scaleEffect(x: shapeScaleX, y: shapeScaleY, anchor: .bottom)
+                    .animation(.spring(response: 0.72, dampingFraction: 1.00), value: hasAnimatedCharacter)
+                    .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                    .animation(launchAnimation, value: isLaunchingDrill)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: topContentSpacer)
+
+                    VStack(spacing: 0) {
+                        HStack(spacing: eyeSpacing) {
+                            JumpingChallengeAngryEyeView(
+                                side: .left,
+                                eyeSize: eyeSize,
+                                eyebrowWidth: eyebrowWidth,
+                                eyebrowHeight: eyebrowHeight,
+                                whiteColor: faceWhite,
+                                blackColor: logoBlack
+                            )
+
+                            JumpingChallengeAngryEyeView(
+                                side: .right,
+                                eyeSize: eyeSize,
+                                eyebrowWidth: eyebrowWidth,
+                                eyebrowHeight: eyebrowHeight,
+                                whiteColor: faceWhite,
+                                blackColor: logoBlack
+                            )
+                        }
+
+                        JumpingChallengeMouthShape()
+                            .stroke(
+                                logoBlack,
+                                style: StrokeStyle(
+                                    lineWidth: max(8.0, mouthWidth * 0.070),
+                                    lineCap: .butt,
+                                    lineJoin: .round
+                                )
+                            )
+                            .frame(width: mouthWidth, height: mouthHeight)
+                            .padding(.top, isLandscape ? 24 : 22)
+                            .offset(x: isLandscape ? base * 0.010 : width * 0.010)
+                    }
+                    .opacity(faceOpacity)
+                    .scaleEffect(faceScale)
+                    .offset(y: faceLift)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsCamera = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(cardTeal)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("JUMPING CHALLENGE")
+                                        .font(.ballr(size: min(width * 0.064, 32), weight: .black))
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("JUMP OVER THE OBSTACLES")
+                                        .font(.ballr(size: min(width * 0.038, 17), weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.86))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.16), radius: isCardPressed ? 0 : 16)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                    .accessibilityLabel("Start Jumping Challenge")
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: contentOffset)
+                .animation(.spring(response: 0.72, dampingFraction: 0.80), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            resetLaunchState()
+        }) {
+            JumpingChallengeCameraView()
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            resetLaunchState()
+            introBounceOffset = 0
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                hasAnimatedCharacter = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.72) {
+                withAnimation(.easeOut(duration: 0.24)) {
+                    introBounceOffset = 24
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                    withAnimation(.spring(response: 0.54, dampingFraction: 0.68)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct JumpingChallengeCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let topY = h * 0.085
+        let sideY = h * 0.305
+        let shoulderY = h * 0.115
+
+        path.move(to: CGPoint(x: 0, y: sideY))
+        path.addLine(to: CGPoint(x: w * 0.410, y: shoulderY))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.590, y: shoulderY),
+            control: CGPoint(x: w * 0.500, y: topY)
+        )
+        path.addLine(to: CGPoint(x: w, y: sideY))
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct JumpingChallengeAngryEyeView: View {
+    enum Side {
+        case left
+        case right
+    }
+
+    let side: Side
+    let eyeSize: CGFloat
+    let eyebrowWidth: CGFloat
+    let eyebrowHeight: CGFloat
+    let whiteColor: Color
+    let blackColor: Color
+
+    private var sideLineRotation: Angle {
+        side == .left ? .degrees(45) : .degrees(-45)
+    }
+
+    private var eyebrowRotation: Angle {
+        side == .left ? .degrees(9) : .degrees(-9)
+    }
+
+    private var eyebrowXOffset: CGFloat {
+        side == .left ? eyeSize * 0.18 : -eyeSize * 0.18
+    }
+
+    private var sideLineXOffset: CGFloat {
+        side == .left ? -eyeSize * 0.54 : eyeSize * 0.54
+    }
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(blackColor)
+                .frame(width: eyeSize * 0.80, height: max(7.0, eyeSize * 0.085))
+                .rotationEffect(sideLineRotation)
+                .offset(x: sideLineXOffset, y: -eyeSize * 0.58)
+
+            Circle()
+                .fill(whiteColor)
+                .frame(width: eyeSize, height: eyeSize)
+                .overlay {
+                    Circle()
+                        .stroke(blackColor, lineWidth: max(8.0, eyeSize * 0.120))
+                }
+
+            Rectangle()
+                .fill(blackColor)
+                .frame(width: eyebrowWidth, height: eyebrowHeight)
+                .rotationEffect(eyebrowRotation)
+                .offset(x: eyebrowXOffset, y: -eyeSize * 0.96)
+        }
+        .frame(width: eyeSize, height: eyeSize * 1.48)
+    }
+}
+
+private struct JumpingChallengeMouthShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        return path
+    }
+}
+
+private struct AgilityChallengeIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showsCamera = false
+    @State private var isLaunchingAgility = false
+    @State private var showsFlipPrompt = false
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterOrange = Color(red: 1.0, green: 0.60, blue: 0.0)
+    private let cardOrange = Color(red: 1.0, green: 0.76, blue: 0.36)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchDuration = 1.48
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let launchProgress: CGFloat = isLaunchingAgility ? 1 : 0
+            let characterDrop = height * 0.39 * launchProgress
+            let cardDrop = height * 0.72 * launchProgress
+            let finalCharacterScaleY: CGFloat = isLaunchingAgility ? 0.78 : 1.0
+            let finalFaceDrop = height * 0.13 * launchProgress
+            let topContentSpacer = isLandscape ? height * 0.215 : height * 0.275
+            let flipPromptTopSpacer = height * 0.42
+            let glassesWidth = isLandscape ? base * 0.14 : width * 0.205
+            let glassesHeight = glassesWidth * 0.41
+            let bridgeWidth = isLandscape ? base * 0.052 : width * 0.072
+            let bridgeHeight = max(2.0, glassesHeight * 0.075)
+            let mouthWidth = isLandscape ? base * 0.095 : width * 0.155
+            let mouthHeight = max(6.0, mouthWidth * 0.16)
+            let cardWidth = isLandscape ? min(width * 0.34, 320) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 54.0 : 92.0
+            let characterStrokeWidth = 10.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                AgilityChallengeCharacterShape()
+                    .fill(characterOrange)
+                    .ignoresSafeArea()
+                    .offset(y: characterDrop)
+                    .scaleEffect(x: 1.0, y: finalCharacterScaleY, anchor: .bottom)
+                    .animation(.easeInOut(duration: launchDuration), value: isLaunchingAgility)
+
+                AgilityChallengeTopStrokeShape()
+                    .stroke(Color(red: 0.706, green: 0.467, blue: 0.078), style: StrokeStyle(lineWidth: characterStrokeWidth, lineCap: .round))
+                    .ignoresSafeArea()
+                    .offset(y: characterDrop)
+                    .scaleEffect(x: 1.0, y: finalCharacterScaleY, anchor: .bottom)
+                    .animation(.easeInOut(duration: launchDuration), value: isLaunchingAgility)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+                .opacity(isLaunchingAgility ? 0 : 1)
+
+                if showsFlipPrompt {
+                    VStack(spacing: 0) {
+                        Spacer()
+                            .frame(height: flipPromptTopSpacer)
+
+                        Text("FLIP THE\nPHONE")
+                            .font(.ballr(size: min(width * 0.095, 38), weight: .black))
+                            .tracking(1.6)
+                            .lineSpacing(12)
+                            .foregroundStyle(.black)
+                            .multilineTextAlignment(.center)
+
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.28), value: showsFlipPrompt)
+                }
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: topContentSpacer)
+
+                    VStack(spacing: 0) {
+                        HStack(spacing: isLandscape ? -3 : -5) {
+                            AgilitySunglassesLensShape()
+                                .fill(.black)
+                                .frame(width: glassesWidth, height: glassesHeight)
+
+                            Rectangle()
+                                .fill(.black)
+                                .frame(width: bridgeWidth, height: bridgeHeight)
+                                .offset(y: -glassesHeight * 0.30)
+
+                            AgilitySunglassesLensShape()
+                                .fill(.black)
+                                .frame(width: glassesWidth, height: glassesHeight)
+                        }
+
+                        Capsule()
+                            .fill(.black)
+                            .frame(width: mouthWidth, height: mouthHeight)
+                            .padding(.top, isLandscape ? 18 : 30)
+                            .offset(x: isLandscape ? base * 0.034 : width * 0.055)
+                    }
+                    .offset(y: finalFaceDrop)
+
+                    Button {
+                        startAgilityLaunch()
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardOrange)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("AGILITY CHALLENGE")
+                                        .font(.ballr(size: min(width * 0.062, 32), weight: .black))
+                                        .foregroundStyle(.black)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("CROSS SIDE TO SIDE FAST")
+                                        .font(.ballr(size: min(width * 0.036, 17), weight: .semibold))
+                                        .foregroundStyle(.black.opacity(0.78))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .disabled(isLaunchingAgility)
+                    .offset(y: cardDrop)
+                    .animation(.easeInOut(duration: launchDuration), value: isLaunchingAgility)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: characterDrop)
+                .animation(.easeInOut(duration: launchDuration), value: isLaunchingAgility)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            isLaunchingAgility = false
+            showsFlipPrompt = false
+        }) {
+            AgilityChallengeCameraView()
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            isLaunchingAgility = false
+            showsFlipPrompt = false
+        }
+    }
+
+    private func startAgilityLaunch() {
+        guard !isLaunchingAgility else {
+            return
+        }
+
+        withAnimation(.easeInOut(duration: launchDuration)) {
+            isLaunchingAgility = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchDuration) {
+            withAnimation(.easeInOut(duration: 0.28)) {
+                showsFlipPrompt = true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchDuration + 1.27) {
+            BallrOrientationController.lockDribblingLandscape()
+            showsCamera = true
+        }
+    }
+}
+
+private struct AgilityChallengeCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let ellipseWidth = w * (423.0 / 393.0)
+        let ellipseHeight = ellipseWidth * (189.0 / 423.0)
+        let ellipseTopY = h * 0.115
+        let ellipseCenterX = w * 0.5
+        let ellipseCenterY = ellipseTopY + ellipseHeight * 0.5
+        let radiusX = ellipseWidth * 0.5
+        let radiusY = ellipseHeight * 0.5
+        let samples = 48
+
+        for index in 0...samples {
+            let x = w * CGFloat(index) / CGFloat(samples)
+            let normalizedX = min(max((x - ellipseCenterX) / radiusX, -1), 1)
+            let y = ellipseCenterY - radiusY * sqrt(max(0, 1 - normalizedX * normalizedX))
+            let point = CGPoint(x: x, y: y)
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+private struct AgilityChallengeTopStrokeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let ellipseWidth = w * (423.0 / 393.0)
+        let ellipseHeight = ellipseWidth * (189.0 / 423.0)
+        let ellipseTopY = h * 0.115
+        let ellipseCenterX = w * 0.5
+        let ellipseCenterY = ellipseTopY + ellipseHeight * 0.5
+        let radiusX = ellipseWidth * 0.5
+        let radiusY = ellipseHeight * 0.5
+        let samples = 48
+
+        for index in 0...samples {
+            let x = w * CGFloat(index) / CGFloat(samples)
+            let normalizedX = min(max((x - ellipseCenterX) / radiusX, -1), 1)
+            let y = ellipseCenterY - radiusY * sqrt(max(0, 1 - normalizedX * normalizedX))
+            let point = CGPoint(x: x, y: y)
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        return path
+    }
+}
+
+private struct AgilitySunglassesLensShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.minY),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY * 1.18),
+            control2: CGPoint(x: rect.minX, y: rect.maxY * 1.18)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PianoTilesIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let difficulty: PianoTilesDifficulty
+
+    @State private var isCardPressed = false
+    @State private var showsCamera = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterBlue = Color(red: 0.02, green: 0.44, blue: 0.94)
+    private let cardBlue = Color(red: 0.36, green: 0.63, blue: 0.96)
+    private let faceWhite = Color(red: 0.93, green: 0.91, blue: 0.91)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let shapeOffset = characterEntryOffset
+            let shapeScaleX = entryScale * (isLaunchingDrill ? 1.20 : 1.0)
+            let shapeScaleY = entryScale * (isLaunchingDrill ? 1.46 : 1.0)
+            let contentOffset = characterEntryOffset
+            let faceOpacity = isLaunchingDrill ? 0.0 : 1.0
+            let faceScale = isLaunchingDrill ? 0.90 : 1.0
+            let faceLift = isLaunchingDrill ? -height * 0.035 : 0.0
+            let topContentSpacer = isLandscape ? height * 0.165 : height * 0.205
+            let eyeWidth = isLandscape ? base * 0.125 : width * 0.205
+            let eyeHeight = eyeWidth * 0.64
+            let pupilSize = eyeWidth * 0.46
+            let eyeSpacing = isLandscape ? base * 0.105 : width * 0.045
+            let mouthWidth = isLandscape ? base * 0.135 : width * 0.152
+            let mouthHeight = mouthWidth * 0.50
+            let toothWidth = mouthWidth * 0.14
+            let toothHeight = mouthHeight * 0.34
+            let cardWidth = isLandscape ? min(width * 0.34, 320) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 26.0 : 92.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                PianoTilesCharacterShape()
+                    .fill(characterBlue)
+                    .ignoresSafeArea()
+                    .offset(y: shapeOffset + introBounceOffset)
+                    .scaleEffect(x: shapeScaleX, y: shapeScaleY, anchor: .bottom)
+                    .animation(.spring(response: 0.72, dampingFraction: 1.00), value: hasAnimatedCharacter)
+                    .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                    .animation(launchAnimation, value: isLaunchingDrill)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: topContentSpacer)
+
+                    VStack(spacing: 0) {
+                        HStack(spacing: eyeSpacing) {
+                            PianoTilesEyeView(
+                                eyeWidth: eyeWidth,
+                                eyeHeight: eyeHeight,
+                                pupilSize: pupilSize,
+                                pupilOffset: CGSize(width: eyeWidth * 0.10, height: 0),
+                                whiteColor: faceWhite,
+                                blackColor: logoBlack
+                            )
+
+                            PianoTilesEyeView(
+                                eyeWidth: eyeWidth,
+                                eyeHeight: eyeHeight,
+                                pupilSize: pupilSize,
+                                pupilOffset: CGSize(width: eyeWidth * 0.10, height: 0),
+                                whiteColor: faceWhite,
+                                blackColor: logoBlack
+                            )
+                        }
+
+                        ZStack(alignment: .top) {
+                            PianoTilesMouthShape()
+                                .fill(logoBlack)
+                                .frame(width: mouthWidth, height: mouthHeight)
+
+                            HStack(spacing: toothWidth * 0.22) {
+                                RoundedRectangle(cornerRadius: toothWidth * 0.35, style: .continuous)
+                                    .fill(faceWhite)
+                                    .frame(width: toothWidth, height: toothHeight)
+
+                                RoundedRectangle(cornerRadius: toothWidth * 0.35, style: .continuous)
+                                    .fill(faceWhite)
+                                    .frame(width: toothWidth, height: toothHeight)
+                            }
+                            .padding(.top, 1)
+                        }
+                        .padding(.top, isLandscape ? 18 : 22)
+                        .offset(x: isLandscape ? base * 0.018 : width * 0.035)
+                    }
+                    .opacity(faceOpacity)
+                    .scaleEffect(faceScale)
+                    .offset(y: faceLift)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsCamera = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardBlue)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("PIANO TILES")
+                                        .font(.ballr(size: min(width * 0.078, 36), weight: .black))
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("HIT EVERY TILE")
+                                        .font(.ballr(size: min(width * 0.042, 18), weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.86))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.18), radius: isCardPressed ? 0 : 16)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: contentOffset)
+                .animation(.spring(response: 0.72, dampingFraction: 0.80), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            resetLaunchState()
+        }) {
+            PianoTilesCameraView(difficulty: difficulty)
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            resetLaunchState()
+            introBounceOffset = 0
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                hasAnimatedCharacter = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.72) {
+                withAnimation(.easeOut(duration: 0.24)) {
+                    introBounceOffset = 24
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                    withAnimation(.spring(response: 0.54, dampingFraction: 0.68)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PianoTilesCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let topY = h * 0.105
+        let crownBottomY = h * 0.195
+
+        path.move(to: CGPoint(x: 0, y: topY + h * 0.030))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.145, y: topY),
+            control: CGPoint(x: w * 0.030, y: topY)
+        )
+        path.addLine(to: CGPoint(x: w * 0.355, y: topY))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.492, y: crownBottomY),
+            control: CGPoint(x: w * 0.462, y: topY)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.640, y: topY),
+            control: CGPoint(x: w * 0.526, y: topY)
+        )
+        path.addLine(to: CGPoint(x: w * 0.855, y: topY))
+        path.addQuadCurve(
+            to: CGPoint(x: w, y: topY + h * 0.030),
+            control: CGPoint(x: w * 0.970, y: topY)
+        )
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PianoTilesEyeView: View {
+    let eyeWidth: CGFloat
+    let eyeHeight: CGFloat
+    let pupilSize: CGFloat
+    let pupilOffset: CGSize
+    let whiteColor: Color
+    let blackColor: Color
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            PianoTilesHalfEllipseShape()
+                .fill(whiteColor)
+                .frame(width: eyeWidth, height: eyeHeight)
+
+            PianoTilesHalfEllipseShape()
+                .fill(blackColor)
+                .frame(width: pupilSize, height: pupilSize * 0.74)
+                .offset(pupilOffset)
+        }
+        .frame(width: eyeWidth, height: eyeHeight)
+        .clipped()
+    }
+}
+
+private struct PianoTilesHalfEllipseShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY),
+            control1: CGPoint(x: rect.minX, y: rect.minY),
+            control2: CGPoint(x: rect.maxX, y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PianoTilesMouthShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.minY),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY),
+            control2: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct FastTouchingIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isCardPressed = false
+    @State private var showsCamera = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+    @State private var didPlayIntroAnimation = false
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterGreen = Color(red: 0.0, green: 0.71, blue: 0.45)
+    private let cardGreen = Color(red: 0.12, green: 0.80, blue: 0.02)
+    private let stripeWhite = Color(red: 0.95, green: 0.93, blue: 0.93)
+    private let stripeRed = Color(red: 1.0, green: 0.18, blue: 0.15)
+    private let faceWhite = Color(red: 0.93, green: 0.91, blue: 0.91)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let characterOffset = characterEntryOffset
+            let characterScaleX = entryScale * (isLaunchingDrill ? 1.18 : 1.0)
+            let characterScaleY = entryScale * (isLaunchingDrill ? 1.48 : 1.0)
+            let eyeWidth = isLandscape ? base * 0.12 : width * 0.20
+            let eyeHeight = eyeWidth * 1.02
+            let pupilSize = eyeWidth * 0.44
+            let eyeSpacing = isLandscape ? base * 0.18 : width * 0.11
+            let faceTop = isLandscape ? height * 0.245 : height * 0.255
+            let mouthWidth = isLandscape ? base * 0.15 : width * 0.205
+            let mouthHeight = isLandscape ? base * 0.042 : width * 0.072
+            let cardWidth = isLandscape ? min(width * 0.34, 320) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 28.0 : 58.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                FastTouchingCharacterShape()
+                    .fill(characterGreen)
+                    .ignoresSafeArea()
+                    .offset(y: characterOffset + introBounceOffset)
+                    .scaleEffect(x: characterScaleX, y: characterScaleY, anchor: .bottom)
+                    .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                    .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                    .animation(launchAnimation, value: isLaunchingDrill)
+
+                FastTouchingHeadbandView(
+                    whiteColor: stripeWhite,
+                    redColor: stripeRed,
+                    topRatio: 0.150
+                )
+                .ignoresSafeArea()
+                .offset(y: characterOffset + introBounceOffset)
+                .scaleEffect(x: characterScaleX, y: characterScaleY, anchor: .bottom)
+                .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: faceTop)
+
+                    HStack(spacing: eyeSpacing) {
+                        PrecisionTargetEyeView(
+                            eyeWidth: eyeWidth,
+                            eyeHeight: eyeHeight,
+                            pupilSize: pupilSize,
+                            pupilOffset: CGSize(width: eyeWidth * 0.18, height: eyeHeight * 0.24),
+                            whiteColor: faceWhite,
+                            blackColor: logoBlack
+                        )
+
+                        PrecisionTargetEyeView(
+                            eyeWidth: eyeWidth,
+                            eyeHeight: eyeHeight,
+                            pupilSize: pupilSize,
+                            pupilOffset: CGSize(width: eyeWidth * 0.18, height: eyeHeight * 0.24),
+                            whiteColor: faceWhite,
+                            blackColor: logoBlack
+                        )
+                    }
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                    .scaleEffect(isLaunchingDrill ? 0.90 : 1.0)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Capsule()
+                        .fill(logoBlack)
+                        .frame(width: mouthWidth, height: mouthHeight)
+                        .padding(.top, isLandscape ? 16 : 40)
+                        .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                        .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsCamera = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardGreen)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("FAST TOUCHING")
+                                        .font(.ballr(size: min(width * 0.076, 34), weight: .black))
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("COUNT EVERY TOE TOUCH")
+                                        .font(.ballr(size: min(width * 0.040, 18), weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.86))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.18), radius: isCardPressed ? 0 : 16)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: characterEntryOffset)
+                .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                introBounceOffset = 0
+                hasAnimatedCharacter = true
+            }
+            resetLaunchState()
+        }) {
+            FastTouchingCameraView()
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            introBounceOffset = 0
+            guard !didPlayIntroAnimation else {
+                hasAnimatedCharacter = true
+                return
+            }
+
+            resetLaunchState()
+            didPlayIntroAnimation = true
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.96, dampingFraction: 0.88)) {
+                    hasAnimatedCharacter = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.78) {
+                withAnimation(.easeInOut(duration: 0.34)) {
+                    introBounceOffset = 14
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                    withAnimation(.spring(response: 0.72, dampingFraction: 0.82)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PrecisionTargetIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isCardPressed = false
+    @State private var showsCamera = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+    @State private var didPlayIntroAnimation = false
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
+    private let characterRed = Color(red: 1.0, green: 0.177, blue: 0.125)
+    private let cardRed = Color(red: 0.737, green: 0.145, blue: 0.098)
+    private let faceWhite = Color(red: 0.93, green: 0.91, blue: 0.91)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let characterOffset = characterEntryOffset
+            let characterScaleX = entryScale * (isLaunchingDrill ? 1.18 : 1.0)
+            let characterScaleY = entryScale * (isLaunchingDrill ? 1.48 : 1.0)
+            let eyeWidth = isLandscape ? base * 0.12 : width * 0.20
+            let eyeHeight = eyeWidth * 1.02
+            let pupilSize = eyeWidth * 0.44
+            let eyeSpacing = isLandscape ? base * 0.18 : width * 0.11
+            let faceTop = isLandscape ? height * 0.255 : height * 0.300
+            let noseSize = isLandscape ? base * 0.065 : width * 0.12
+            let cardWidth = isLandscape ? min(width * 0.34, 320) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 28.0 : 38.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                PrecisionTargetCharacterShape()
+                    .fill(characterRed)
+                    .ignoresSafeArea()
+                    .offset(y: characterOffset + introBounceOffset)
+                    .scaleEffect(x: characterScaleX, y: characterScaleY, anchor: .bottom)
+                    .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                    .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                    .animation(launchAnimation, value: isLaunchingDrill)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: faceTop)
+
+                    HStack(spacing: eyeSpacing) {
+                        PrecisionTargetEyeView(
+                            eyeWidth: eyeWidth,
+                            eyeHeight: eyeHeight,
+                            pupilSize: pupilSize,
+                            pupilOffset: CGSize(width: eyeWidth * 0.20, height: eyeHeight * 0.24),
+                            whiteColor: faceWhite,
+                            blackColor: logoBlack
+                        )
+
+                        PrecisionTargetEyeView(
+                            eyeWidth: eyeWidth,
+                            eyeHeight: eyeHeight,
+                            pupilSize: pupilSize,
+                            pupilOffset: CGSize(width: eyeWidth * 0.18, height: eyeHeight * 0.24),
+                            whiteColor: faceWhite,
+                            blackColor: logoBlack
+                        )
+                    }
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                    .scaleEffect(isLaunchingDrill ? 0.90 : 1.0)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Circle()
+                        .fill(logoBlack)
+                        .frame(width: noseSize, height: noseSize)
+                        .padding(.top, isLandscape ? 12 : 38)
+                        .offset(x: isLandscape ? base * 0.025 : width * 0.055)
+                        .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                        .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsCamera = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardRed)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("PRECISION TARGETS")
+                                        .font(.ballr(size: min(width * 0.066, 34), weight: .black))
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("HIT THE WALL TARGET")
+                                        .font(.ballr(size: min(width * 0.038, 18), weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.82))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.18), radius: isCardPressed ? 0 : 16)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: characterEntryOffset)
+                .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                introBounceOffset = 0
+                hasAnimatedCharacter = true
+            }
+            resetLaunchState()
+        }) {
+            PrecisionTargetCameraView()
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            introBounceOffset = 0
+            guard !didPlayIntroAnimation else {
+                hasAnimatedCharacter = true
+                return
+            }
+
+            resetLaunchState()
+            didPlayIntroAnimation = true
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.96, dampingFraction: 0.88)) {
+                    hasAnimatedCharacter = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.78) {
+                withAnimation(.easeInOut(duration: 0.34)) {
+                    introBounceOffset = 14
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                    withAnimation(.spring(response: 0.72, dampingFraction: 0.82)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PrecisionTargetCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let topY = h * 0.105
+        let valleyY = h * 0.245
+
+        path.move(to: CGPoint(x: 0, y: topY))
+        path.addQuadCurve(to: CGPoint(x: w * 0.035, y: topY + h * 0.012), control: CGPoint(x: w * 0.015, y: topY))
+        path.addLine(to: CGPoint(x: w * 0.245, y: valleyY))
+        path.addLine(to: CGPoint(x: w * 0.455, y: topY + h * 0.004))
+        path.addQuadCurve(to: CGPoint(x: w * 0.530, y: topY + h * 0.004), control: CGPoint(x: w * 0.492, y: topY - h * 0.030))
+        path.addLine(to: CGPoint(x: w * 0.740, y: valleyY + h * 0.004))
+        path.addLine(to: CGPoint(x: w * 0.960, y: topY + h * 0.012))
+        path.addQuadCurve(to: CGPoint(x: w, y: topY), control: CGPoint(x: w * 0.985, y: topY))
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PrecisionTargetEyeView: View {
+    let eyeWidth: CGFloat
+    let eyeHeight: CGFloat
+    let pupilSize: CGFloat
+    let pupilOffset: CGSize
+    let whiteColor: Color
+    let blackColor: Color
+
+    var body: some View {
+        Ellipse()
+            .fill(whiteColor)
+            .frame(width: eyeWidth, height: eyeHeight)
+            .overlay(alignment: .center) {
+                Circle()
+                    .fill(blackColor)
+                    .frame(width: pupilSize, height: pupilSize)
+                    .offset(pupilOffset)
+            }
+    }
+}
+
+private struct BallBlastRockDropIntroScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    let difficulty: BallBlastRockDropDifficulty
+
+    @State private var isCardPressed = false
+    @State private var showsCamera = false
+    @State private var hasAnimatedCharacter = false
+    @State private var isLaunchingDrill = false
+    @State private var introBounceOffset: CGFloat = 0
+    @State private var didPlayIntroAnimation = false
+
+    private let backgroundYellow = Color(red: 1.0, green: 0.84, blue: 0.0)
+    private let characterPink = Color(red: 0.93, green: 0.80, blue: 0.96)
+    private let cardPurple = Color(red: 0.77, green: 0.50, blue: 0.82)
+    private let faceBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let faceWhite = Color(red: 0.96, green: 0.95, blue: 0.95)
+    private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+    private let launchAnimation = Animation.spring(response: 0.86, dampingFraction: 0.88)
+    private let resetAnimation = Animation.spring(response: 0.50, dampingFraction: 0.90)
+
+    private func resetLaunchState(animated: Bool = false) {
+        if animated {
+            withAnimation(resetAnimation) {
+                isCardPressed = false
+                isLaunchingDrill = false
+            }
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCardPressed = false
+            isLaunchingDrill = false
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let isLandscape = width > height
+            let base = min(width, height)
+            let safeTop = geometry.safeAreaInsets.top
+            let safeBottom = geometry.safeAreaInsets.bottom
+            let characterEntryOffset = hasAnimatedCharacter ? 0 : height * (isLandscape ? 0.78 : 0.62)
+            let entryScale = hasAnimatedCharacter ? 1.0 : 0.94
+            let characterOffset = characterEntryOffset
+            let characterScaleX = entryScale * (isLaunchingDrill ? 1.18 : 1.0)
+            let characterScaleY = entryScale * (isLaunchingDrill ? 1.48 : 1.0)
+            let eyeSize = isLandscape ? base * 0.10 : width * 0.14
+            let eyeSpacing = isLandscape ? base * 0.15 : width * 0.08
+            let mouthWidth = isLandscape ? base * 0.17 : width * 0.24
+            let mouthHeight = mouthWidth * 0.46
+            let cardWidth = isLandscape ? min(width * 0.34, 320) : width * 0.72
+            let cardHeight = isLandscape ? min(height * 0.44, 230) : min(height * 0.34, width * 0.88)
+            let cardTopPadding = isLandscape ? 42.0 : 54.0
+
+            ZStack(alignment: .topLeading) {
+                backgroundYellow
+                    .ignoresSafeArea()
+
+                BallBlastRockDropCharacterShape()
+                    .fill(characterPink)
+                    .ignoresSafeArea()
+                    .offset(y: characterOffset + introBounceOffset)
+                    .scaleEffect(x: characterScaleX, y: characterScaleY, anchor: .bottom)
+                    .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                    .animation(.spring(response: 0.54, dampingFraction: 0.68), value: introBounceOffset)
+                    .animation(launchAnimation, value: isLaunchingDrill)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.ballr(size: 18, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.35), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, safeTop + 72)
+                .padding(.leading, 18)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: isLandscape ? height * 0.30 : height * 0.31)
+
+                    HStack(spacing: eyeSpacing) {
+                        BallBlastRockDropEyeView(
+                            eyeSize: eyeSize,
+                            faceBlack: faceBlack,
+                            faceWhite: faceWhite
+                        )
+
+                        BallBlastRockDropEyeView(
+                            eyeSize: eyeSize,
+                            faceBlack: faceBlack,
+                            faceWhite: faceWhite
+                        )
+                    }
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                    .scaleEffect(isLaunchingDrill ? 0.90 : 1.0)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    BallBlastRockDropSmileShape()
+                        .fill(faceBlack)
+                        .frame(width: mouthWidth, height: mouthHeight)
+                    .padding(.top, isLandscape ? 18 : 26)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+                    .animation(.easeOut(duration: 0.42), value: isLaunchingDrill)
+
+                    Button {
+                        guard !isLaunchingDrill else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isCardPressed = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                                isCardPressed = false
+                            }
+                            withAnimation(launchAnimation) {
+                                isLaunchingDrill = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
+                                showsCamera = true
+                            }
+                        }
+                    } label: {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(cardPurple)
+                            .frame(width: cardWidth, height: cardHeight)
+                            .overlay {
+                                VStack(spacing: 16) {
+                                    Text("ROCK DROP")
+                                        .font(.ballr(size: min(width * 0.070, 34), weight: .black))
+                                        .foregroundStyle(.white)
+                                        .multilineTextAlignment(.center)
+
+                                    Text("DODGE THE FALLING ROCKS")
+                                        .font(.ballr(size: min(width * 0.038, 18), weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.86))
+                                        .multilineTextAlignment(.center)
+                                }
+                                .tracking(0.8)
+                                .padding(.horizontal, 20)
+                            }
+                            .scaleEffect(isCardPressed ? 0.96 : 1.0)
+                            .shadow(color: Color.white.opacity(isCardPressed ? 0.0 : 0.18), radius: isCardPressed ? 0 : 16)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(Color.white.opacity(isCardPressed ? 0.26 : 0.0), lineWidth: 3)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, cardTopPadding)
+                    .opacity(isLaunchingDrill ? 0.0 : 1.0)
+
+                    Spacer(minLength: safeBottom + 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: characterEntryOffset)
+                .animation(.spring(response: 0.96, dampingFraction: 0.88), value: hasAnimatedCharacter)
+                .animation(.easeOut(duration: 0.18), value: isLaunchingDrill)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showsCamera, onDismiss: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                introBounceOffset = 0
+                hasAnimatedCharacter = true
+            }
+            resetLaunchState()
+        }) {
+            BallBlastRockDropCameraView(difficulty: self.difficulty)
+                .ballrCameraPresentationChrome()
+        }
+        .onAppear {
+            introBounceOffset = 0
+            guard !didPlayIntroAnimation else {
+                hasAnimatedCharacter = true
+                return
+            }
+
+            resetLaunchState()
+            didPlayIntroAnimation = true
+            hasAnimatedCharacter = false
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.96, dampingFraction: 0.88)) {
+                    hasAnimatedCharacter = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.78) {
+                withAnimation(.easeInOut(duration: 0.34)) {
+                    introBounceOffset = 14
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                    withAnimation(.spring(response: 0.72, dampingFraction: 0.82)) {
+                        introBounceOffset = 0
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct BallBlastRockDropCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let topY = h * 0.215
+        let peakY = h * 0.095
+        let segment = w / 4.0
+
+        path.move(to: CGPoint(x: 0, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 0.48, y: peakY), control: CGPoint(x: segment * 0.20, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment, y: topY), control: CGPoint(x: segment * 0.80, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 1.48, y: peakY), control: CGPoint(x: segment * 1.20, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 2.0, y: topY), control: CGPoint(x: segment * 1.80, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 2.48, y: peakY), control: CGPoint(x: segment * 2.20, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 3.0, y: topY), control: CGPoint(x: segment * 2.80, y: topY))
+        path.addQuadCurve(to: CGPoint(x: segment * 3.48, y: peakY), control: CGPoint(x: segment * 3.20, y: topY))
+        path.addQuadCurve(to: CGPoint(x: w, y: topY), control: CGPoint(x: segment * 3.80, y: topY))
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct BallBlastRockDropEyeView: View {
+    let eyeSize: CGFloat
+    let faceBlack: Color
+    let faceWhite: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(faceBlack)
+                .frame(width: eyeSize, height: eyeSize)
+
+            Circle()
+                .fill(faceWhite)
+                .frame(width: eyeSize * 0.28, height: eyeSize * 0.28)
+                .offset(x: -eyeSize * 0.18, y: -eyeSize * 0.10)
+
+            Circle()
+                .fill(faceWhite)
+                .frame(width: eyeSize * 0.12, height: eyeSize * 0.12)
+                .offset(x: -eyeSize * 0.28, y: eyeSize * 0.18)
+
+            HStack(spacing: eyeSize * 0.05) {
+                Capsule()
+                    .frame(width: eyeSize * 0.10, height: eyeSize * 0.36)
+                Capsule()
+                    .frame(width: eyeSize * 0.10, height: eyeSize * 0.42)
+                Capsule()
+                    .frame(width: eyeSize * 0.10, height: eyeSize * 0.34)
+            }
+            .foregroundStyle(faceBlack)
+            .rotationEffect(.degrees(-20))
+            .offset(x: -eyeSize * 0.14, y: -eyeSize * 0.47)
+        }
+    }
+}
+
+private struct BallBlastRockDropSmileShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.minY)
+        let radius = rect.width * 0.5
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: .degrees(180),
+            endAngle: .degrees(0),
+            clockwise: true
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct FastTouchingCharacterShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let topY = h * 0.135
+        let humpHeight = h * 0.024
+        let scallopWidth = w * 0.235
+
+        path.move(to: CGPoint(x: 0, y: topY))
+        var x: CGFloat = 0
+        while x < w + scallopWidth {
+            path.addQuadCurve(
+                to: CGPoint(x: min(x + scallopWidth, w), y: topY),
+                control: CGPoint(x: x + scallopWidth * 0.5, y: topY - humpHeight)
+            )
+            x += scallopWidth
+        }
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct FastTouchingHeadbandView: View {
+    let whiteColor: Color
+    let redColor: Color
+    let topRatio: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let stripeY = height * topRatio
+            let stripeHeight = max(height * 0.012, 7)
+            let redStripeHeight = max(height * 0.006, 4)
+            let segmentWidth = width * 0.225
+            let seamWidth = max(width * 0.010, 4)
+
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<6, id: \.self) { index in
+                    let x = CGFloat(index) * segmentWidth - seamWidth * 0.5
+
+                    Capsule()
+                        .fill(whiteColor)
+                        .frame(width: segmentWidth + seamWidth, height: stripeHeight)
+                        .position(x: x + (segmentWidth + seamWidth) * 0.5, y: stripeY)
+
+                    Capsule()
+                        .fill(redColor)
+                        .frame(width: segmentWidth + seamWidth, height: redStripeHeight)
+                        .position(x: x + (segmentWidth + seamWidth) * 0.5, y: stripeY + stripeHeight * 0.54)
+                }
+            }
+        }
     }
 }
 
@@ -947,18 +2758,22 @@ private struct BallrWordmark: View {
             Text("r")
                 .foregroundStyle(Color.orange)
         }
-        .font(.system(size: size, weight: .black, design: .rounded))
+        .font(.ballr(size: size, weight: .black))
     }
 }
 
 private struct ProfilePlayerCard: View {
+    let name: String
+    let accountLabel: String
+    let xp: Int
+
     var body: some View {
         HStack(spacing: 20) {
             ZStack {
                 Circle()
                     .fill(Color.yellow)
                 Image(systemName: "person.fill")
-                    .font(.system(size: 38, weight: .black))
+                    .font(.ballr(size: 38, weight: .black))
                     .foregroundStyle(Color.ballrBlack)
             }
             .frame(width: 86, height: 86)
@@ -968,21 +2783,28 @@ private struct ProfilePlayerCard: View {
             )
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Bishoy")
-                    .font(.system(size: 25, weight: .black, design: .rounded))
+                Text(name)
+                    .font(.ballr(size: 25, weight: .black))
                     .foregroundStyle(.white)
 
-                Text("Level 3 · 1,240 XP")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
+                Text("\(xp) XP")
+                    .font(.ballr(size: 16, weight: .black))
                     .foregroundStyle(Color.yellow)
 
+                Text(accountLabel)
+                    .font(.ballr(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
                 GeometryReader { geometry in
+                    let levelXP = xp % 100
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(.white.opacity(0.12))
                         Capsule()
                             .fill(Color.yellow)
-                            .frame(width: geometry.size.width * 0.60)
+                            .frame(width: geometry.size.width * min(CGFloat(levelXP) / 100.0, 1.0))
                     }
                 }
                 .frame(height: 8)
@@ -1007,11 +2829,11 @@ private struct ProfileStatCard: View {
     var body: some View {
         VStack(spacing: 8) {
             Text(value)
-                .font(.system(size: 34, weight: .black, design: .rounded))
+                .font(.ballr(size: 34, weight: .black))
                 .foregroundStyle(valueColor)
 
             Text(label)
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.ballr(size: 12, weight: .black))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.48))
         }
@@ -1061,11 +2883,11 @@ private struct AchievementBadgeSlot: View {
 
             if index == 0 {
                 Image(systemName: "soccerball")
-                    .font(.system(size: 24, weight: .black))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
             } else if index == 1 {
                 Text("🔥")
-                    .font(.system(size: 26))
+                    .font(.ballr(size: 26))
             }
         }
     }
@@ -1099,7 +2921,7 @@ private struct BallrCardDetailView: View {
                     Button {
                     } label: {
                         Text("SHARE")
-                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .font(.ballr(size: 18, weight: .black))
                             .foregroundStyle(Color.yellow)
                             .frame(maxWidth: .infinity)
                             .frame(height: 64)
@@ -1113,7 +2935,7 @@ private struct BallrCardDetailView: View {
                     Button {
                     } label: {
                         Text("UPGRADE")
-                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .font(.ballr(size: 18, weight: .black))
                             .foregroundStyle(Color.ballrBlack)
                             .frame(maxWidth: .infinity)
                             .frame(height: 64)
@@ -1124,23 +2946,38 @@ private struct BallrCardDetailView: View {
             }
             .padding(.horizontal, 26)
             .padding(.top, 10)
+            .frame(maxHeight: .infinity, alignment: .center)
+            .minimumScaleFactor(0.92)
+            .lineLimit(1)
+            .dynamicTypeSize(.medium)
+            .ignoresSafeArea(.keyboard)
         }
         .toolbar(.hidden, for: .navigationBar)
     }
 }
 
 private struct BallrEliteCard: View {
+    @EnvironmentObject private var authSession: AuthSessionManager
+
+    private var playerName: String {
+        authSession.profileName.uppercased()
+    }
+
+    private var position: String {
+        authSession.profile?.preferredPosition ?? "ST"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("87")
-                            .font(.system(size: 54, weight: .black, design: .rounded))
+                        Text("60")
+                            .font(.ballr(size: 54, weight: .black))
                             .foregroundStyle(.white)
 
-                        Text("OVR")
-                            .font(.system(size: 16, weight: .black, design: .rounded))
+                        Text(position)
+                            .font(.ballr(size: 18, weight: .black))
                             .foregroundStyle(.white)
 
                         RoundedRectangle(cornerRadius: 6)
@@ -1148,7 +2985,7 @@ private struct BallrEliteCard: View {
                             .frame(width: 40, height: 48)
                             .overlay {
                                 Image(systemName: "soccerball")
-                                    .font(.system(size: 22, weight: .black))
+                                    .font(.ballr(size: 22, weight: .black))
                                     .foregroundStyle(.white)
                             }
                             .padding(.top, 10)
@@ -1158,12 +2995,12 @@ private struct BallrEliteCard: View {
 
                     VStack(alignment: .trailing, spacing: 8) {
                         Text("BALLR")
-                            .font(.system(size: 20, weight: .black, design: .rounded))
+                            .font(.ballr(size: 20, weight: .black))
                             .tracking(3)
                             .foregroundStyle(.white)
 
-                        Text("SEASON 1")
-                            .font(.system(size: 13, weight: .black, design: .rounded))
+                        Text("STARTER")
+                            .font(.ballr(size: 13, weight: .black))
                             .foregroundStyle(.white.opacity(0.78))
 
                         HStack(spacing: 8) {
@@ -1193,25 +3030,30 @@ private struct BallrEliteCard: View {
                                     .stroke(.white, lineWidth: 6)
                             )
                             .overlay {
-                                Text("B")
-                                    .font(.system(size: 38, weight: .black, design: .rounded))
-                                    .foregroundStyle(Color.ballrBlack)
+                                ZStack {
+                                    Image(systemName: "person.fill")
+                                        .font(.ballr(size: 40, weight: .black))
+                                        .foregroundStyle(Color.ballrBlack)
+                                }
                             }
                             .offset(y: 20)
                     }
 
                 VStack(spacing: 14) {
-                    Text("BISHOY")
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                    Text(playerName)
+                        .font(.ballr(size: playerName.count > 10 ? 15 : 18, weight: .black))
                         .tracking(6)
                         .foregroundStyle(Color.yellow)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.64)
+                        .padding(.horizontal, 16)
                         .padding(.top, 38)
 
                     VStack(spacing: 12) {
                         HStack {
-                            BallrCardStat(value: "92", label: "JUG")
-                            BallrCardStat(value: "85", label: "DRB")
-                            BallrCardStat(value: "88", label: "SPD")
+                            BallrCardStat(value: "60", label: "PAC")
+                            BallrCardStat(value: "60", label: "SHO")
+                            BallrCardStat(value: "60", label: "PAS")
                         }
 
                         Rectangle()
@@ -1219,15 +3061,15 @@ private struct BallrEliteCard: View {
                             .frame(height: 2)
 
                         HStack {
-                            BallrCardStat(value: "78", label: "SHT")
-                            BallrCardStat(value: "81", label: "PAS")
-                            BallrCardStat(value: "74", label: "STR")
+                            BallrCardStat(value: "60", label: "DRI")
+                            BallrCardStat(value: "60", label: "DEF")
+                            BallrCardStat(value: "60", label: "PHY")
                         }
                     }
                     .padding(.horizontal, 20)
 
-                    Text("BALLR ELITE")
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                    Text("BALLR STARTER")
+                        .font(.ballr(size: 18, weight: .black))
                         .tracking(6)
                         .foregroundStyle(Color.yellow)
                         .padding(.top, 4)
@@ -1261,11 +3103,11 @@ private struct BallrCardStat: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(value)
-                .font(.system(size: 27, weight: .black, design: .rounded))
-                .foregroundStyle(label == "JUG" || label == "DRB" || label == "SPD" ? Color.yellow : .white)
+                .font(.ballr(size: 27, weight: .black))
+                .foregroundStyle(Color.yellow)
 
             Text(label)
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.ballr(size: 12, weight: .black))
                 .foregroundStyle(.white.opacity(0.75))
         }
         .frame(maxWidth: .infinity)
@@ -1274,8 +3116,12 @@ private struct BallrCardStat: View {
 
 private struct BallrSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var authSession: AuthSessionManager
     @State private var soundEnabled = true
     @State private var notificationsEnabled = false
+    @State private var isShowingNameEditor = false
+    @State private var draftName = ""
+    @State private var noticeClearTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -1292,13 +3138,13 @@ private struct BallrSettingsView: View {
                             .frame(width: 46, height: 46)
                             .overlay {
                                 Image(systemName: "chevron.left")
-                                    .font(.system(size: 18, weight: .black))
+                                    .font(.ballr(size: 18, weight: .black))
                                     .foregroundStyle(Color.yellow)
                             }
                     }
 
                     Text("Settings")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .font(.ballr(size: 28, weight: .black))
                         .foregroundStyle(Color.yellow)
 
                     Spacer()
@@ -1307,13 +3153,20 @@ private struct BallrSettingsView: View {
                 .padding(.bottom, 10)
 
                 VStack(spacing: 0) {
-                    SettingsNavigationRow(
-                        icon: "pencil",
-                        title: "Change name",
-                        subtitle: "Bishoy",
-                        iconBackground: Color.yellow.opacity(0.16),
-                        iconColor: Color.yellow
-                    )
+                    Button {
+                        draftName = authSession.profile?.username ?? authSession.profileName
+                        isShowingNameEditor = true
+                    } label: {
+                        SettingsNavigationRow(
+                            icon: "pencil",
+                            title: authSession.isWorking ? "Saving name..." : "Change name",
+                            subtitle: authSession.profileName,
+                            iconBackground: Color.yellow.opacity(0.16),
+                            iconColor: Color.yellow
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authSession.isWorking)
 
                     SettingsDivider()
 
@@ -1337,6 +3190,14 @@ private struct BallrSettingsView: View {
                 }
                 .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 22))
 
+                if let message = authSession.errorMessage {
+                    SettingsStatusMessage(message: message, color: Color.orange)
+                }
+
+                if let message = authSession.noticeMessage {
+                    SettingsStatusMessage(message: message, color: Color.yellow)
+                }
+
                 Button {
                 } label: {
                     SettingsNavigationRow(
@@ -1352,20 +3213,178 @@ private struct BallrSettingsView: View {
                 .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 22))
                 .padding(.top, 2)
 
+                Button {
+                    Task {
+                        await authSession.signOut()
+                    }
+                } label: {
+                    SettingsNavigationRow(
+                        icon: "rectangle.portrait.and.arrow.right",
+                        title: authSession.isWorking ? "Signing out..." : "Sign out",
+                        subtitle: nil,
+                        iconBackground: Color.orange.opacity(0.12),
+                        iconColor: Color.orange,
+                        titleColor: Color.orange
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(authSession.isWorking)
+                .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 22))
+
                 Spacer()
 
                 HStack(spacing: 5) {
                     Text("Ballr v1.0 · Made with")
                     Text("⚽")
                 }
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.ballr(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(0.22))
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 18)
             }
             .padding(.horizontal, 24)
+
+            if isShowingNameEditor {
+                SettingsNameEditorOverlay(
+                    name: $draftName,
+                    isSaving: authSession.isWorking,
+                    onCancel: {
+                        isShowingNameEditor = false
+                    },
+                    onSave: {
+                        isShowingNameEditor = false
+                        Task {
+                            await authSession.updateUsername(draftName)
+                        }
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(20)
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: isShowingNameEditor)
+        .onAppear {
+            authSession.clearAccountMessages()
+        }
+        .onDisappear {
+            noticeClearTask?.cancel()
+            noticeClearTask = nil
+        }
+        .onChange(of: authSession.noticeMessage) { _, message in
+            noticeClearTask?.cancel()
+            guard message != nil else {
+                noticeClearTask = nil
+                return
+            }
+
+            noticeClearTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                authSession.clearAccountMessages()
+                noticeClearTask = nil
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+private struct SettingsNameEditorOverlay: View {
+    @Binding var name: String
+    let isSaving: Bool
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    private var canSave: Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 && !isSaving
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    SettingsIcon(
+                        icon: "pencil",
+                        background: Color.yellow.opacity(0.16),
+                        color: Color.yellow
+                    )
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Change name")
+                                .font(.ballr(size: 26, weight: .black))
+                                .foregroundStyle(Color.yellow)
+                        }
+
+                    Spacer()
+                }
+
+                TextField("Username", text: $name)
+                    .font(.ballr(size: 22, weight: .black))
+                    .foregroundStyle(.white)
+                    .textInputAutocapitalization(.never)
+                    .disableAutocorrection(true)
+                    .padding(.horizontal, 16)
+                    .frame(height: 58)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.yellow.opacity(0.32), lineWidth: 1.5)
+                    }
+
+                HStack(spacing: 12) {
+                    Button(action: onCancel) {
+                        Text("CANCEL")
+                            .font(.ballr(size: 15, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onSave) {
+                        Text(isSaving ? "SAVING..." : "SAVE")
+                            .font(.ballr(size: 15, weight: .black))
+                            .foregroundStyle(Color.ballrBlack)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(canSave ? Color.yellow : Color.yellow.opacity(0.34), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSave)
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: 430)
+            .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.yellow.opacity(0.34), lineWidth: 1.5)
+            }
+            .padding(.horizontal, 24)
+        }
+    }
+}
+
+private struct SettingsStatusMessage: View {
+    let message: String
+    let color: Color
+
+    var body: some View {
+        Text(message)
+            .font(.ballr(size: 14, weight: .black))
+            .foregroundStyle(color)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(color.opacity(0.30), lineWidth: 1)
+            }
     }
 }
 
@@ -1383,12 +3402,12 @@ private struct SettingsNavigationRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 19, weight: .black, design: .rounded))
+                    .font(.ballr(size: 19, weight: .black))
                     .foregroundStyle(titleColor)
 
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 14, weight: .bold))
                         .foregroundStyle(.white.opacity(0.38))
                 }
             }
@@ -1396,7 +3415,7 @@ private struct SettingsNavigationRow: View {
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .black))
+                .font(.ballr(size: 14, weight: .black))
                 .foregroundStyle(Color.yellow)
         }
         .padding(.horizontal, 24)
@@ -1416,7 +3435,7 @@ private struct SettingsToggleRow: View {
             SettingsIcon(icon: icon, background: iconBackground, color: iconColor)
 
             Text(title)
-                .font(.system(size: 19, weight: .black, design: .rounded))
+                .font(.ballr(size: 19, weight: .black))
                 .foregroundStyle(.white)
 
             Spacer()
@@ -1441,7 +3460,7 @@ private struct SettingsIcon: View {
             .frame(width: 52, height: 52)
             .overlay {
                 Image(systemName: icon)
-                    .font(.system(size: 22, weight: .black))
+                    .font(.ballr(size: 22, weight: .black))
                     .foregroundStyle(color)
             }
     }
@@ -1464,16 +3483,16 @@ private struct LevelsHeaderStatChip: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .black))
+                .font(.ballr(size: 13, weight: .black))
                 .foregroundStyle(Color(red: 1.0, green: 0.32, blue: 0.18))
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(value)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.ballr(size: 12, weight: .black))
                     .foregroundStyle(Color.yellow)
 
                 Text(label.uppercased())
-                    .font(.system(size: 7, weight: .black, design: .rounded))
+                    .font(.ballr(size: 7, weight: .black))
                     .foregroundStyle(.white.opacity(0.46))
             }
         }
@@ -1674,7 +3693,7 @@ private struct LevelStartPromptView: View {
             ZStack(alignment: .topTrailing) {
                 VStack(spacing: 10) {
                     Text(promptText)
-                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .font(.ballr(size: 15, weight: .black))
                         .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -1686,7 +3705,7 @@ private struct LevelStartPromptView: View {
                         HStack(spacing: 10) {
                             Button(action: { onSelectEasy?() }) {
                                 Text("EASY")
-                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 14, weight: .black))
                                     .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 48)
@@ -1696,7 +3715,7 @@ private struct LevelStartPromptView: View {
 
                             Button(action: { onSelectHard?() }) {
                                 Text("HARD")
-                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .font(.ballr(size: 14, weight: .black))
                                     .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 48)
@@ -1708,7 +3727,7 @@ private struct LevelStartPromptView: View {
                     } else {
                         Button(action: onStart) {
                             Text("START")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 52)
@@ -1725,7 +3744,7 @@ private struct LevelStartPromptView: View {
 
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.ballr(size: 13, weight: .black))
                         .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
@@ -1892,7 +3911,7 @@ private struct SoccerFieldBackground: View {
                         let labelY = sectionBottomY - sectionHeight + 26
 
                         Text("STADIUM \(section + 1)")
-                            .font(.system(size: 16, weight: .black, design: .rounded))
+                            .font(.ballr(size: 16, weight: .black))
                             .tracking(2)
                             .foregroundStyle(Color.yellow.opacity(0.22))
                             .frame(width: width)
@@ -1911,7 +3930,7 @@ private struct SoccerFieldBackground: View {
                                 .frame(height: 2)
 
                             Text("NEXT STADIUM")
-                                .font(.system(size: 12, weight: .black, design: .rounded))
+                                .font(.ballr(size: 12, weight: .black))
                                 .tracking(2)
                                 .foregroundStyle(Color.yellow.opacity(0.35))
                         }
@@ -1968,12 +3987,12 @@ private struct LevelNodeView: View {
 
                 VStack(spacing: 1) {
                     Text("\(level)")
-                        .font(.system(size: level > 9 ? 16 : 20, weight: .black, design: .rounded))
+                        .font(.ballr(size: level > 9 ? 16 : 20, weight: .black))
                         .foregroundStyle(isLocked ? .white.opacity(0.40) : Color(red: 0.11, green: 0.10, blue: 0.11))
 
                     if isLocked {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 10, weight: .black))
+                            .font(.ballr(size: 10, weight: .black))
                             .foregroundStyle(.white.opacity(0.40))
                     }
                 }
@@ -2017,18 +4036,18 @@ private struct DrillCardView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(drill.title)
-                    .font(.headline.weight(.black))
+                    .font(.ballr(size: 17, weight: .black))
                     .foregroundStyle(Color.ballrBlack)
 
                 Text(drill.subtitle)
-                    .font(.subheadline.weight(.medium))
+                    .font(.ballr(size: 15, weight: .medium))
                     .foregroundStyle(Color.ballrBlack.opacity(0.7))
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.headline.weight(.black))
+                .font(.ballr(size: 17, weight: .black))
                 .foregroundStyle(Color.ballrOrange)
         }
         .padding(18)
@@ -2144,7 +4163,7 @@ private struct PracticeDifficultyPromptView: View {
             ZStack(alignment: .topTrailing) {
                 VStack(spacing: 12) {
                     Text("\(drill.title) - Choose difficulty")
-                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .font(.ballr(size: 15, weight: .black))
                         .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -2153,7 +4172,7 @@ private struct PracticeDifficultyPromptView: View {
                         .padding(.horizontal, 24)
 
                     Text(drill.subtitle)
-                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .font(.ballr(size: 12, weight: .black))
                         .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11).opacity(0.72))
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -2163,7 +4182,7 @@ private struct PracticeDifficultyPromptView: View {
                     HStack(spacing: 10) {
                         Button(action: onSelectEasy) {
                             Text("EASY")
-                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .font(.ballr(size: 14, weight: .black))
                                 .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
@@ -2173,7 +4192,7 @@ private struct PracticeDifficultyPromptView: View {
 
                         Button(action: onSelectHard) {
                             Text("HARD")
-                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                .font(.ballr(size: 14, weight: .black))
                                 .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
@@ -2188,7 +4207,7 @@ private struct PracticeDifficultyPromptView: View {
 
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.ballr(size: 13, weight: .black))
                         .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
@@ -2225,7 +4244,7 @@ private struct PracticeDrillCardView: View {
                         .frame(width: 46, height: 46)
 
                     Image(systemName: style.symbol)
-                        .font(.system(size: 21, weight: .black))
+                        .font(.ballr(size: 21, weight: .black))
                         .foregroundStyle(style.iconForeground)
                 }
 
@@ -2236,7 +4255,7 @@ private struct PracticeDrillCardView: View {
                     .frame(width: 34, height: 34)
                     .overlay {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 14, weight: .black))
+                            .font(.ballr(size: 14, weight: .black))
                             .foregroundStyle(style.accentColor)
                             .offset(x: 1.5)
                     }
@@ -2244,14 +4263,14 @@ private struct PracticeDrillCardView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(drill.title)
-                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .font(.ballr(size: 17, weight: .black))
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .minimumScaleFactor(0.76)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(drill.subtitle)
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 11, weight: .bold))
                     .foregroundStyle(.white.opacity(0.52))
                     .lineLimit(2)
                     .minimumScaleFactor(0.78)
@@ -2292,10 +4311,10 @@ private struct DrillPlaceholderView: View {
                     .frame(width: 96, height: 96)
 
                 Text(drill.title)
-                    .font(.largeTitle.weight(.black))
+                    .font(.ballr(size: 34, weight: .black))
 
                 Text("Camera drill view coming soon.")
-                    .font(.title3.weight(.bold))
+                    .font(.ballr(size: 20, weight: .bold))
                     .foregroundStyle(Color.ballrBlack.opacity(0.75))
 
                 Text("This placeholder screen keeps the navigation flow ready for the future camera experience.")
@@ -2322,7 +4341,7 @@ private struct BallCardView: View {
                 .overlay {
                     VStack(spacing: 12) {
                         Text("BALLR CARD")
-                            .font(.headline.weight(.black))
+                            .font(.ballr(size: 17, weight: .black))
                             .foregroundStyle(Color.ballrOrange)
 
                         ZStack {
@@ -2331,12 +4350,12 @@ private struct BallCardView: View {
                                 .frame(width: 96, height: 96)
 
                             Image(systemName: "figure.soccer")
-                                .font(.system(size: 48, weight: .black))
+                                .font(.ballr(size: 48, weight: .black))
                                 .foregroundStyle(Color.ballrOrange)
                         }
 
                         Text("Rookie Striker")
-                            .font(.title3.weight(.black))
+                            .font(.ballr(size: 20, weight: .black))
                     }
                     .padding(.bottom, 14)
                 }
@@ -2377,7 +4396,7 @@ private struct BallrBackground: View {
 private struct BallrLogo: View {
     var body: some View {
         Text("Ballr")
-            .font(.system(size: 36, weight: .black, design: .rounded))
+            .font(.ballr(size: 36, weight: .black))
             .foregroundStyle(Color.ballrOrange)
     }
 }
@@ -2390,17 +4409,17 @@ private struct TutorialCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
-                .font(.title2.weight(.black))
+                .font(.ballr(size: 22, weight: .black))
                 .foregroundStyle(.white)
                 .frame(width: 52, height: 52)
                 .background(Color.ballrOrange, in: RoundedRectangle(cornerRadius: 16))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.headline.weight(.black))
+                    .font(.ballr(size: 17, weight: .black))
 
                 Text(description)
-                    .font(.subheadline.weight(.medium))
+                    .font(.ballr(size: 15, weight: .medium))
                     .foregroundStyle(Color.ballrBlack.opacity(0.75))
             }
 

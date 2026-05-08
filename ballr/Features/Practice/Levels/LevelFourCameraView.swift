@@ -33,6 +33,7 @@ struct LevelFourCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -64,8 +65,9 @@ struct LevelFourCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.isCompleted)
             .navigationDestination(isPresented: $showsNextLevel) {
-                LevelFiveCameraView()
+                LevelFiveCameraView(nextDestination: .rockDropEasy, targetPattern: .far)
                     .ballrCameraPresentationChrome()
             }
             .onAppear {
@@ -112,7 +114,7 @@ struct LevelFourCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -554,10 +556,10 @@ private struct LevelFourHudChip: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 36, weight: .black, design: .rounded))
+                .font(.ballr(size: 36, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 18)
@@ -576,7 +578,7 @@ private struct LevelFourLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting level 4...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -597,18 +599,18 @@ private struct LevelFourErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -623,7 +625,7 @@ private struct LevelFourErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -646,8 +648,8 @@ private struct LevelFourGameState {
     var hitStreak = 0
 
     private let popupValue = 5
-    private let spawnTopFraction: CGFloat = 0.75
     private let clearance: CGFloat = 20
+    private var nextTargetIndex = 0
 
     mutating func prepare(in size: CGSize, forceRespawn: Bool = false, allowSpawn: Bool = true) {
         guard size.width > 0, size.height > 0 else {
@@ -712,18 +714,16 @@ private struct LevelFourGameState {
         avoiding ballRect: CGRect? = nil
     ) {
         let radius = targetRadius(for: size)
-        let bounds = spawnBounds(in: size, radius: radius)
+        let candidates = closeTargetCenters(in: size, radius: radius)
         let ballCenter = ballRect.map { CGPoint(x: $0.midX, y: $0.midY) }
         let ballRadius = ballRect.map { max($0.width, $0.height) * 0.5 } ?? 0
 
-        var bestCandidate = CGPoint(x: bounds.midX, y: bounds.midY)
+        var bestCandidate = candidates.first ?? CGPoint(x: size.width * 0.5, y: size.height * 0.82)
         var bestQuality = CGFloat.leastNonzeroMagnitude
 
-        for _ in 0..<64 {
-            let candidate = CGPoint(
-                x: CGFloat.random(in: bounds.minX...bounds.maxX),
-                y: CGFloat.random(in: bounds.minY...bounds.maxY)
-            )
+        for offset in 0..<candidates.count {
+            let candidateIndex = (nextTargetIndex + offset) % candidates.count
+            let candidate = candidates[candidateIndex]
             let quality = candidateQuality(
                 candidate,
                 previousCenter: previousCenter,
@@ -742,11 +742,15 @@ private struct LevelFourGameState {
                 ballRadius: ballRadius,
                 targetRadius: radius
             ) {
+                nextTargetIndex = (candidateIndex + 1) % candidates.count
                 target = LevelFourTarget(center: candidate, radius: radius, spawnedAt: timestamp)
                 return
             }
         }
 
+        if let fallbackIndex = candidates.firstIndex(of: bestCandidate) {
+            nextTargetIndex = (fallbackIndex + 1) % candidates.count
+        }
         target = LevelFourTarget(center: bestCandidate, radius: radius, spawnedAt: timestamp)
     }
 
@@ -754,16 +758,19 @@ private struct LevelFourGameState {
         min(max(min(size.width, size.height) * 0.091, 36), 62)
     }
 
-    private func spawnBounds(in size: CGSize, radius: CGFloat) -> CGRect {
-        let horizontalPadding = radius + 26
-        let top = max(size.height * spawnTopFraction + radius, radius + 76)
-        let bottom = max(top, size.height - radius - 58)
-        return CGRect(
-            x: horizontalPadding,
-            y: top,
-            width: max(1, size.width - horizontalPadding * 2),
-            height: max(1, bottom - top)
-        )
+    private func closeTargetCenters(in size: CGSize, radius: CGFloat) -> [CGPoint] {
+        let minX = radius + 26
+        let maxX = max(minX, size.width - radius - 26)
+        let minY = radius + 76
+        let maxY = max(minY, size.height - radius - 58)
+        let offset = min(max(size.width * 0.12, radius * 2.4), size.width * 0.18)
+        let visualCenterX = size.width * 0.515
+        let rightTargetNudge = size.width * 0.065
+        let y = min(max(size.height * 0.82, minY), maxY)
+        return [
+            CGPoint(x: min(max(visualCenterX - offset, minX), maxX), y: y),
+            CGPoint(x: min(max(visualCenterX + offset + rightTargetNudge, minX), maxX), y: y)
+        ]
     }
 
     private func candidateQuality(
@@ -795,7 +802,7 @@ private struct LevelFourGameState {
     ) -> Bool {
         if let previousCenter {
             let previousDistance = hypot(candidate.x - previousCenter.x, candidate.y - previousCenter.y)
-            if previousDistance < targetRadius * 3 {
+            if previousDistance < targetRadius * 2.1 {
                 return false
             }
         }

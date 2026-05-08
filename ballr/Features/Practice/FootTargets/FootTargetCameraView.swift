@@ -86,6 +86,7 @@ struct FootTargetCameraView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -119,6 +120,7 @@ struct FootTargetCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.isCompleted)
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
                 case .levelFour:
@@ -172,7 +174,7 @@ struct FootTargetCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.65), in: Circle())
@@ -754,10 +756,10 @@ private struct FootTargetHudChip: View {
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
             Text(title)
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 36, weight: .black, design: .rounded))
+                .font(.ballr(size: 36, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 18)
@@ -785,11 +787,11 @@ private struct FootTargetReadinessOverlay: View {
 
                 VStack(spacing: 16) {
                     Text(footFoundStartedAt == nil ? "Find your foot" : "Hold your foot still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.ballr(size: 34, weight: .black))
                         .foregroundStyle(footFoundStartedAt == nil ? Color.yellow : .white)
 
                     Text(footFoundStartedAt == nil ? "Put your foot in frame to start." : "Starting in \(remainingText(at: timeline.date))")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 18, weight: .bold))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
 
@@ -832,7 +834,7 @@ private struct FootTargetLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting foot targets...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -853,18 +855,18 @@ private struct FootTargetErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -879,7 +881,7 @@ private struct FootTargetErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)

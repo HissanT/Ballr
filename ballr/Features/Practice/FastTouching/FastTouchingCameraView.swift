@@ -25,12 +25,35 @@ struct FastTouchingCameraView: View {
                 FastTouchingRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
+                if coordinator.phase == .readiness {
+                    BallrJeffCameraOverlay()
+                        .zIndex(90)
+                } else if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
+                    BallrJeffCameraOverlay(
+                        presentation: .countdown(
+                            startedAt: countdownStartedAt,
+                            scoreText: "\(coordinator.touchCount)",
+                            timeText: coordinator.timerText
+                        )
+                    )
+                    .zIndex(90)
+                } else if coordinator.phase == .live {
+                    BallrJeffCameraOverlay(
+                        presentation: .planted(
+                            scoreText: "\(coordinator.touchCount)",
+                            timeText: coordinator.timerText
+                        )
+                    )
+                    .zIndex(90)
+                }
+
                 if coordinator.phase == .readiness || coordinator.phase == .countdown || coordinator.phase == .live {
                     VStack(spacing: 0) {
                         topBar
                         Spacer()
                     }
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -62,6 +85,7 @@ struct FastTouchingCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .finished)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -99,7 +123,7 @@ struct FastTouchingCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -934,11 +958,11 @@ private struct FastTouchingHudChip: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text(title)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.ballr(size: 11, weight: .black))
                 .foregroundStyle(.white.opacity(0.68))
 
             Text(value)
-                .font(.system(size: 26, weight: .black, design: .rounded))
+                .font(.ballr(size: 26, weight: .black))
                 .foregroundStyle(tint)
         }
         .padding(.horizontal, 14)
@@ -972,17 +996,17 @@ private struct FastTouchingErrorOverlay: View {
 
             VStack(spacing: 18) {
                 Text(permissionDenied ? "Camera Needed" : "Unable to Start")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .font(.ballr(size: 30, weight: .black))
                     .foregroundStyle(.yellow)
 
                 Text(message)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
 
                 Button("DONE", action: onDismiss)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .font(.ballr(size: 20, weight: .black))
                     .foregroundStyle(.black)
                     .frame(width: 160, height: 54)
                     .background(.yellow, in: RoundedRectangle(cornerRadius: 8))
@@ -1007,11 +1031,11 @@ private struct FastTouchingReadinessOverlay: View {
 
                 VStack(spacing: 18) {
                     Text(readyStartedAt == nil ? "Place the ball" : "Hold still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.ballr(size: 34, weight: .black))
                         .foregroundStyle(.yellow)
 
                     Text("Put the ball on the ground and stand over it. We’ll count every toe touch for 30 seconds.")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 18, weight: .bold))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
@@ -1053,24 +1077,24 @@ private struct FastTouchingFinishedOverlay: View {
 
             VStack(spacing: 20) {
                 Text("TIME")
-                    .font(.system(size: 36, weight: .black, design: .rounded))
+                    .font(.ballr(size: 36, weight: .black))
                     .foregroundStyle(.yellow)
 
                 Text("You finished with \(touchCount) toe touches.")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 20, weight: .bold))
                     .foregroundStyle(.white.opacity(0.86))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
 
                 HStack(spacing: 14) {
                     Button("DONE", action: onDone)
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .font(.ballr(size: 18, weight: .black))
                         .foregroundStyle(.white)
                         .frame(width: 130, height: 56)
                         .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
                     Button("PLAY AGAIN", action: onPrimary)
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .font(.ballr(size: 18, weight: .black))
                         .foregroundStyle(.black)
                         .frame(width: 170, height: 56)
                         .background(.yellow, in: RoundedRectangle(cornerRadius: 8))

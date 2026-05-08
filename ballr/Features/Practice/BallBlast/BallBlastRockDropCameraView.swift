@@ -6,6 +6,7 @@ import UIKit
 
 enum BallBlastRockDropDifficulty: String, Identifiable {
     case easy
+    case medium
     case hard
 
     var id: String { rawValue }
@@ -28,6 +29,23 @@ enum BallBlastRockDropDifficulty: String, Identifiable {
                 targetChanceBase: 0.10,
                 targetChanceRamp: 0.12,
                 targetChanceCap: 0.28
+            )
+        case .medium:
+            return BallBlastRockDropGameConfig(
+                initialSpawnDelay: 0.64,
+                maxRocksBase: 4,
+                maxRocksRamp: 7,
+                spawnIntervalMinimumStart: 1.02,
+                spawnIntervalMinimumRamp: 0.31,
+                spawnIntervalMaximumStart: 1.48,
+                spawnIntervalMaximumRamp: 0.44,
+                speedBaseStart: 102,
+                speedBaseRamp: 128,
+                speedProgressMultiplier: 0.05,
+                speedRandomRange: 0.70...1.18,
+                targetChanceBase: 0.14,
+                targetChanceRamp: 0.16,
+                targetChanceCap: 0.36
             )
         case .hard:
             return BallBlastRockDropGameConfig(
@@ -88,10 +106,6 @@ struct BallBlastRockDropCameraView: View {
                 BallTrackerPreviewLayerView(previewLayer: cameraController.previewLayer)
                     .ignoresSafeArea()
 
-                Color.black.opacity(0.16)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-
                 BallBlastRockDropRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
@@ -100,6 +114,7 @@ struct BallBlastRockDropCameraView: View {
                     Spacer()
                 }
                 .padding(.vertical, 14)
+                .zIndex(100)
 
                 if cameraController.isStarting {
                     BallBlastRockDropLoadingOverlay()
@@ -142,6 +157,7 @@ struct BallBlastRockDropCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .won)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -179,7 +195,7 @@ struct BallBlastRockDropCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -902,11 +918,11 @@ private struct BallBlastRockDropHudChip: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(title)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.ballr(size: 11, weight: .black))
                 .tracking(1.3)
                 .foregroundStyle(.white.opacity(0.58))
             Text(value)
-                .font(.system(size: 26, weight: .black, design: .rounded))
+                .font(.ballr(size: 26, weight: .black))
                 .foregroundStyle(.white)
                 .monospacedDigit()
         }
@@ -927,14 +943,14 @@ private struct BallBlastRockDropMiniHudChip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 9, weight: .black, design: .rounded))
+                .font(.ballr(size: 9, weight: .black))
                 .tracking(1.2)
                 .foregroundStyle(.white.opacity(0.56))
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
 
             Text(value)
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .font(.ballr(size: 12, weight: .black))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -955,7 +971,7 @@ private struct BallBlastRockDropLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting Rock Drop...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -976,18 +992,18 @@ private struct BallBlastRockDropErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -1002,7 +1018,7 @@ private struct BallBlastRockDropErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -1034,22 +1050,22 @@ private struct BallBlastRockDropFinishedOverlay: View {
 
             VStack(spacing: 14) {
                 Text(title)
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.ballr(size: 28, weight: .black))
                     .foregroundStyle(Color.yellow)
 
                 Text(subtitle)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 16, weight: .bold))
                     .foregroundStyle(.white.opacity(0.76))
 
                 Text(timeText)
-                    .font(.system(size: 54, weight: .black, design: .rounded))
+                    .font(.ballr(size: 54, weight: .black))
                     .foregroundStyle(.white)
                     .monospacedDigit()
 
                 HStack(spacing: 10) {
                     Button(action: onPrimary) {
                         Text(primaryTitle)
-                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .font(.ballr(size: 14, weight: .black))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -1058,7 +1074,7 @@ private struct BallBlastRockDropFinishedOverlay: View {
 
                     Button(action: onDone) {
                         Text("DONE")
-                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .font(.ballr(size: 14, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)

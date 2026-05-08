@@ -35,7 +35,7 @@ struct PracticeLevelCompletionOverlay: View {
                         Spacer()
 
                         Text(title)
-                            .font(.system(size: 54, weight: .black, design: .rounded))
+                            .font(.ballr(size: 54, weight: .black))
                             .foregroundStyle(Color.black.opacity(0.88))
                             .opacity(showDone ? 1 : 0)
                             .scaleEffect(showDone ? 1 : 0.84)
@@ -44,7 +44,7 @@ struct PracticeLevelCompletionOverlay: View {
                             HStack(spacing: 10) {
                                 Button(action: onBackToLevels) {
                                     Text("BACK TO LEVELS")
-                                        .font(.system(size: 14, weight: .black, design: .rounded))
+                                        .font(.ballr(size: 14, weight: .black))
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 18)
                                         .frame(height: 44)
@@ -53,7 +53,7 @@ struct PracticeLevelCompletionOverlay: View {
 
                                 Button(action: onTryAgain) {
                                     Text(primaryTitle)
-                                        .font(.system(size: 14, weight: .black, design: .rounded))
+                                        .font(.ballr(size: 14, weight: .black))
                                         .foregroundStyle(.black)
                                         .padding(.horizontal, 18)
                                         .frame(height: 44)
@@ -63,7 +63,7 @@ struct PracticeLevelCompletionOverlay: View {
                                 if showsNextLevelButton {
                                     Button(action: onNextLevel) {
                                         Text(nextLevelTitle)
-                                            .font(.system(size: 14, weight: .black, design: .rounded))
+                                            .font(.ballr(size: 14, weight: .black))
                                             .foregroundStyle(.black)
                                             .padding(.horizontal, 18)
                                             .frame(height: 44)
@@ -155,16 +155,16 @@ struct PracticeLevelPlaceholderView: View {
 
             VStack(spacing: 16) {
                 Text("LEVEL \(level)")
-                    .font(.system(size: 18, weight: .black, design: .rounded))
+                    .font(.ballr(size: 18, weight: .black))
                     .tracking(2)
                     .foregroundStyle(Color.yellow)
 
                 Text("Coming Soon")
-                    .font(.system(size: 36, weight: .black, design: .rounded))
+                    .font(.ballr(size: 36, weight: .black))
                     .foregroundStyle(.white)
 
                 Text("This level has not been built yet.")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 18, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
             }
             .multilineTextAlignment(.center)

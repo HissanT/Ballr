@@ -6,6 +6,7 @@ import UIKit
 
 enum PianoTilesDifficulty: String, Identifiable {
     case easy
+    case medium
     case hard
 
     var id: String { rawValue }
@@ -18,11 +19,17 @@ enum PianoTilesDifficulty: String, Identifiable {
                 spawnGapScale: 2.05,
                 tileSpeedScale: 0.90
             )
+        case .medium:
+            return PianoTilesGameConfig(
+                warningLeadDuration: 0.88,
+                spawnGapScale: 1.72,
+                tileSpeedScale: 1.0
+            )
         case .hard:
             return PianoTilesGameConfig(
-                warningLeadDuration: 0.75,
-                spawnGapScale: 1.5,
-                tileSpeedScale: 1.1
+                warningLeadDuration: 0.82,
+                spawnGapScale: 1.60,
+                tileSpeedScale: 1.06
             )
         }
     }
@@ -69,6 +76,7 @@ struct PianoTilesCameraView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
+                .zIndex(100)
 
                 if cameraController.isStarting {
                     PianoTilesLoadingOverlay()
@@ -111,6 +119,7 @@ struct PianoTilesCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .won)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -147,7 +156,7 @@ struct PianoTilesCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -873,7 +882,7 @@ private final class PianoTilesRenderView: UIView {
         let label = CATextLayer()
         label.contentsScale = max(traitCollection.displayScale, 1)
         label.alignmentMode = .center
-        label.font = UIFont.systemFont(ofSize: 15, weight: .black)
+        label.font = BallrFont.uiFont(size: 15, weight: .black)
         label.fontSize = 15
         label.foregroundColor = UIColor.white.cgColor
 
@@ -1527,12 +1536,12 @@ private struct PianoTilesHudChip: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .font(.ballr(size: 10, weight: .black))
                 .tracking(1.2)
                 .foregroundStyle(.white.opacity(0.55))
 
             Text(value)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.ballr(size: 18, weight: .black))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
@@ -1552,7 +1561,7 @@ private struct PianoTilesLoadingOverlay: View {
             ProgressView()
                 .tint(.white)
             Text("Starting Piano Tiles...")
-                .font(.system(size: 16, weight: .black, design: .rounded))
+                .font(.ballr(size: 16, weight: .black))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 20)
@@ -1573,18 +1582,18 @@ private struct PianoTilesErrorOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Camera Unavailable")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.ballr(size: 24, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(message)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 15, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center)
 
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("CLOSE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -1599,7 +1608,7 @@ private struct PianoTilesErrorOverlay: View {
                             UIApplication.shared.open(url)
                         } label: {
                             Text("OPEN SETTINGS")
-                                .font(.system(size: 15, weight: .black, design: .rounded))
+                                .font(.ballr(size: 15, weight: .black))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 18)
                                 .frame(height: 42)
@@ -1631,22 +1640,22 @@ private struct PianoTilesFinishedOverlay: View {
 
             VStack(spacing: 12) {
                 Text(title)
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .font(.ballr(size: 32, weight: .black))
                     .foregroundStyle(.white)
 
                 Text(subtitle)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 16, weight: .bold))
                     .foregroundStyle(.white.opacity(0.68))
 
                 Text(scoreText)
-                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .font(.ballr(size: 30, weight: .black))
                     .foregroundStyle(Color.yellow)
                     .padding(.top, 4)
 
                 HStack(spacing: 10) {
                     Button(action: onDone) {
                         Text("DONE")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -1655,7 +1664,7 @@ private struct PianoTilesFinishedOverlay: View {
 
                     Button(action: onPrimary) {
                         Text(primaryTitle)
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .font(.ballr(size: 15, weight: .black))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 18)
                             .frame(height: 42)

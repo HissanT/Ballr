@@ -17,7 +17,7 @@ enum BallrOrientationController {
     }
 
     static func restoreDefaultOrientation() {
-        update(mask: .allButUpsideDown, preferredOrientation: .portrait)
+        update(mask: .portrait, preferredOrientation: .portrait)
     }
 
     private static func update(
@@ -29,6 +29,8 @@ enum BallrOrientationController {
         guard let windowScene = activeWindowScene() else {
             return
         }
+
+        windowScene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
 
         windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in
             // Ignore geometry update failures and still attempt device rotation.

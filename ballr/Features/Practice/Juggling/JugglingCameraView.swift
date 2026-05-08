@@ -31,6 +31,7 @@ struct JugglingCameraView: View {
                     Spacer()
                 }
                 .padding(.vertical, 14)
+                .zIndex(100)
 
                 if cameraController.isStarting {
                     JugglingLoadingOverlay()
@@ -51,9 +52,10 @@ struct JugglingCameraView: View {
                 if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
                 }
-            }
-            .ballrCameraPresentationChrome()
-            .onAppear {
+        }
+        .ballrCameraPresentationChrome()
+        .ballrAwardsXPOnSuccess(coordinator.juggleCount >= 10)
+        .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
                 cameraController.publishesTrackingFramesToSwiftUI = false
@@ -90,7 +92,7 @@ struct JugglingCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.60), in: Circle())
@@ -103,7 +105,7 @@ struct JugglingCameraView: View {
                 JugglingHudChip(title: "JUGGLES", value: "\(coordinator.juggleCount)", tint: .yellow)
 
                 Text(coordinator.statusText)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .font(.ballr(size: 12, weight: .black))
                     .tracking(1.2)
                     .foregroundStyle(.white.opacity(0.72))
                     .padding(.horizontal, 10)
@@ -295,7 +297,15 @@ private final class JugglingCoordinator: ObservableObject {
             confidences[point.joint] = CGFloat(point.confidence)
         }
 
-        return JugglingDetectedBody(points: points, confidences: confidences, bounds: size)
+        let envelopeRect = overlayState.normalizedEnvelopeRect.flatMap {
+            cameraController.displayRect(for: $0)
+        }
+        return JugglingDetectedBody(
+            points: points,
+            confidences: confidences,
+            envelopeRect: envelopeRect,
+            bounds: size
+        )
     }
 
     private func updateStatus(isBallTracked: Bool, hasBody: Bool) {
@@ -468,6 +478,14 @@ private final class JugglingRenderView: UIView {
 
         #if DEBUG
         if let body {
+            if let envelopeRect = body.envelopeRect {
+                context.setFillColor(UIColor.systemTeal.withAlphaComponent(0.08).cgColor)
+                context.setStrokeColor(UIColor.systemTeal.withAlphaComponent(0.78).cgColor)
+                context.setLineWidth(2.5)
+                context.fill(envelopeRect)
+                context.stroke(envelopeRect)
+            }
+
             for zone in body.zones {
                 let isHighlighted = zone.kind == activeHighlightedKind()
                 context.setFillColor((isHighlighted ? UIColor.systemYellow : UIColor.systemGreen).withAlphaComponent(isHighlighted ? 0.22 : 0.10).cgColor)
@@ -480,7 +498,7 @@ private final class JugglingRenderView: UIView {
 
         if let debugEventText {
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                .font: BallrFont.uiFont(size: 14, weight: .bold),
                 .foregroundColor: UIColor.white,
                 .backgroundColor: UIColor.black.withAlphaComponent(0.55)
             ]
@@ -503,14 +521,21 @@ private final class JugglingRenderView: UIView {
 private struct JugglingDetectedBody {
     let points: [JugglingBodyJoint: CGPoint]
     let confidences: [JugglingBodyJoint: CGFloat]
+    let envelopeRect: CGRect?
     let zones: [JugglingContactZone]
 
-    init?(points: [JugglingBodyJoint: CGPoint], confidences: [JugglingBodyJoint: CGFloat], bounds: CGSize) {
+    init?(
+        points: [JugglingBodyJoint: CGPoint],
+        confidences: [JugglingBodyJoint: CGFloat],
+        envelopeRect: CGRect?,
+        bounds: CGSize
+    ) {
         self.points = points
         self.confidences = confidences
+        self.envelopeRect = envelopeRect?.intersection(Self.boundsRect(for: bounds))
         self.zones = Self.makeZones(points: points, confidences: confidences, bounds: bounds)
 
-        guard !zones.isEmpty else {
+        guard !zones.isEmpty || self.envelopeRect != nil else {
             return nil
         }
     }
@@ -1041,11 +1066,11 @@ private struct JugglingHudChip: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text(title)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.ballr(size: 11, weight: .black))
                 .foregroundStyle(.white.opacity(0.68))
 
             Text(value)
-                .font(.system(size: 38, weight: .black, design: .rounded))
+                .font(.ballr(size: 38, weight: .black))
                 .monospacedDigit()
                 .foregroundStyle(tint)
         }
@@ -1080,17 +1105,17 @@ private struct JugglingErrorOverlay: View {
 
             VStack(spacing: 18) {
                 Text(permissionDenied ? "Camera Needed" : "Unable to Start")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .font(.ballr(size: 30, weight: .black))
                     .foregroundStyle(.yellow)
 
                 Text(message)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
 
                 Button("DONE", action: onDismiss)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .font(.ballr(size: 20, weight: .black))
                     .foregroundStyle(.black)
                     .frame(width: 160, height: 54)
                     .background(.yellow, in: RoundedRectangle(cornerRadius: 8))
@@ -1115,11 +1140,11 @@ private struct JugglingReadinessOverlay: View {
 
                 VStack(spacing: 18) {
                     Text(readyStartedAt == nil ? "Find the ball" : "Hold still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.ballr(size: 34, weight: .black))
                         .foregroundStyle(.yellow)
 
                     Text("Keep your lower body and the ball in frame.")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.ballr(size: 18, weight: .bold))
                         .foregroundStyle(.white.opacity(0.78))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)

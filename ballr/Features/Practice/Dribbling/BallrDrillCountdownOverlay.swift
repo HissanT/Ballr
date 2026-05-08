@@ -25,7 +25,7 @@ struct BallrDrillCountdownOverlay: View {
                     .ignoresSafeArea()
 
                 Text(label)
-                    .font(.system(size: labelSize(for: elapsed), weight: .black, design: .rounded))
+                    .font(.ballr(size: labelSize(for: elapsed), weight: .black))
                     .foregroundStyle(elapsed < 3 ? Color.yellow : .white)
                     .opacity(textOpacity(for: elapsed))
                     .scaleEffect(textScale(for: elapsed))
@@ -91,9 +91,9 @@ enum BallrDrillSoundPlayer {
     private static var winnerPlayer: AVAudioPlayer?
     private static var comboPlayer: AVAudioPlayer?
     private static var incorrectPlayer: AVAudioPlayer?
+    private static var jeffWobbleStepPlayer: AVAudioPlayer?
     private static var rockDropLoopPlayer: AVAudioPlayer?
     private static var rockHitBallPlayer: AVAudioPlayer?
-    private static var freezeMusicPlayer: AVAudioPlayer?
     private static var rockDropLoopStopWorkItem: DispatchWorkItem?
     private static var rockHitBallFadeOutWorkItem: DispatchWorkItem?
 
@@ -115,6 +115,16 @@ enum BallrDrillSoundPlayer {
             fileExtension: "mp3",
             player: &incorrectPlayer,
             errorLabel: "Incorrect sound"
+        )
+    }
+
+    static func playJeffWobbleStep() {
+        play(
+            resource: "jeff_wobble_step",
+            fileExtension: "wav",
+            player: &jeffWobbleStepPlayer,
+            errorLabel: "Jeff wobble step sound",
+            initialVolume: 0.75
         )
     }
 
@@ -190,32 +200,6 @@ enum BallrDrillSoundPlayer {
         rockHitBallPlayer?.volume = rockHitBallTargetVolume
     }
 
-    static func startFreezeMusicLoop() {
-        play(
-            resource: "Freeze music",
-            fileExtension: "wav",
-            player: &freezeMusicPlayer,
-            errorLabel: "Freeze Challenge music",
-            loops: true
-        )
-    }
-
-    static func pauseFreezeMusic() {
-        freezeMusicPlayer?.pause()
-    }
-
-    static func resumeFreezeMusic() {
-        guard let freezeMusicPlayer, !freezeMusicPlayer.isPlaying else {
-            return
-        }
-        freezeMusicPlayer.play()
-    }
-
-    static func stopFreezeMusic() {
-        freezeMusicPlayer?.stop()
-        freezeMusicPlayer?.currentTime = 0
-    }
-
     private static func play(
         resource: String,
         fileExtension: String,
@@ -274,11 +258,11 @@ struct BallrDrillReadinessOverlay: View {
                 if ballFoundStartedAt == nil {
                     VStack(spacing: 14) {
                         Text("Find the ball")
-                            .font(.system(size: 36, weight: .black, design: .rounded))
+                            .font(.ballr(size: 36, weight: .black))
                             .foregroundStyle(Color.yellow)
 
                         Text("Put the phone sideways and keep the ball in frame.")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.ballr(size: 18, weight: .bold))
                             .foregroundStyle(.white.opacity(0.78))
                             .multilineTextAlignment(.center)
                     }
@@ -286,11 +270,11 @@ struct BallrDrillReadinessOverlay: View {
                 } else {
                     VStack(spacing: 18) {
                         Text("Put the phone sideways")
-                            .font(.system(size: 28, weight: .black, design: .rounded))
+                            .font(.ballr(size: 28, weight: .black))
                             .foregroundStyle(.white)
 
                         Text("Keep the ball in frame.")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.ballr(size: 18, weight: .bold))
                             .foregroundStyle(.white.opacity(0.74))
 
                         ZStack(alignment: .leading) {
@@ -304,7 +288,7 @@ struct BallrDrillReadinessOverlay: View {
                         .frame(width: 220, height: 12)
 
                         Text("Hold still")
-                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .font(.ballr(size: 13, weight: .black))
                             .tracking(1.6)
                             .foregroundStyle(Color.yellow)
                     }

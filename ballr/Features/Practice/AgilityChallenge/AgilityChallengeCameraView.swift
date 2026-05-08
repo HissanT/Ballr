@@ -31,6 +31,7 @@ struct AgilityChallengeCameraView: View {
                         Spacer()
                     }
                     .padding(.vertical, 14)
+                    .zIndex(100)
                 }
 
                 if cameraController.isStarting {
@@ -62,6 +63,7 @@ struct AgilityChallengeCameraView: View {
                 }
             }
             .ballrCameraPresentationChrome()
+            .ballrAwardsXPOnSuccess(coordinator.phase == .finished)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -99,7 +101,7 @@ struct AgilityChallengeCameraView: View {
                 showsQuitConfirmation = true
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .black))
+                    .font(.ballr(size: 18, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 46, height: 46)
                     .background(.black.opacity(0.58), in: Circle())
@@ -142,7 +144,7 @@ private final class AgilityChallengeCoordinator: ObservableObject {
     @Published private(set) var timerText = "30"
     @Published private(set) var score = 0
 
-    private let requiredBodyLockSeconds: TimeInterval = 2.0
+    private let requiredBodyLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 30.0
     private let lostTrackingPromptFrameThreshold = 12
@@ -548,10 +550,10 @@ private struct AgilityChallengeHudChip: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(title)
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .font(.ballr(size: 10, weight: .black))
                 .foregroundStyle(.white.opacity(0.72))
             Text(value)
-                .font(.system(size: 24, weight: .black, design: .rounded))
+                .font(.ballr(size: 24, weight: .black))
                 .foregroundStyle(tint)
         }
         .padding(.horizontal, 14)
@@ -585,17 +587,17 @@ private struct AgilityChallengeErrorOverlay: View {
 
             VStack(spacing: 18) {
                 Text(permissionDenied ? "Camera Needed" : "Unable to Start")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .font(.ballr(size: 30, weight: .black))
                     .foregroundStyle(.yellow)
 
                 Text(message)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 17, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
 
                 Button("DONE", action: onDismiss)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .font(.ballr(size: 20, weight: .black))
                     .foregroundStyle(.black)
                     .frame(width: 160, height: 54)
                     .background(.yellow, in: RoundedRectangle(cornerRadius: 8))
@@ -608,49 +610,23 @@ private struct AgilityChallengeErrorOverlay: View {
 private struct AgilityChallengeReadinessOverlay: View {
     let bodyFoundStartedAt: Date?
 
-    private let requiredLockSeconds: TimeInterval = 2.0
-
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let progress = readinessProgress(at: timeline.date)
-
+        GeometryReader { geometry in
             ZStack {
-                Color.black.opacity(0.84)
-                    .ignoresSafeArea()
+                Text("KEEP THE BALL IN THE\nFRAME")
+                    .font(.ballr(size: min(geometry.size.width * 0.058, 46), weight: .black))
+                    .tracking(1.4)
+                    .lineSpacing(13)
+                    .foregroundStyle(.black)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .white.opacity(0.18), radius: 1, x: 0, y: 1)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
-                VStack(spacing: 18) {
-                    Text(bodyFoundStartedAt == nil ? "Find your body" : "Hold still")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
-                        .foregroundStyle(.yellow)
-
-                    Text("Stay in frame, then move side to side between the two lines.")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 28)
-
-                    if bodyFoundStartedAt != nil {
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 999)
-                                .fill(.white.opacity(0.12))
-                                .frame(width: 240, height: 16)
-
-                            RoundedRectangle(cornerRadius: 999)
-                                .fill(Color.yellow)
-                                .frame(width: 240 * progress, height: 16)
-                        }
-                        .padding(.top, 8)
-                    }
-                }
+                BallrJeffCameraOverlay()
             }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
         }
-    }
-
-    private func readinessProgress(at date: Date) -> CGFloat {
-        guard let bodyFoundStartedAt else {
-            return 0
-        }
-        return min(max(date.timeIntervalSince(bodyFoundStartedAt) / requiredLockSeconds, 0), 1)
     }
 }
 
@@ -666,24 +642,24 @@ private struct AgilityChallengeFinishedOverlay: View {
 
             VStack(spacing: 20) {
                 Text("TIME")
-                    .font(.system(size: 36, weight: .black, design: .rounded))
+                    .font(.ballr(size: 36, weight: .black))
                     .foregroundStyle(.yellow)
 
                 Text("You crossed the full distance \(scoreText) times.")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.ballr(size: 20, weight: .bold))
                     .foregroundStyle(.white.opacity(0.86))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
 
                 HStack(spacing: 14) {
                     Button("DONE", action: onDone)
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .font(.ballr(size: 18, weight: .black))
                         .foregroundStyle(.white)
                         .frame(width: 130, height: 56)
                         .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
                     Button("PLAY AGAIN", action: onPrimary)
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .font(.ballr(size: 18, weight: .black))
                         .foregroundStyle(.black)
                         .frame(width: 170, height: 56)
                         .background(.yellow, in: RoundedRectangle(cornerRadius: 8))
