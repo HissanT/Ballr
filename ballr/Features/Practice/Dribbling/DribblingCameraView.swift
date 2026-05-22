@@ -10,6 +10,8 @@ struct DribblingCameraView: View {
     @State private var startPhase: BallrDrillStartPhase = .readiness
     @State private var showsQuitConfirmation = false
 
+    var isDribblingTwo = false
+
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
 
@@ -46,8 +48,25 @@ struct DribblingCameraView: View {
 
             if startPhase == .countdown, let countdownStartedAt {
                 BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+
+                if isDribblingTwo {
+                    DribblingTwoJeffCountdownOverlay(
+                        startedAt: countdownStartedAt,
+                        scoreText: "0"
+                    )
+                    .zIndex(90)
+                } else {
+                    DribblingJeffCountdownOverlay(startedAt: countdownStartedAt)
+                        .zIndex(90)
+                }
             } else if startPhase == .readiness && cameraController.errorMessage == nil {
                 BallrDrillReadinessOverlay(ballFoundStartedAt: ballFoundStartedAt)
+
+                DribblingJeffReadinessOverlay()
+                    .zIndex(90)
+            } else if startPhase == .live && isDribblingTwo {
+                DribblingTwoJeffHangingOverlay(scoreText: "0")
+                    .zIndex(90)
             }
         }
         .ballrCameraPresentationChrome()
@@ -88,26 +107,30 @@ struct DribblingCameraView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text("DRIBBLING")
-                    .font(.ballr(size: 22, weight: .black))
-                    .foregroundStyle(.white)
+                if !isDribblingTwo {
+                    Text("DRIBBLING")
+                        .font(.ballr(size: 22, weight: .black))
+                        .foregroundStyle(.white)
+                }
 
-                HStack(spacing: 8) {
-                    DribblingHudChip(
-                        title: cameraController.overlayState.statusText,
-                        value: cameraController.overlayState.isTracking ? "LIVE" : "SCAN",
-                        tint: cameraController.overlayState.isTracking ? .green : .orange
-                    )
-                    DribblingHudChip(
-                        title: "BALL",
-                        value: confidenceText,
-                        tint: .yellow
-                    )
-                    DribblingHudChip(
-                        title: "CANDS",
-                        value: "\(cameraController.overlayState.candidateCount)",
-                        tint: .white
-                    )
+                if !isDribblingTwo {
+                    HStack(spacing: 8) {
+                        DribblingHudChip(
+                            title: cameraController.overlayState.statusText,
+                            value: cameraController.overlayState.isTracking ? "LIVE" : "SCAN",
+                            tint: cameraController.overlayState.isTracking ? .green : .orange
+                        )
+                        DribblingHudChip(
+                            title: "BALL",
+                            value: confidenceText,
+                            tint: .yellow
+                        )
+                        DribblingHudChip(
+                            title: "CANDS",
+                            value: "\(cameraController.overlayState.candidateCount)",
+                            tint: .white
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct BallrCompletionXPAwardEnvironmentKey: EnvironmentKey {
+    static let defaultValue = 50
+}
+
+extension EnvironmentValues {
+    fileprivate var ballrCompletionXPAward: Int {
+        get { self[BallrCompletionXPAwardEnvironmentKey.self] }
+        set { self[BallrCompletionXPAwardEnvironmentKey.self] = newValue }
+    }
+}
+
 struct BallrCameraPresentationModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -13,9 +24,11 @@ struct BallrCameraPresentationModifier: ViewModifier {
 
 private struct BallrCompletionXPAwardModifier: ViewModifier {
     @EnvironmentObject private var authSession: AuthSessionManager
+    @Environment(\.ballrCompletionXPAward) private var environmentXPAward
     @State private var hasAwarded = false
 
     let isSuccessful: Bool
+    let xpAward: Int?
 
     func body(content: Content) -> some View {
         ZStack {
@@ -52,7 +65,7 @@ private struct BallrCompletionXPAwardModifier: ViewModifier {
 
         hasAwarded = true
         Task {
-            await authSession.awardSuccessfulDrillCompletion()
+            await authSession.awardSuccessfulDrillCompletion(xpAward: xpAward ?? environmentXPAward)
         }
     }
 }
@@ -97,7 +110,7 @@ private struct BallrLevelUpEventOverlay: View {
                         .scaleEffect(showsNewLevel ? 1.0 : 0.82)
                 }
 
-                Text("+50 XP")
+                Text("+\(event.xpAward) XP")
                     .font(.ballr(size: 22, weight: .black))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
@@ -130,7 +143,11 @@ extension View {
         modifier(BallrCameraPresentationModifier())
     }
 
-    func ballrAwardsXPOnSuccess(_ isSuccessful: Bool) -> some View {
-        modifier(BallrCompletionXPAwardModifier(isSuccessful: isSuccessful))
+    func ballrAwardsXPOnSuccess(_ isSuccessful: Bool, xpAward: Int? = nil) -> some View {
+        modifier(BallrCompletionXPAwardModifier(isSuccessful: isSuccessful, xpAward: xpAward))
+    }
+
+    func ballrCompletionXPAward(_ xpAward: Int) -> some View {
+        environment(\.ballrCompletionXPAward, xpAward)
     }
 }

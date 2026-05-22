@@ -4,12 +4,22 @@ import Foundation
 import SwiftUI
 import UIKit
 
+enum LevelFourNextDestination {
+    case levelThreeBallTargets
+    case rockDropEasy
+}
+
 struct LevelFourCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
     @StateObject private var coordinator = LevelFourCoordinator()
     @State private var showsQuitConfirmation = false
     @State private var showsNextLevel = false
+    private let nextDestination: LevelFourNextDestination
+
+    init(nextDestination: LevelFourNextDestination = .levelThreeBallTargets) {
+        self.nextDestination = nextDestination
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -67,8 +77,14 @@ struct LevelFourCameraView: View {
             .ballrCameraPresentationChrome()
             .ballrAwardsXPOnSuccess(coordinator.isCompleted)
             .navigationDestination(isPresented: $showsNextLevel) {
-                LevelFiveCameraView(nextDestination: .rockDropEasy, targetPattern: .far)
-                    .ballrCameraPresentationChrome()
+                switch nextDestination {
+                case .levelThreeBallTargets:
+                    LevelFourCameraView(nextDestination: .rockDropEasy)
+                        .ballrCameraPresentationChrome()
+                case .rockDropEasy:
+                    BallBlastRockDropCameraView(difficulty: .easy)
+                        .ballrCameraPresentationChrome()
+                }
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
@@ -145,7 +161,7 @@ private final class LevelFourCoordinator: ObservableObject {
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let requiredSuccessfulHits = 25
-    private let completionAnimationDuration: TimeInterval = 1.2
+    private let completionAnimationDuration: TimeInterval = 2.05
     private let completionButtonRevealDelay: TimeInterval = 0.28
 
     private var gameState = LevelFourGameState()

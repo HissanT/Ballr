@@ -209,7 +209,7 @@ private final class FootTargetCoordinator: ObservableObject {
 
     let requiredSuccessfulHits: Int
     private let countdownDuration: TimeInterval = 4.0
-    private let completionAnimationDuration: TimeInterval = 1.2
+    private let completionAnimationDuration: TimeInterval = 2.05
     private let completionButtonRevealDelay: TimeInterval = 0.28
     private let configuration: FootTargetConfiguration
 

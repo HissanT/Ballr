@@ -91,7 +91,7 @@ struct LevelFiveCameraView: View {
             .navigationDestination(isPresented: $showsNextLevel) {
                 switch nextDestination {
                 case .levelSix:
-                    BallBlastRockDropCameraView(difficulty: .medium)
+                    AgilityChallengeCameraView()
                         .ballrCameraPresentationChrome()
                 case .rockDropEasy:
                     BallBlastRockDropCameraView(difficulty: .easy)
@@ -182,7 +182,7 @@ private final class LevelFiveCoordinator: ObservableObject {
     private let countdownDuration: TimeInterval = 4.0
     private let requiredSuccessfulHits = 25
     private let allowedMisses = 5
-    private let finishAnimationDuration: TimeInterval = 1.2
+    private let finishAnimationDuration: TimeInterval = 2.05
     private let finishButtonRevealDelay: TimeInterval = 0.28
 
     private let targetPattern: LevelFiveTargetPattern

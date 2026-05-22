@@ -15,21 +15,13 @@ struct PracticeLevelCompletionOverlay: View {
         TimelineView(.animation) { timeline in
             GeometryReader { geometry in
                 let progress = completionProgress(at: timeline.date)
-                let showDone = progress >= 0.72
+                let showDone = progress >= 0.98
 
                 ZStack {
-                    if progress >= 1 {
-                        Color.yellow
-                            .ignoresSafeArea()
-                    }
-
-                    PracticeLevelWaveFillShape(side: .left, progress: progress, phase: progress)
-                        .fill(Color.yellow)
-                        .ignoresSafeArea()
-
-                    PracticeLevelWaveFillShape(side: .right, progress: progress, phase: progress + 0.18)
-                        .fill(Color.yellow)
-                        .ignoresSafeArea()
+                    PracticeLevelCompletionWaveBackground(
+                        progress: progress,
+                        phase: timeline.date.timeIntervalSinceReferenceDate
+                    )
 
                     VStack(spacing: 18) {
                         Spacer()
@@ -90,58 +82,125 @@ struct PracticeLevelCompletionOverlay: View {
         }
 
         let elapsed = date.timeIntervalSince(startedAt)
-        if buttonsVisible {
-            return 1
-        }
-        return CGFloat(min(max(elapsed / 1.2, 0), 1))
+        return CGFloat(min(max(elapsed / 2.05, 0), 1))
     }
 }
 
-struct PracticeLevelWaveFillShape: Shape {
-    enum Side {
-        case left
-        case right
+struct PracticeLevelCompletionWaveBackground: View {
+    let progress: CGFloat
+    let phase: TimeInterval
+
+    var body: some View {
+        ZStack {
+            PracticeLevelBottomWaveShape(
+                progress: waveProgress(start: 0.00, end: 0.70),
+                phase: phase,
+                amplitude: 20,
+                cycles: 1.35
+            )
+            .fill(Color(red: 1.00, green: 0.96, blue: 0.42))
+            .ignoresSafeArea()
+
+            PracticeLevelBottomWaveShape(
+                progress: waveProgress(start: 0.16, end: 0.84),
+                phase: phase + 0.22,
+                amplitude: 26,
+                cycles: 1.65
+            )
+            .fill(Color(red: 1.00, green: 0.82, blue: 0.10))
+            .ignoresSafeArea()
+
+            PracticeLevelBottomWaveShape(
+                progress: waveProgress(start: 0.32, end: 1.00),
+                phase: phase + 0.44,
+                amplitude: 32,
+                cycles: 1.95
+            )
+            .fill(Color(red: 0.95, green: 0.62, blue: 0.00))
+            .ignoresSafeArea()
+
+            PracticeLevelWaveFoamShape(
+                progress: waveProgress(start: 0.10, end: 0.88),
+                phase: phase + 0.08
+            )
+            .stroke(Color.white.opacity(0.18), lineWidth: 3)
+            .ignoresSafeArea()
+        }
     }
 
-    let side: Side
+    private func waveProgress(start: CGFloat, end: CGFloat) -> CGFloat {
+        let clamped = min(max(progress, 0), 1)
+        guard end > start else {
+            return clamped >= end ? 1 : 0
+        }
+        return min(max((clamped - start) / (end - start), 0), 1)
+    }
+}
+
+struct PracticeLevelBottomWaveShape: Shape {
     let progress: CGFloat
-    let phase: CGFloat
+    let phase: TimeInterval
+    let amplitude: CGFloat
+    let cycles: CGFloat
 
     func path(in rect: CGRect) -> Path {
         let clampedProgress = min(max(progress, 0), 1)
-        let maxWidth = rect.width * 0.5
-        let filledWidth = maxWidth * clampedProgress
-        let amplitude = max(10, 28 * (1 - clampedProgress * 0.5))
-        let phaseOffset = CGFloat(sin(Double(phase) * .pi * 2)) * amplitude * 0.45
+        let fillHeight = rect.height * (0.02 + clampedProgress * 1.12)
+        let baseY = rect.maxY - fillHeight
+        let resolvedAmplitude = amplitude * (1 - clampedProgress * 0.28)
+        let phaseOffset = CGFloat(phase).truncatingRemainder(dividingBy: 1) * .pi * 2
+        let step = max(rect.width / 48, 8)
 
         var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: waveY(x: rect.minX, rect: rect, baseY: baseY, amplitude: resolvedAmplitude, phaseOffset: phaseOffset)))
 
-        switch side {
-        case .left:
-            let edgeX = min(rect.midX, filledWidth)
-            path.move(to: .zero)
-            path.addLine(to: CGPoint(x: edgeX, y: 0))
-            path.addCurve(
-                to: CGPoint(x: edgeX, y: rect.height),
-                control1: CGPoint(x: edgeX - amplitude, y: rect.height * 0.28),
-                control2: CGPoint(x: edgeX + amplitude + phaseOffset, y: rect.height * 0.72)
-            )
-            path.addLine(to: CGPoint(x: 0, y: rect.height))
-            path.closeSubpath()
-        case .right:
-            let edgeX = max(rect.midX, rect.width - filledWidth)
-            path.move(to: CGPoint(x: rect.width, y: 0))
-            path.addLine(to: CGPoint(x: edgeX, y: 0))
-            path.addCurve(
-                to: CGPoint(x: edgeX, y: rect.height),
-                control1: CGPoint(x: edgeX + amplitude, y: rect.height * 0.28),
-                control2: CGPoint(x: edgeX - amplitude - phaseOffset, y: rect.height * 0.72)
-            )
-            path.addLine(to: CGPoint(x: rect.width, y: rect.height))
-            path.closeSubpath()
+        var x = rect.minX
+        while x <= rect.maxX {
+            path.addLine(to: CGPoint(x: x, y: waveY(x: x, rect: rect, baseY: baseY, amplitude: resolvedAmplitude, phaseOffset: phaseOffset)))
+            x += step
+        }
+
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+
+    private func waveY(x: CGFloat, rect: CGRect, baseY: CGFloat, amplitude: CGFloat, phaseOffset: CGFloat) -> CGFloat {
+        let normalizedX = (x - rect.minX) / max(rect.width, 1)
+        let primary = sin((normalizedX * cycles * .pi * 2) + phaseOffset)
+        let secondary = sin((normalizedX * (cycles + 0.65) * .pi * 2) - phaseOffset * 0.72) * 0.34
+        return baseY + (primary + secondary) * amplitude
+    }
+}
+
+struct PracticeLevelWaveFoamShape: Shape {
+    let progress: CGFloat
+    let phase: TimeInterval
+
+    func path(in rect: CGRect) -> Path {
+        let clampedProgress = min(max(progress, 0), 1)
+        let fillHeight = rect.height * (0.02 + clampedProgress * 1.04)
+        let baseY = rect.maxY - fillHeight
+        let amplitude = CGFloat(18 * (1 - clampedProgress * 0.25))
+        let phaseOffset = CGFloat(phase).truncatingRemainder(dividingBy: 1) * .pi * 2
+        let step = max(rect.width / 42, 8)
+
+        var path = Path()
+        var x = rect.minX
+        path.move(to: CGPoint(x: x, y: foamY(x: x, rect: rect, baseY: baseY, amplitude: amplitude, phaseOffset: phaseOffset)))
+
+        while x <= rect.maxX {
+            path.addLine(to: CGPoint(x: x, y: foamY(x: x, rect: rect, baseY: baseY, amplitude: amplitude, phaseOffset: phaseOffset)))
+            x += step
         }
 
         return path
+    }
+
+    private func foamY(x: CGFloat, rect: CGRect, baseY: CGFloat, amplitude: CGFloat, phaseOffset: CGFloat) -> CGFloat {
+        let normalizedX = (x - rect.minX) / max(rect.width, 1)
+        return baseY + sin((normalizedX * 1.55 * .pi * 2) + phaseOffset) * amplitude
     }
 }
 

@@ -41,6 +41,11 @@ fileprivate struct PianoTilesGameConfig {
     let tileSpeedScale: CGFloat
 }
 
+enum PianoTilesHudStyle {
+    case full
+    case tilesLeftOnly
+}
+
 struct PianoTilesCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = BallTrackerCameraController()
@@ -48,9 +53,11 @@ struct PianoTilesCameraView: View {
     @State private var showsQuitConfirmation = false
 
     let difficulty: PianoTilesDifficulty
+    let hudStyle: PianoTilesHudStyle
 
-    init(difficulty: PianoTilesDifficulty = .hard) {
+    init(difficulty: PianoTilesDifficulty = .hard, hudStyle: PianoTilesHudStyle = .full) {
         self.difficulty = difficulty
+        self.hudStyle = hudStyle
         _coordinator = StateObject(wrappedValue: PianoTilesCoordinator(difficulty: difficulty))
     }
 
@@ -70,13 +77,15 @@ struct PianoTilesCameraView: View {
                 PianoTilesRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if coordinator.phase != .gameOver && coordinator.phase != .won {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .zIndex(100)
 
                 if cameraController.isStarting {
                     PianoTilesLoadingOverlay()
@@ -97,24 +106,26 @@ struct PianoTilesCameraView: View {
                 }
 
                 if coordinator.phase == .gameOver {
-                    PianoTilesFinishedOverlay(
-                        title: "GAME OVER",
-                        subtitle: "A tile slipped past.",
-                        scoreText: coordinator.scoreText,
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        title: "TRY AGAIN",
+                        primaryTitle: "TRY AGAIN",
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
 
                 if coordinator.phase == .won {
-                    PianoTilesFinishedOverlay(
-                        title: "COMPLETE",
-                        subtitle: "Clean run.",
-                        scoreText: "40/40",
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
             }
@@ -136,6 +147,7 @@ struct PianoTilesCameraView: View {
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
+                coordinator.tearDown()
                 BallrOrientationController.restoreDefaultOrientation()
             }
             .onChange(of: geometry.size) { _, newSize in
@@ -164,10 +176,15 @@ struct PianoTilesCameraView: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                PianoTilesHudChip(title: "SCORE", value: coordinator.scoreText, tint: .yellow)
+            switch hudStyle {
+            case .full:
+                HStack(spacing: 8) {
+                    PianoTilesHudChip(title: "SCORE", value: coordinator.scoreText, tint: .yellow)
+                    PianoTilesHudChip(title: "LEFT", value: coordinator.remainingText, tint: .green)
+                    PianoTilesHudChip(title: "MODE", value: coordinator.modeText, tint: .cyan)
+                }
+            case .tilesLeftOnly:
                 PianoTilesHudChip(title: "LEFT", value: coordinator.remainingText, tint: .green)
-                PianoTilesHudChip(title: "MODE", value: coordinator.modeText, tint: .cyan)
             }
         }
     }
@@ -211,9 +228,13 @@ private final class PianoTilesCoordinator: ObservableObject {
     @Published private(set) var scoreText = "0/40"
     @Published private(set) var remainingText = "40"
     @Published private(set) var modeText = "READY"
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
+    private let finishAnimationDuration: TimeInterval = 2.05
+    private let finishButtonRevealDelay: TimeInterval = 0.28
     private let lostBallPromptFrameThreshold = 18
     private let maxPausedFramesBeforeTilesMove = 10
 
@@ -226,10 +247,16 @@ private final class PianoTilesCoordinator: ObservableObject {
     private let difficulty: PianoTilesDifficulty
     private var gameState: PianoTilesGameState
     private weak var renderView: PianoTilesRenderView?
+    private var finishWorkItem: DispatchWorkItem?
 
     init(difficulty: PianoTilesDifficulty) {
         self.difficulty = difficulty
         gameState = PianoTilesGameState(config: difficulty.gameConfig)
+    }
+
+    func tearDown() {
+        cancelFinishWorkItem()
+        PianoTilesSoundPlayer.stop()
     }
 
     func attach(renderView: PianoTilesRenderView) {
@@ -252,6 +279,7 @@ private final class PianoTilesCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
+        cancelFinishWorkItem()
         self.size = resolvedGameplaySize(fallback: size)
         phase = .readiness
         ballFoundStartedAt = nil
@@ -259,6 +287,8 @@ private final class PianoTilesCoordinator: ObservableObject {
         scoreText = "0/40"
         remainingText = "40"
         modeText = "READY"
+        finishStartedAt = nil
+        showsFinishButtons = false
         liveElapsed = 0
         lastStepAt = nil
         pausedFrameCount = 0
@@ -453,12 +483,12 @@ private final class PianoTilesCoordinator: ObservableObject {
             liveElapsed += delta
             switch gameState.stepWithoutBall(in: size, elapsed: liveElapsed, delta: delta) {
             case .missed:
-                phase = .gameOver
+                finish(as: .gameOver, at: timestamp)
                 modeText = "MISS"
                 return
             case .won(_):
                 BallrDrillSoundPlayer.playWinner()
-                phase = .won
+                finish(as: .won, at: timestamp)
                 modeText = "CLEAR"
                 return
             case .completed(_), .holdStarted(_), .none:
@@ -490,18 +520,41 @@ private final class PianoTilesCoordinator: ObservableObject {
             modeText = "HOLD"
         case .missed:
             PianoTilesSoundPlayer.stop()
-            phase = .gameOver
+            finish(as: .gameOver, at: timestamp)
             modeText = "MISS"
         case .won(let trigger):
             if let trigger {
                 PianoTilesSoundPlayer.playCompletion(for: trigger)
             }
             BallrDrillSoundPlayer.playWinner()
-            phase = .won
+            finish(as: .won, at: timestamp)
             modeText = "CLEAR"
         case .none:
             modeText = "PLAY"
         }
+    }
+
+    private func finish(as finishPhase: PianoTilesPhase, at timestamp: Date) {
+        guard phase != .gameOver, phase != .won else {
+            return
+        }
+
+        phase = finishPhase
+        finishStartedAt = timestamp
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
+        }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 
     private var promptText: String? {

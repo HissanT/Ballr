@@ -6,6 +6,7 @@ import Vision
 
 struct JumpingChallengeFrame {
     let overlayState: JumpingChallengeOverlayState
+    let handOverlayState: HandPoseOverlayState
     let timestamp: Date
     let framePixelSize: CGSize
 }
@@ -14,6 +15,8 @@ struct JumpingLegOverlayState: Identifiable {
     let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
+    let normalizedFootRect: CGRect
+    let normalizedFootPoints: [CGPoint]
     let confidence: Double
 }
 
@@ -48,6 +51,7 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
     private let processingSemaphore = DispatchSemaphore(value: 1)
     private let throttledTrackingPublishInterval: TimeInterval = 0.15
     private let request = VNDetectHumanBodyPoseRequest()
+    private let handRequest = VNDetectHumanHandPoseRequest()
 
     private var videoInput: AVCaptureDeviceInput?
     private var isConfigured = false
@@ -56,15 +60,30 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
     private var lastPublishedTrackingStatus: Bool?
     private var currentFramePixelSize: CGSize = .zero
     private var trackedLegs: [TrackedLeg] = []
+    private var trackedHands: [JumpingTrackedHand] = []
+    private var lockedBodyCenter: CGPoint?
+    private var lockedBodyConfidence: Double = 0
+    private var lockedBodyMisses = 0
+    private var nextHandID = 0
 
     private let minPointConfidence: VNConfidence = 0.25
     private let maxTrackedLegMisses = 1
+    private let lockedBodyHorizontalMatchDistance: CGFloat = 0.18
+    private let lockedBodyVerticalMatchDistance: CGFloat = 0.46
+    private let lockedBodyCenterBlend: CGFloat = 0.24
+    private let weakLockedBodyConfidence = 0.30
+    private let switchBodyConfidence = 0.72
+    private let switchBodyConfidenceMargin = 0.22
+    private let minRequiredHandPoints = 4
+    private let maxTrackedHandMisses = 1
+    private let handMatchDistanceThreshold: CGFloat = 0.22
     private let rectBlendAmount: CGFloat = 0.42
 
     override init() {
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         super.init()
         previewLayer.videoGravity = .resizeAspectFill
+        handRequest.maximumHandCount = 2
     }
 
     deinit {
@@ -121,6 +140,10 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
                 session.stopRunning()
             }
             trackedLegs = []
+            trackedHands = []
+            lockedBodyCenter = nil
+            lockedBodyConfidence = 0
+            lockedBodyMisses = 0
         }
 
         publish {
@@ -287,12 +310,17 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func handleBodyPoseResults(_ observations: [VNHumanBodyPoseObservation]) {
+    private func handleBodyPoseResults(
+        _ observations: [VNHumanBodyPoseObservation],
+        handObservations: [VNHumanHandPoseObservation]
+    ) {
         let timestamp = Date()
         let framePixelSize = currentFramePixelSize
         let overlayState = process(observations: observations)
+        let handOverlayState = processHandObservations(handObservations)
         let frame = JumpingChallengeFrame(
             overlayState: overlayState,
+            handOverlayState: handOverlayState,
             timestamp: timestamp,
             framePixelSize: framePixelSize
         )
@@ -308,8 +336,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
 
     private func process(observations: [VNHumanBodyPoseObservation]) -> JumpingChallengeOverlayState {
         let candidates = observations.compactMap(bodyCandidate(from:))
-        let strongestCandidate = candidates.max(by: { $0.confidence < $1.confidence })
-        let strongestLegs = strongestCandidate?.legs ?? []
+        let selectedCandidate = selectBodyCandidate(from: candidates)
+        let strongestLegs = selectedCandidate?.legs ?? []
 
         var previousByID = Dictionary(uniqueKeysWithValues: trackedLegs.map { ($0.id, $0) })
         var resolvedLegs: [TrackedLeg] = []
@@ -321,6 +349,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
                         id: candidate.id,
                         normalizedRect: blendRect(from: previous.normalizedRect, to: candidate.normalizedRect, amount: rectBlendAmount),
                         normalizedPoints: blendPoints(from: previous.normalizedPoints, to: candidate.normalizedPoints, amount: rectBlendAmount),
+                        normalizedFootRect: blendRect(from: previous.normalizedFootRect, to: candidate.normalizedFootRect, amount: rectBlendAmount),
+                        normalizedFootPoints: blendPoints(from: previous.normalizedFootPoints, to: candidate.normalizedFootPoints, amount: rectBlendAmount),
                         confidence: previous.confidence * Double(1 - rectBlendAmount) + candidate.confidence * Double(rectBlendAmount),
                         misses: 0
                     )
@@ -331,6 +361,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
                         id: candidate.id,
                         normalizedRect: candidate.normalizedRect,
                         normalizedPoints: candidate.normalizedPoints,
+                        normalizedFootRect: candidate.normalizedFootRect,
+                        normalizedFootPoints: candidate.normalizedFootPoints,
                         confidence: candidate.confidence,
                         misses: 0
                     )
@@ -344,6 +376,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
                     id: previous.id,
                     normalizedRect: previous.normalizedRect,
                     normalizedPoints: previous.normalizedPoints,
+                    normalizedFootRect: previous.normalizedFootRect,
+                    normalizedFootPoints: previous.normalizedFootPoints,
                     confidence: previous.confidence * 0.82,
                     misses: previous.misses + 1
                 )
@@ -357,6 +391,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
                 id: $0.id,
                 normalizedRect: $0.normalizedRect,
                 normalizedPoints: $0.normalizedPoints,
+                normalizedFootRect: $0.normalizedFootRect,
+                normalizedFootPoints: $0.normalizedFootPoints,
                 confidence: $0.confidence
             )
         }
@@ -365,17 +401,243 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
         if legs.isEmpty {
             statusText = "Searching"
         } else if legs.count < 2 {
-            statusText = "Find Both Legs"
+            statusText = "Find Both Feet"
         } else {
-            statusText = "Legs Found"
+            statusText = "Feet Found"
         }
 
         return JumpingChallengeOverlayState(
             legs: legs,
             statusText: statusText,
             isTracking: legs.count >= 2,
-            candidateCount: strongestLegs.count
+            candidateCount: candidates.count
         )
+    }
+
+    private func selectBodyCandidate(from candidates: [BodyCandidate]) -> BodyCandidate? {
+        guard !candidates.isEmpty else {
+            lockedBodyMisses += 1
+            lockedBodyConfidence *= 0.72
+            return nil
+        }
+
+        guard let lockedBodyCenter else {
+            let selected = candidates.max(by: { centerLockScore($0) < centerLockScore($1) })
+            updateLockedBody(with: selected)
+            return selected
+        }
+
+        let current = candidates
+            .filter { isLockedBodyMatch($0.center, lockedBodyCenter) }
+            .max(by: { $0.confidence < $1.confidence })
+        let contender = candidates.max(by: { $0.confidence < $1.confidence })
+
+        if let current {
+            let currentIsWeak = current.confidence < weakLockedBodyConfidence || lockedBodyConfidence < weakLockedBodyConfidence
+            if
+                currentIsWeak,
+                let contender,
+                horizontalDistance(contender.center, current.center) > lockedBodyHorizontalMatchDistance,
+                contender.confidence >= switchBodyConfidence,
+                contender.confidence >= current.confidence + switchBodyConfidenceMargin
+            {
+                updateLockedBody(with: contender)
+                return contender
+            }
+
+            updateLockedBody(with: current)
+            return current
+        }
+
+        lockedBodyMisses += 1
+        lockedBodyConfidence *= 0.72
+
+        if
+            let contender,
+            contender.confidence >= switchBodyConfidence,
+            lockedBodyConfidence < weakLockedBodyConfidence
+        {
+            updateLockedBody(with: contender)
+            return contender
+        }
+
+        return nil
+    }
+
+    private func updateLockedBody(with candidate: BodyCandidate?) {
+        guard let candidate else {
+            return
+        }
+
+        if let previousCenter = lockedBodyCenter {
+            lockedBodyCenter = CGPoint(
+                x: previousCenter.x + (candidate.center.x - previousCenter.x) * lockedBodyCenterBlend,
+                y: previousCenter.y + (candidate.center.y - previousCenter.y) * lockedBodyCenterBlend
+            )
+        } else {
+            lockedBodyCenter = candidate.center
+        }
+        lockedBodyConfidence = candidate.confidence
+        lockedBodyMisses = 0
+    }
+
+    private func centerLockScore(_ candidate: BodyCandidate) -> Double {
+        let horizontalDistanceFromCenter = abs(candidate.center.x - 0.5)
+        return candidate.confidence - Double(horizontalDistanceFromCenter * 0.90)
+    }
+
+    private func isLockedBodyMatch(_ candidateCenter: CGPoint, _ lockedCenter: CGPoint) -> Bool {
+        abs(candidateCenter.x - lockedCenter.x) <= lockedBodyHorizontalMatchDistance
+            && abs(candidateCenter.y - lockedCenter.y) <= lockedBodyVerticalMatchDistance
+    }
+
+    private func horizontalDistance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        abs(a.x - b.x)
+    }
+
+    private func processHandObservations(_ observations: [VNHumanHandPoseObservation]) -> HandPoseOverlayState {
+        let candidates = observations
+            .compactMap(handCandidate(from:))
+            .sorted(by: { $0.confidence > $1.confidence })
+            .prefix(2)
+
+        var unmatchedPrevious = trackedHands
+        var resolvedHands: [JumpingTrackedHand] = []
+
+        for candidate in candidates {
+            if let matchIndex = bestHandMatchIndex(for: candidate, in: unmatchedPrevious) {
+                let previous = unmatchedPrevious.remove(at: matchIndex)
+                resolvedHands.append(
+                    JumpingTrackedHand(
+                        id: previous.id,
+                        normalizedRect: blendRect(from: previous.normalizedRect, to: candidate.normalizedRect, amount: rectBlendAmount),
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: previous.confidence * Double(1 - rectBlendAmount) + candidate.confidence * Double(rectBlendAmount),
+                        misses: 0
+                    )
+                )
+            } else {
+                resolvedHands.append(
+                    JumpingTrackedHand(
+                        id: nextHandID,
+                        normalizedRect: candidate.normalizedRect,
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: candidate.confidence,
+                        misses: 0
+                    )
+                )
+                nextHandID += 1
+            }
+        }
+
+        for previous in unmatchedPrevious where previous.misses < maxTrackedHandMisses {
+            resolvedHands.append(
+                JumpingTrackedHand(
+                    id: previous.id,
+                    normalizedRect: previous.normalizedRect,
+                    normalizedPoints: previous.normalizedPoints,
+                    confidence: previous.confidence * 0.82,
+                    misses: previous.misses + 1
+                )
+            )
+        }
+
+        trackedHands = Array(resolvedHands.sorted(by: { $0.confidence > $1.confidence }).prefix(2))
+        let hands = trackedHands.map {
+            HandOverlayState(
+                id: $0.id,
+                normalizedRect: $0.normalizedRect,
+                normalizedPoints: $0.normalizedPoints,
+                confidence: $0.confidence
+            )
+        }
+        let statusText = hands.isEmpty ? "Searching" : (hands.count == 1 ? "Hand Found" : "Hands Found")
+        return HandPoseOverlayState(
+            hands: hands,
+            statusText: statusText,
+            isTracking: !hands.isEmpty,
+            candidateCount: candidates.count
+        )
+    }
+
+    private func handCandidate(from observation: VNHumanHandPoseObservation) -> HandCandidate? {
+        guard let points = try? observation.recognizedPoints(.all) else {
+            return nil
+        }
+
+        let jointNames: [VNHumanHandPoseObservation.JointName] = [
+            .wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip,
+            .indexMCP, .indexPIP, .indexDIP, .indexTip,
+            .middleMCP, .middlePIP, .middleDIP, .middleTip,
+            .ringMCP, .ringPIP, .ringDIP, .ringTip,
+            .littleMCP, .littlePIP, .littleDIP, .littleTip
+        ]
+        let validPoints = jointNames.compactMap { jointName -> VNRecognizedPoint? in
+            guard let point = points[jointName], point.confidence >= minPointConfidence else {
+                return nil
+            }
+            return point
+        }
+        guard validPoints.count >= minRequiredHandPoints else {
+            return nil
+        }
+
+        let normalizedPoints = validPoints.map { swiftUINormalizedPoint(fromVisionPoint: $0.location) }
+        let minX = normalizedPoints.map(\.x).min() ?? 0
+        let maxX = normalizedPoints.map(\.x).max() ?? 0
+        let minY = normalizedPoints.map(\.y).min() ?? 0
+        let maxY = normalizedPoints.map(\.y).max() ?? 0
+        let averageConfidence = validPoints.reduce(0.0) { $0 + Double($1.confidence) } / Double(validPoints.count)
+        let rawWidth = max(maxX - minX, 0.035)
+        let rawHeight = max(maxY - minY, 0.045)
+        let paddedRect = CGRect(
+            x: minX - max(rawWidth * 0.10, 0.018),
+            y: minY - max(rawHeight * 0.10, 0.018),
+            width: rawWidth + max(rawWidth * 0.10, 0.018) * 2,
+            height: rawHeight + max(rawHeight * 0.10, 0.018) * 2
+        )
+        let normalizedRect = expandedHandRectToMinimumSize(
+            rect: paddedRect.standardized.intersection(unitRect),
+            minimumWidth: 0.075,
+            minimumHeight: 0.09
+        )
+        guard !normalizedRect.isNull, !normalizedRect.isEmpty else {
+            return nil
+        }
+        return HandCandidate(
+            normalizedRect: normalizedRect,
+            normalizedPoints: normalizedPoints,
+            confidence: averageConfidence
+        )
+    }
+
+    private func bestHandMatchIndex(for candidate: HandCandidate, in previousHands: [JumpingTrackedHand]) -> Int? {
+        let candidateCenter = CGPoint(x: candidate.normalizedRect.midX, y: candidate.normalizedRect.midY)
+        return previousHands.enumerated()
+            .filter { _, previous in
+                let previousCenter = CGPoint(x: previous.normalizedRect.midX, y: previous.normalizedRect.midY)
+                return hypot(previousCenter.x - candidateCenter.x, previousCenter.y - candidateCenter.y) <= handMatchDistanceThreshold
+            }
+            .min { lhs, rhs in
+                let lhsCenter = CGPoint(x: lhs.element.normalizedRect.midX, y: lhs.element.normalizedRect.midY)
+                let rhsCenter = CGPoint(x: rhs.element.normalizedRect.midX, y: rhs.element.normalizedRect.midY)
+                return hypot(lhsCenter.x - candidateCenter.x, lhsCenter.y - candidateCenter.y)
+                    < hypot(rhsCenter.x - candidateCenter.x, rhsCenter.y - candidateCenter.y)
+            }?
+            .offset
+    }
+
+    private func expandedHandRectToMinimumSize(rect: CGRect, minimumWidth: CGFloat, minimumHeight: CGFloat) -> CGRect {
+        guard !rect.isNull, !rect.isEmpty else {
+            return .null
+        }
+        let adjustedRect = CGRect(
+            x: rect.midX - max(rect.width, minimumWidth) * 0.5,
+            y: rect.midY - max(rect.height, minimumHeight) * 0.5,
+            width: max(rect.width, minimumWidth),
+            height: max(rect.height, minimumHeight)
+        )
+        return adjustedRect.standardized.intersection(unitRect)
     }
 
     private func bodyCandidate(from observation: VNHumanBodyPoseObservation) -> BodyCandidate? {
@@ -384,7 +646,21 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
             return nil
         }
         let confidence = legs.reduce(0.0) { $0 + $1.confidence } / Double(legs.count)
-        return BodyCandidate(legs: legs, confidence: confidence)
+        let center = bodyCenter(from: legs)
+        return BodyCandidate(legs: legs, center: center, confidence: confidence)
+    }
+
+    private func bodyCenter(from legs: [JumpingLegCandidate]) -> CGPoint {
+        let centers = legs.map {
+            CGPoint(x: $0.normalizedFootRect.midX, y: $0.normalizedFootRect.midY)
+        }
+        guard !centers.isEmpty else {
+            return CGPoint(x: 0.5, y: 0.5)
+        }
+        let total = centers.reduce(CGPoint.zero) { partial, point in
+            CGPoint(x: partial.x + point.x, y: partial.y + point.y)
+        }
+        return CGPoint(x: total.x / CGFloat(centers.count), y: total.y / CGFloat(centers.count))
     }
 
     private func legCandidate(
@@ -421,6 +697,12 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
         )
         let topHalfWidth = clamp(shinLength * 0.075, minValue: 0.010, maxValue: 0.024)
         let bottomHalfWidth = clamp(shinLength * 0.11, minValue: 0.016, maxValue: 0.036)
+        let footHalfWidth = clamp(shinLength * 0.1144, minValue: 0.01584, maxValue: 0.03344)
+        let footHalfHeight = clamp(shinLength * 0.14, minValue: 0.024, maxValue: 0.048)
+        let footCenter = CGPoint(
+            x: anklePoint.x + direction.x * shinLength * 0.12,
+            y: anklePoint.y + direction.y * shinLength * 0.12
+        )
 
         let polygon = [
             CGPoint(
@@ -441,13 +723,35 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
             )
         ]
         .map(clampToUnitPoint)
+        let footPolygon = [
+            CGPoint(
+                x: footCenter.x + perpendicular.x * footHalfWidth - direction.x * footHalfHeight,
+                y: footCenter.y + perpendicular.y * footHalfWidth - direction.y * footHalfHeight
+            ),
+            CGPoint(
+                x: footCenter.x - perpendicular.x * footHalfWidth - direction.x * footHalfHeight,
+                y: footCenter.y - perpendicular.y * footHalfWidth - direction.y * footHalfHeight
+            ),
+            CGPoint(
+                x: footCenter.x - perpendicular.x * footHalfWidth + direction.x * footHalfHeight,
+                y: footCenter.y - perpendicular.y * footHalfWidth + direction.y * footHalfHeight
+            ),
+            CGPoint(
+                x: footCenter.x + perpendicular.x * footHalfWidth + direction.x * footHalfHeight,
+                y: footCenter.y + perpendicular.y * footHalfWidth + direction.y * footHalfHeight
+            )
+        ]
+        .map(clampToUnitPoint)
 
-        guard let boundingRect = boundingRect(for: polygon) else {
+        guard
+            let legBoundingRect = boundingRect(for: polygon),
+            let footBoundingRect = boundingRect(for: footPolygon)
+        else {
             return nil
         }
 
         let normalizedRect = expandedToMinimumSize(
-            rect: boundingRect.standardized.intersection(unitRect),
+            rect: legBoundingRect.standardized.intersection(unitRect),
             minimumWidth: 0.032,
             minimumHeight: 0.072
         )
@@ -460,6 +764,8 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
             id: side.id,
             normalizedRect: normalizedRect,
             normalizedPoints: polygon,
+            normalizedFootRect: footBoundingRect.standardized.intersection(unitRect),
+            normalizedFootPoints: footPolygon,
             confidence: Double(knee.confidence + ankle.confidence) * 0.5
         )
     }
@@ -681,9 +987,10 @@ extension JumpingPoseCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
         )
 
         do {
-            try handler.perform([request])
+            try handler.perform([request, handRequest])
             let observations = (request.results as? [VNHumanBodyPoseObservation]) ?? []
-            handleBodyPoseResults(observations)
+            let handObservations = (handRequest.results as? [VNHumanHandPoseObservation]) ?? []
+            handleBodyPoseResults(observations, handObservations: handObservations)
         } catch {
             publish {
                 $0.errorMessage = "Jump tracking failed: \(error.localizedDescription)"
@@ -714,6 +1021,7 @@ extension JumpingPoseCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
 
 private struct BodyCandidate {
     let legs: [JumpingLegCandidate]
+    let center: CGPoint
     let confidence: Double
 }
 
@@ -721,10 +1029,22 @@ private struct JumpingLegCandidate {
     let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
+    let normalizedFootRect: CGRect
+    let normalizedFootPoints: [CGPoint]
     let confidence: Double
 }
 
 private struct TrackedLeg {
+    let id: Int
+    let normalizedRect: CGRect
+    let normalizedPoints: [CGPoint]
+    let normalizedFootRect: CGRect
+    let normalizedFootPoints: [CGPoint]
+    let confidence: Double
+    let misses: Int
+}
+
+private struct JumpingTrackedHand {
     let id: Int
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]

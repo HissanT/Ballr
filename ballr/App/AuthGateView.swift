@@ -25,8 +25,7 @@ struct AuthGateView: View {
 private struct AuthLoadingView: View {
     var body: some View {
         ZStack {
-            Color(red: 0.11, green: 0.10, blue: 0.11)
-                .ignoresSafeArea()
+            BallrAppBackground()
 
             VStack(spacing: 18) {
                 AuthMapIcon()
@@ -44,11 +43,7 @@ private struct BallrAuthView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.11, green: 0.10, blue: 0.11)
-                .ignoresSafeArea()
-
-            AuthFieldBackground()
-                .ignoresSafeArea()
+            BallrAppBackground()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -152,11 +147,7 @@ private struct BallrProfileSetupView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.11, green: 0.10, blue: 0.11)
-                .ignoresSafeArea()
-
-            AuthFieldBackground()
-                .ignoresSafeArea()
+            BallrAppBackground()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -416,46 +407,7 @@ private struct FootChoiceButton: View {
 
 private struct AuthFieldBackground: View {
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.02, green: 0.10, blue: 0.04),
-                        Color(red: 0.03, green: 0.16, blue: 0.07),
-                        Color(red: 0.02, green: 0.08, blue: 0.04)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                VStack(spacing: 0) {
-                    ForEach(0..<14, id: \.self) { index in
-                        Rectangle()
-                            .fill(index.isMultiple(of: 2) ? Color.white.opacity(0.018) : Color.black.opacity(0.055))
-                    }
-                }
-
-                Circle()
-                    .stroke(Color.yellow.opacity(0.15), lineWidth: 3)
-                    .frame(width: geometry.size.width * 0.92)
-                    .offset(y: geometry.size.height * 0.33)
-
-                VStack(spacing: 8) {
-                    ForEach(0..<5, id: \.self) { row in
-                        HStack(spacing: 8) {
-                            ForEach(0..<24, id: \.self) { seat in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill((seat + row).isMultiple(of: 5) ? Color.yellow.opacity(0.16) : Color.white.opacity(0.055))
-                                    .frame(width: 6, height: 5)
-                            }
-                        }
-                        .offset(x: row.isMultiple(of: 2) ? -12 : 12)
-                    }
-                }
-                .padding(.top, 84)
-                .frame(maxHeight: .infinity, alignment: .top)
-            }
-        }
+        BallrAppBackground()
     }
 }
 

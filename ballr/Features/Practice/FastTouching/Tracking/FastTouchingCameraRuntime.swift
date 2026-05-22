@@ -7,6 +7,7 @@ import Vision
 struct FastTouchingFrame {
     let ballOverlayState: BallTrackerOverlayState
     let footOverlayState: FootPoseOverlayState
+    let handOverlayState: HandPoseOverlayState
     let timestamp: Date
     let framePixelSize: CGSize
 }
@@ -27,8 +28,12 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
     private let processingSemaphore = DispatchSemaphore(value: 1)
     private let ballTracker = BallTrackerEngine()
     private let footRequest = VNDetectHumanBodyPoseRequest()
+    private let handRequest = VNDetectHumanHandPoseRequest()
     private let minPointConfidence: VNConfidence = 0.25
+    private let minRequiredHandPoints = 4
     private let maxTrackedFootMisses = 1
+    private let maxTrackedHandMisses = 1
+    private let handMatchDistanceThreshold: CGFloat = 0.22
     private let rectBlendAmount: CGFloat = 0.42
 
     private var ballRequest: VNCoreMLRequest?
@@ -38,11 +43,14 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
     private var isObservingOrientationChanges = false
     private var currentFramePixelSize: CGSize = .zero
     private var trackedFeet: [TrackedFoot] = []
+    private var trackedHands: [FastTouchingTrackedHand] = []
+    private var nextHandID = 0
 
     override init() {
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         super.init()
         previewLayer.videoGravity = .resizeAspectFill
+        handRequest.maximumHandCount = 2
     }
 
     deinit {
@@ -100,6 +108,8 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
             }
             ballTracker.reset()
             trackedFeet = []
+            trackedHands = []
+            nextHandID = 0
         }
 
         publish {
@@ -274,7 +284,8 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
 
     private func handleTrackingResults(
         ballObservations: [VNRecognizedObjectObservation],
-        footObservations: [VNHumanBodyPoseObservation]
+        footObservations: [VNHumanBodyPoseObservation],
+        handObservations: [VNHumanHandPoseObservation]
     ) {
         guard let resources else {
             return
@@ -289,14 +300,91 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
             config: resources.config
         )
         let footOverlayState = processFeet(observations: footObservations)
+        let handOverlayState = processHands(observations: handObservations)
 
         let frame = FastTouchingFrame(
             ballOverlayState: ballOverlayState,
             footOverlayState: footOverlayState,
+            handOverlayState: handOverlayState,
             timestamp: timestamp,
             framePixelSize: framePixelSize
         )
         deliverTrackingFrame(frame)
+    }
+
+    private func processHands(observations: [VNHumanHandPoseObservation]) -> HandPoseOverlayState {
+        let candidates = observations
+            .compactMap(handCandidate(from:))
+            .sorted(by: { $0.confidence > $1.confidence })
+            .prefix(2)
+
+        var unmatchedPrevious = trackedHands
+        var resolvedHands: [FastTouchingTrackedHand] = []
+
+        for candidate in candidates {
+            if let matchIndex = bestHandMatchIndex(for: candidate, in: unmatchedPrevious) {
+                let previous = unmatchedPrevious.remove(at: matchIndex)
+                resolvedHands.append(
+                    FastTouchingTrackedHand(
+                        id: previous.id,
+                        normalizedRect: blendRect(from: previous.normalizedRect, to: candidate.normalizedRect, amount: rectBlendAmount),
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: previous.confidence * Double(1 - rectBlendAmount) + candidate.confidence * Double(rectBlendAmount),
+                        misses: 0
+                    )
+                )
+            } else {
+                resolvedHands.append(
+                    FastTouchingTrackedHand(
+                        id: nextHandID,
+                        normalizedRect: candidate.normalizedRect,
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: candidate.confidence,
+                        misses: 0
+                    )
+                )
+                nextHandID += 1
+            }
+        }
+
+        for previous in unmatchedPrevious where previous.misses < maxTrackedHandMisses {
+            resolvedHands.append(
+                FastTouchingTrackedHand(
+                    id: previous.id,
+                    normalizedRect: previous.normalizedRect,
+                    normalizedPoints: previous.normalizedPoints,
+                    confidence: previous.confidence * 0.82,
+                    misses: previous.misses + 1
+                )
+            )
+        }
+
+        trackedHands = Array(resolvedHands.sorted(by: { $0.confidence > $1.confidence }).prefix(2))
+
+        let hands = trackedHands.map {
+            HandOverlayState(
+                id: $0.id,
+                normalizedRect: $0.normalizedRect,
+                normalizedPoints: $0.normalizedPoints,
+                confidence: $0.confidence
+            )
+        }
+
+        let statusText: String
+        if hands.isEmpty {
+            statusText = "Searching"
+        } else if hands.count == 1 {
+            statusText = "Hand Found"
+        } else {
+            statusText = "Hands Found"
+        }
+
+        return HandPoseOverlayState(
+            hands: hands,
+            statusText: statusText,
+            isTracking: !hands.isEmpty,
+            candidateCount: candidates.count
+        )
     }
 
     private func processFeet(observations: [VNHumanBodyPoseObservation]) -> FootPoseOverlayState {
@@ -377,6 +465,96 @@ final class FastTouchingCameraController: NSObject, ObservableObject {
         }
         let confidence = feet.reduce(0.0) { $0 + $1.confidence } / Double(feet.count)
         return BodyCandidate(feet: feet, confidence: confidence)
+    }
+
+    private func handCandidate(from observation: VNHumanHandPoseObservation) -> FastTouchingHandCandidate? {
+        guard let points = try? observation.recognizedPoints(.all) else {
+            return nil
+        }
+
+        let jointNames: [VNHumanHandPoseObservation.JointName] = [
+            .wrist,
+            .thumbCMC,
+            .thumbMP,
+            .thumbIP,
+            .thumbTip,
+            .indexMCP,
+            .indexPIP,
+            .indexDIP,
+            .indexTip,
+            .middleMCP,
+            .middlePIP,
+            .middleDIP,
+            .middleTip,
+            .ringMCP,
+            .ringPIP,
+            .ringDIP,
+            .ringTip,
+            .littleMCP,
+            .littlePIP,
+            .littleDIP,
+            .littleTip
+        ]
+
+        let validPoints = jointNames.compactMap { jointName -> CGPoint? in
+            guard
+                let point = points[jointName],
+                point.confidence >= minPointConfidence
+            else {
+                return nil
+            }
+            return swiftUINormalizedPoint(fromVisionPoint: point.location)
+        }
+
+        guard validPoints.count >= minRequiredHandPoints else {
+            return nil
+        }
+
+        guard let boundingRect = boundingRect(for: validPoints) else {
+            return nil
+        }
+
+        let normalizedRect = expandedToMinimumSize(
+            rect: boundingRect.standardized.intersection(unitRect),
+            minimumWidth: 0.08,
+            minimumHeight: 0.08
+        )
+
+        guard !normalizedRect.isNull, !normalizedRect.isEmpty else {
+            return nil
+        }
+
+        let confidence = validPoints.isEmpty
+            ? 0
+            : jointNames.reduce(0.0) { partial, jointName in
+                partial + Double(points[jointName]?.confidence ?? 0)
+            } / Double(validPoints.count)
+
+        return FastTouchingHandCandidate(
+            normalizedRect: normalizedRect,
+            normalizedPoints: validPoints,
+            confidence: confidence
+        )
+    }
+
+    private func bestHandMatchIndex(
+        for candidate: FastTouchingHandCandidate,
+        in trackedHands: [FastTouchingTrackedHand]
+    ) -> Int? {
+        let candidateCenter = CGPoint(x: candidate.normalizedRect.midX, y: candidate.normalizedRect.midY)
+        return trackedHands
+            .enumerated()
+            .filter { _, previous in
+                let previousCenter = CGPoint(x: previous.normalizedRect.midX, y: previous.normalizedRect.midY)
+                return hypot(candidateCenter.x - previousCenter.x, candidateCenter.y - previousCenter.y) <= handMatchDistanceThreshold
+            }
+            .min { lhs, rhs in
+                let lhsCenter = CGPoint(x: lhs.element.normalizedRect.midX, y: lhs.element.normalizedRect.midY)
+                let rhsCenter = CGPoint(x: rhs.element.normalizedRect.midX, y: rhs.element.normalizedRect.midY)
+                return hypot(candidateCenter.x - lhsCenter.x, candidateCenter.y - lhsCenter.y)
+                    < hypot(candidateCenter.x - rhsCenter.x, candidateCenter.y - rhsCenter.y)
+            }?
+            .offset
     }
 
     private func footCandidate(
@@ -640,10 +818,15 @@ extension FastTouchingCameraController: AVCaptureVideoDataOutputSampleBufferDele
         )
 
         do {
-            try handler.perform([ballRequest, footRequest])
+            try handler.perform([ballRequest, footRequest, handRequest])
             let ballObservations = (ballRequest.results as? [VNRecognizedObjectObservation]) ?? []
             let footObservations = (footRequest.results as? [VNHumanBodyPoseObservation]) ?? []
-            handleTrackingResults(ballObservations: ballObservations, footObservations: footObservations)
+            let handObservations = (handRequest.results as? [VNHumanHandPoseObservation]) ?? []
+            handleTrackingResults(
+                ballObservations: ballObservations,
+                footObservations: footObservations,
+                handObservations: handObservations
+            )
         } catch {
             publish {
                 $0.errorMessage = "Fast Touching tracking failed: \(error.localizedDescription)"
@@ -687,6 +870,20 @@ private struct BodyCandidate {
 
 private struct FootCandidate {
     let id: Int
+    let normalizedRect: CGRect
+    let normalizedPoints: [CGPoint]
+    let confidence: Double
+}
+
+private struct FastTouchingTrackedHand {
+    let id: Int
+    let normalizedRect: CGRect
+    let normalizedPoints: [CGPoint]
+    let confidence: Double
+    let misses: Int
+}
+
+private struct FastTouchingHandCandidate {
     let normalizedRect: CGRect
     let normalizedPoints: [CGPoint]
     let confidence: Double

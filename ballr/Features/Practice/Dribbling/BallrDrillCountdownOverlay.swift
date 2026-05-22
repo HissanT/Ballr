@@ -91,9 +91,12 @@ enum BallrDrillSoundPlayer {
     private static var winnerPlayer: AVAudioPlayer?
     private static var comboPlayer: AVAudioPlayer?
     private static var incorrectPlayer: AVAudioPlayer?
+    private static var jeffBouncePlayers: [AVAudioPlayer] = []
     private static var jeffWobbleStepPlayer: AVAudioPlayer?
+    private static var jeffCartoonFallPlayer: AVAudioPlayer?
     private static var rockDropLoopPlayer: AVAudioPlayer?
     private static var rockHitBallPlayer: AVAudioPlayer?
+    private static var hunterExplosionPlayer: AVAudioPlayer?
     private static var rockDropLoopStopWorkItem: DispatchWorkItem?
     private static var rockHitBallFadeOutWorkItem: DispatchWorkItem?
 
@@ -118,13 +121,64 @@ enum BallrDrillSoundPlayer {
         )
     }
 
+    static func scheduleJeffBounceSounds(startedAt: Date, bounceTimes: [TimeInterval]) {
+        prepareJeffBouncePlayers(count: bounceTimes.count)
+
+        guard !jeffBouncePlayers.isEmpty else {
+            return
+        }
+
+        let now = Date()
+        for (index, bounceTime) in bounceTimes.enumerated() where index < jeffBouncePlayers.count {
+            let delay = startedAt.addingTimeInterval(bounceTime).timeIntervalSince(now)
+            guard delay > 0 else {
+                continue
+            }
+
+            let player = jeffBouncePlayers[index]
+            player.stop()
+            player.currentTime = 0
+            player.volume = 0.82
+            player.prepareToPlay()
+            player.play(atTime: player.deviceCurrentTime + delay)
+        }
+    }
+
+    static func stopScheduledJeffBounceSounds() {
+        jeffBouncePlayers.forEach { player in
+            player.stop()
+            player.currentTime = 0
+            player.volume = 0.82
+        }
+    }
+
     static func playJeffWobbleStep() {
         play(
             resource: "jeff_wobble_step",
             fileExtension: "wav",
             player: &jeffWobbleStepPlayer,
             errorLabel: "Jeff wobble step sound",
-            initialVolume: 0.75
+            initialVolume: 0.72
+        )
+    }
+
+    static func prepareJeffCartoonFall() {
+        prepare(
+            resource: "jeff_cartoon_fall",
+            fileExtension: "wav",
+            player: &jeffCartoonFallPlayer,
+            errorLabel: "Jeff cartoon fall sound"
+        )
+        jeffCartoonFallPlayer?.volume = 0.78
+    }
+
+    static func playJeffCartoonFall() {
+        play(
+            resource: "jeff_cartoon_fall",
+            fileExtension: "wav",
+            player: &jeffCartoonFallPlayer,
+            errorLabel: "Jeff cartoon fall sound",
+            initialVolume: 0.78
         )
     }
 
@@ -191,6 +245,16 @@ enum BallrDrillSoundPlayer {
         DispatchQueue.main.asyncAfter(deadline: .now() + fadeOutDelay, execute: fadeOutWorkItem)
     }
 
+    static func playHunterExplosion() {
+        play(
+            resource: "hunter_kid_explosion",
+            fileExtension: "wav",
+            player: &hunterExplosionPlayer,
+            errorLabel: "Hunter explosion sound",
+            initialVolume: 0.76
+        )
+    }
+
     static func stopRockDropSounds() {
         rockDropLoopStopWorkItem?.cancel()
         rockHitBallFadeOutWorkItem?.cancel()
@@ -209,23 +273,7 @@ enum BallrDrillSoundPlayer {
         initialVolume: Float? = nil
     ) {
         if player == nil {
-            guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension) else {
-                return
-            }
-
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true)
-
-                let audioPlayer = try AVAudioPlayer(contentsOf: url)
-                audioPlayer.numberOfLoops = loops ? -1 : 0
-                audioPlayer.prepareToPlay()
-                player = audioPlayer
-            } catch {
-                print("\(errorLabel) failed to load: \(error.localizedDescription)")
-                return
-            }
+            prepare(resource: resource, fileExtension: fileExtension, player: &player, errorLabel: errorLabel, loops: loops)
         }
 
         player?.stop()
@@ -234,6 +282,61 @@ enum BallrDrillSoundPlayer {
             player?.volume = initialVolume
         }
         player?.play()
+    }
+
+    private static func prepare(
+        resource: String,
+        fileExtension: String,
+        player: inout AVAudioPlayer?,
+        errorLabel: String,
+        loops: Bool = false
+    ) {
+        guard player == nil else {
+            return
+        }
+
+        guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension) else {
+            return
+        }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+
+            let audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer.numberOfLoops = loops ? -1 : 0
+            audioPlayer.prepareToPlay()
+            player = audioPlayer
+        } catch {
+            print("\(errorLabel) failed to load: \(error.localizedDescription)")
+            return
+        }
+    }
+
+    private static func prepareJeffBouncePlayers(count: Int) {
+        guard jeffBouncePlayers.count < count else {
+            return
+        }
+
+        guard let url = Bundle.main.url(forResource: "jeff_ball_bounce", withExtension: "wav") else {
+            return
+        }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+
+            while jeffBouncePlayers.count < count {
+                let audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer.volume = 0.82
+                audioPlayer.prepareToPlay()
+                jeffBouncePlayers.append(audioPlayer)
+            }
+        } catch {
+            print("Jeff bounce sound failed to load: \(error.localizedDescription)")
+        }
     }
 }
 

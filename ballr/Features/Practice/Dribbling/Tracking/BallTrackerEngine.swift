@@ -1,6 +1,11 @@
 import CoreGraphics
 import Vision
 
+enum BallTrackerTrackingProfile {
+    case standard
+    case shooting
+}
+
 struct BallTrackerOverlayState {
     let normalizedRect: CGRect?
     let rawNormalizedRect: CGRect?
@@ -227,6 +232,7 @@ final class BallTrackerEngine {
 
     private var track: Track?
     private var motion: MotionState?
+    private var activeProfile: BallTrackerTrackingProfile = .standard
 
     func reset() {
         track = nil
@@ -237,8 +243,10 @@ final class BallTrackerEngine {
         observations: [VNRecognizedObjectObservation],
         frameSize: CGSize,
         timestamp: Date,
-        config: BallTrackerConfig
+        config: BallTrackerConfig,
+        profile: BallTrackerTrackingProfile = .standard
     ) -> BallTrackerOverlayState {
+        activeProfile = profile
         let resolvedFrameSize = CGSize(width: max(frameSize.width, 1), height: max(frameSize.height, 1))
         let minimumConfidence = CGFloat(config.ballrRuntimeDefaults.confidenceThreshold)
         let candidates = candidates(
@@ -333,7 +341,7 @@ final class BallTrackerEngine {
 
         let strongest = candidates.max(by: { $0.confidence < $1.confidence })
         guard let track else {
-            guard let strongest, strongest.confidence >= initConfidenceThreshold else {
+            guard let strongest, strongest.confidence >= activeInitConfidenceThreshold else {
                 return nil
             }
             return strongest
@@ -350,7 +358,7 @@ final class BallTrackerEngine {
         if
             track.misses >= reacquireMinimumMisses,
             let strongest,
-            strongest.confidence >= reacquireConfidenceThreshold
+            strongest.confidence >= activeReacquireConfidenceThreshold
         {
             return strongest
         }
@@ -379,7 +387,7 @@ final class BallTrackerEngine {
         )
         let gate = trackGateRadius(for: track, frameSize: frameSize)
 
-        if distance > gate && candidate.confidence < reacquireConfidenceThreshold {
+        if distance > gate && candidate.confidence < activeReacquireConfidenceThreshold {
             return -1.0
         }
 
@@ -401,10 +409,10 @@ final class BallTrackerEngine {
 
     private func trackGateRadius(for track: Track, frameSize: CGSize) -> CGFloat {
         let speed = hypot(track.velocity.dx, track.velocity.dy)
-        let base = max(track.radius * trackGateRadiusMultiplier, trackGateMinRadiusPixels / frameSize.width)
+        let base = max(track.radius * activeTrackGateRadiusMultiplier, activeTrackGateMinRadiusPixels / frameSize.width)
         return base
-            + speed * trackGateSpeedFactor
-            + CGFloat(track.misses) * trackGateMissPenaltyPixels / frameSize.width
+            + speed * activeTrackGateSpeedFactor
+            + CGFloat(track.misses) * activeTrackGateMissPenaltyPixels / frameSize.width
     }
 
     private func predictTrack(frameTime: TimeInterval, frameSize: CGSize) {
@@ -575,7 +583,7 @@ final class BallTrackerEngine {
         }
 
         track.misses += 1
-        guard track.misses <= maxMisses else {
+        guard track.misses <= activeMaxMisses else {
             motion = nil
             return nil
         }
@@ -634,6 +642,34 @@ final class BallTrackerEngine {
 
     private func mix(_ current: CGFloat, _ target: CGFloat, amount: CGFloat) -> CGFloat {
         current + (target - current) * amount
+    }
+
+    private var activeInitConfidenceThreshold: CGFloat {
+        activeProfile == .shooting ? 0.45 : initConfidenceThreshold
+    }
+
+    private var activeReacquireConfidenceThreshold: CGFloat {
+        activeProfile == .shooting ? 0.58 : reacquireConfidenceThreshold
+    }
+
+    private var activeMaxMisses: Int {
+        activeProfile == .shooting ? 8 : maxMisses
+    }
+
+    private var activeTrackGateRadiusMultiplier: CGFloat {
+        activeProfile == .shooting ? 6.8 : trackGateRadiusMultiplier
+    }
+
+    private var activeTrackGateMinRadiusPixels: CGFloat {
+        activeProfile == .shooting ? 80.0 : trackGateMinRadiusPixels
+    }
+
+    private var activeTrackGateSpeedFactor: CGFloat {
+        activeProfile == .shooting ? 2.25 : trackGateSpeedFactor
+    }
+
+    private var activeTrackGateMissPenaltyPixels: CGFloat {
+        activeProfile == .shooting ? 40.0 : trackGateMissPenaltyPixels
     }
 
     private var unitRect: CGRect {

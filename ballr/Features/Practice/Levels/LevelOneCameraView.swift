@@ -170,7 +170,7 @@ private final class LevelOneCoordinator: ObservableObject {
     private let confidenceThreshold = 0.75
     private let introCardDuration: TimeInterval = 1.8
     private let axisTransitionDelay: TimeInterval = 0.75
-    private let completionAnimationDuration: TimeInterval = 1.2
+    private let completionAnimationDuration: TimeInterval = 2.05
     private let completionButtonRevealDelay: TimeInterval = 0.28
 
     private var size: CGSize = .zero
@@ -838,21 +838,13 @@ private struct LevelOneCompletionOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let progress = completionProgress
-            let showDone = progress >= 0.72
+            let showDone = progress >= 0.98
 
             ZStack {
-                if progress >= 1 {
-                    Color.yellow
-                        .ignoresSafeArea()
-                }
-
-                LevelOneWaveFillShape(side: .left, progress: progress, phase: progress)
-                    .fill(Color.yellow)
-                    .ignoresSafeArea()
-
-                LevelOneWaveFillShape(side: .right, progress: progress, phase: progress + 0.18)
-                    .fill(Color.yellow)
-                    .ignoresSafeArea()
+                PracticeLevelCompletionWaveBackground(
+                    progress: progress,
+                    phase: date.timeIntervalSinceReferenceDate
+                )
 
                 VStack(spacing: 18) {
                     Spacer()
@@ -909,10 +901,7 @@ private struct LevelOneCompletionOverlay: View {
             return stage == .results ? 1 : 0
         }
         let elapsed = date.timeIntervalSince(startedAt)
-        if stage == .results {
-            return 1
-        }
-        return CGFloat(min(max(elapsed / 1.2, 0), 1))
+        return CGFloat(min(max(elapsed / 2.05, 0), 1))
     }
 }
 

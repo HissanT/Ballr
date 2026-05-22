@@ -336,34 +336,7 @@ private struct PrecisionTargetSetupIconButton: View {
 
 private struct PrecisionTargetSetupBackground: View {
     var body: some View {
-        ZStack {
-            Color(red: 0.01, green: 0.14, blue: 0.04)
-
-            VStack(spacing: 0) {
-                ForEach(0..<8, id: \.self) { index in
-                    Rectangle()
-                        .fill(index.isMultiple(of: 2) ? Color.white.opacity(0.018) : Color.black.opacity(0.045))
-                }
-            }
-
-            GeometryReader { geometry in
-                Path { path in
-                    let width = geometry.size.width
-                    let height = geometry.size.height
-                    path.addRect(CGRect(x: 24, y: 0, width: width - 48, height: height - 18))
-                    for index in 1..<8 {
-                        let y = CGFloat(index) * height / 8
-                        path.move(to: CGPoint(x: 24, y: y))
-                        path.addLine(to: CGPoint(x: width - 24, y: y))
-                    }
-                    for index in 0..<4 {
-                        let y = CGFloat(index) * height / 3
-                        path.addEllipse(in: CGRect(x: width / 2 - 54, y: y + 80, width: 108, height: 108))
-                    }
-                }
-                .stroke(Color.white.opacity(0.045), lineWidth: 3)
-            }
-        }
+        BallrAppBackground()
     }
 }
 
@@ -439,6 +412,7 @@ private struct PrecisionTargetLiveCameraView: View {
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(ballSpec: ballSpec, viewSize: geometry.size)
+                cameraController.trackingProfile = .shooting
                 cameraController.publishesTrackingFramesToSwiftUI = false
                 cameraController.onTrackingFrame = { [weak coordinator, weak cameraController] frame in
                     guard let cameraController else {
@@ -451,6 +425,7 @@ private struct PrecisionTargetLiveCameraView: View {
             .onDisappear {
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
+                cameraController.trackingProfile = .standard
                 cameraController.stop()
                 BallrOrientationController.restoreDefaultOrientation()
             }
@@ -464,6 +439,7 @@ private struct PrecisionTargetLiveCameraView: View {
                 }
             }
         }
+        .ignoresSafeArea()
     }
 
     private var topBar: some View {
@@ -601,6 +577,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(ballSpec: ballSpec, viewSize: geometry.size)
+                cameraController.trackingProfile = .shooting
                 coordinator.onShotLocked = { impact in
                     DispatchQueue.main.async {
                         handleLockedShot(impact)
@@ -619,6 +596,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                 coordinator.onShotLocked = nil
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
+                cameraController.trackingProfile = .standard
                 cameraController.stop()
                 BallrOrientationController.restoreDefaultOrientation()
             }
@@ -632,6 +610,7 @@ private struct MultiplayerPrecisionTargetLiveCameraView: View {
                 }
             }
         }
+        .ignoresSafeArea()
     }
 
     private var topBar: some View {
@@ -887,6 +866,7 @@ private struct PrecisionDepthEstimate {
 private struct PrecisionDepthSample {
     let timestamp: Date
     let centerPixels: CGPoint
+    let frameWidth: CGFloat
     let pixelDiameter: CGFloat
     let smoothedDiameter: CGFloat
     let rawDistanceM: CGFloat
@@ -954,11 +934,13 @@ private final class PrecisionTargetCoordinator: ObservableObject {
     private let impactReversalM: CGFloat = 0.04
     private let passingSpotReturnDistanceMargin: CGFloat = 0.20
     private let cooldownMissingFrames = 6
-    private let impactDisappearFrames = 4
+    private let impactDisappearFrames = 8
     private let impactMarkerHoldSeconds: TimeInterval = 5.0
     private let maxLiveCenterJumpPX: CGFloat = 220
     private let maxLiveCenterJumpDiameters: CGFloat = 4.0
     private let maxLiveDiameterRatio: CGFloat = 2.35
+    private let edgeLiveCenterJumpMultiplier: CGFloat = 1.55
+    private let edgeLiveDiameterRatioMultiplier: CGFloat = 1.30
 
     private var phase: PrecisionTargetPhase = .selectCenter
     private var ballSpec: PrecisionTargetBallSpec = PrecisionTargetBallSpec.presets[2]
@@ -1152,6 +1134,7 @@ private final class PrecisionTargetCoordinator: ObservableObject {
         return PrecisionDepthSample(
             timestamp: frame.timestamp,
             centerPixels: centerPixels,
+            frameWidth: frame.framePixelSize.width,
             pixelDiameter: pixelDiameter,
             smoothedDiameter: nextSmoothed,
             rawDistanceM: rawDistance,
@@ -1483,17 +1466,25 @@ private final class PrecisionTargetCoordinator: ObservableObject {
             sample.centerPixels.x - previous.centerPixels.x,
             sample.centerPixels.y - previous.centerPixels.y
         )
+        let edgeTolerance = liveEdgeTolerance(for: sample)
         let maxJump = max(
             maxLiveCenterJumpPX,
             max(sample.pixelDiameter, previous.pixelDiameter) * maxLiveCenterJumpDiameters
-        )
+        ) * (1 + edgeTolerance * (edgeLiveCenterJumpMultiplier - 1))
         guard centerJump <= maxJump else {
             return false
         }
 
         let smallerDiameter = max(min(sample.pixelDiameter, previous.pixelDiameter), 1)
         let diameterRatio = max(sample.pixelDiameter, previous.pixelDiameter) / smallerDiameter
-        return diameterRatio <= maxLiveDiameterRatio
+        return diameterRatio <= maxLiveDiameterRatio * (1 + edgeTolerance * (edgeLiveDiameterRatioMultiplier - 1))
+    }
+
+    private func liveEdgeTolerance(for sample: PrecisionDepthSample) -> CGFloat {
+        let frameWidth = max(sample.frameWidth, 1)
+        let normalizedX = min(max(sample.centerPixels.x / frameWidth, 0), 1)
+        let distanceToEdge = min(normalizedX, 1 - normalizedX)
+        return min(max((0.24 - distanceToEdge) / 0.24, 0), 1)
     }
 
     private func lockImpact(

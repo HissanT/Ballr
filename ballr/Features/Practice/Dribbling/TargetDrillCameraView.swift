@@ -25,13 +25,15 @@ struct TargetDrillCameraView: View {
                 TargetDrillRenderSurface(coordinator: coordinator)
                 .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if !coordinator.isCompleted {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .zIndex(100)
 
                 if cameraController.isStarting {
                     TargetDrillLoadingOverlay()
@@ -50,9 +52,20 @@ struct TargetDrillCameraView: View {
                 } else if coordinator.startPhase == .readiness && cameraController.errorMessage == nil {
                     BallrDrillReadinessOverlay(ballFoundStartedAt: coordinator.ballFoundStartedAt)
                 }
+
+                if coordinator.isCompleted {
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.completionStartedAt,
+                        buttonsVisible: coordinator.showsCompletionButtons,
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
+                    )
+                }
             }
             .ballrCameraPresentationChrome()
-            .ballrAwardsXPOnSuccess(coordinator.hitStreak >= 10)
+            .ballrAwardsXPOnSuccess(coordinator.isCompleted)
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -69,6 +82,7 @@ struct TargetDrillCameraView: View {
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
+                coordinator.tearDown()
                 BallrOrientationController.restoreDefaultOrientation()
             }
             .onChange(of: geometry.size) { _, newSize in
@@ -123,13 +137,23 @@ private final class TargetDrillCoordinator: ObservableObject {
     @Published private(set) var lastEventIsPositive = true
     @Published private(set) var isTracking = false
     @Published private(set) var trackingStatusText = "SEARCHING"
+    @Published private(set) var completionStartedAt: Date?
+    @Published private(set) var showsCompletionButtons = false
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
+    private let requiredHitStreak = 10
+    private let completionAnimationDuration: TimeInterval = 2.05
+    private let completionButtonRevealDelay: TimeInterval = 0.28
 
     private var gameState = TargetDrillGameState()
     private var size: CGSize = .zero
     private weak var renderView: TargetDrillRenderView?
+    private var completionWorkItem: DispatchWorkItem?
+
+    var isCompleted: Bool {
+        completionStartedAt != nil
+    }
 
     func attach(renderView: TargetDrillRenderView) {
         self.renderView = renderView
@@ -142,6 +166,7 @@ private final class TargetDrillCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
+        cancelCompletionWorkItem()
         gameState = TargetDrillGameState()
         startPhase = .readiness
         ballFoundStartedAt = nil
@@ -152,12 +177,18 @@ private final class TargetDrillCoordinator: ObservableObject {
         lastEventIsPositive = true
         isTracking = false
         trackingStatusText = "SEARCHING"
+        completionStartedAt = nil
+        showsCompletionButtons = false
         prepare(in: size, forceRespawn: true)
+    }
+
+    func tearDown() {
+        cancelCompletionWorkItem()
     }
 
     func prepare(in size: CGSize, forceRespawn: Bool = false) {
         self.size = size
-        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live)
+        gameState.prepare(in: size, forceRespawn: forceRespawn, allowSpawn: startPhase == .live && !isCompleted)
         renderView?.update(
             ballDisplayRect: nil,
             isTracking: isTracking,
@@ -172,7 +203,7 @@ private final class TargetDrillCoordinator: ObservableObject {
         updateTrackingStatus(from: overlayState)
         updateStartGate(isTracking: overlayState.isTracking, timestamp: frame.timestamp)
 
-        if startPhase == .live {
+        if startPhase == .live && !isCompleted {
             let event = gameState.step(
                 overlayState: overlayState,
                 ballDisplayRect: ballDisplayRect,
@@ -192,6 +223,9 @@ private final class TargetDrillCoordinator: ObservableObject {
                 break
             }
             syncHudFromGameState()
+            if hitStreak >= requiredHitStreak {
+                complete(at: frame.timestamp)
+            }
         }
 
         renderView?.update(
@@ -200,6 +234,29 @@ private final class TargetDrillCoordinator: ObservableObject {
             target: gameState.target,
             scorePopups: gameState.scorePopups
         )
+    }
+
+    private func complete(at timestamp: Date) {
+        guard !isCompleted else {
+            return
+        }
+
+        completionStartedAt = timestamp
+        BallrDrillSoundPlayer.playWinner()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsCompletionButtons = true
+        }
+        completionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + completionAnimationDuration + completionButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelCompletionWorkItem() {
+        completionWorkItem?.cancel()
+        completionWorkItem = nil
     }
 
     private func displayRect(

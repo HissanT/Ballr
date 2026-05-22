@@ -13,21 +13,21 @@ enum HunterDifficulty: String, Identifiable {
         switch self {
         case .easy:
             return HunterGameConfig(
-                radiusScale: 0.86,
-                xSpeedMultiplier: 0.80,
-                diveSpeedMultiplier: 0.78,
-                recoverSpeedMultiplier: 0.82,
-                aimDurationMultiplier: 1.24,
-                impactDurationMultiplier: 1.12
+                radiusScale: 0.78,
+                xSpeedMultiplier: 0.68,
+                diveSpeedMultiplier: 0.58,
+                recoverSpeedMultiplier: 0.76,
+                aimDurationMultiplier: 1.38,
+                impactDurationMultiplier: 1.22
             )
         case .hard:
             return HunterGameConfig(
-                radiusScale: 1.0,
-                xSpeedMultiplier: 1.0,
-                diveSpeedMultiplier: 1.0,
-                recoverSpeedMultiplier: 1.0,
-                aimDurationMultiplier: 1.0,
-                impactDurationMultiplier: 1.0
+                radiusScale: 0.92,
+                xSpeedMultiplier: 0.88,
+                diveSpeedMultiplier: 0.78,
+                recoverSpeedMultiplier: 0.90,
+                aimDurationMultiplier: 1.12,
+                impactDurationMultiplier: 1.08
             )
         }
     }
@@ -71,12 +71,14 @@ struct HunterCameraView: View {
                 HunterRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if coordinator.phase != .gameOver && coordinator.phase != .won {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.vertical, 14)
-                .zIndex(100)
 
                 if cameraController.isStarting {
                     HunterLoadingOverlay()
@@ -97,24 +99,26 @@ struct HunterCameraView: View {
                 }
 
                 if coordinator.phase == .gameOver {
-                    HunterFinishedOverlay(
-                        title: "CAUGHT",
-                        subtitle: "The hunter touched the ball.",
-                        timeText: coordinator.survivedTimeText,
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        title: "TRY AGAIN",
+                        primaryTitle: "TRY AGAIN",
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
 
                 if coordinator.phase == .won {
-                    HunterFinishedOverlay(
-                        title: "ESCAPED",
-                        subtitle: "Clean run.",
-                        timeText: "60s",
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
             }
@@ -136,6 +140,7 @@ struct HunterCameraView: View {
                 cameraController.onTrackingFrame = nil
                 cameraController.publishesTrackingFramesToSwiftUI = true
                 cameraController.stop()
+                coordinator.tearDown()
                 BallrOrientationController.restoreDefaultOrientation()
             }
             .onChange(of: geometry.size) { _, newSize in
@@ -174,6 +179,7 @@ private enum HunterPhase {
     case readiness
     case countdown
     case live
+    case caughtAnimating
     case gameOver
     case won
 }
@@ -184,10 +190,14 @@ private final class HunterCoordinator: ObservableObject {
     @Published private(set) var countdownStartedAt: Date?
     @Published private(set) var timerText = "60"
     @Published private(set) var survivedTimeText = "0s"
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 60.0
+    private let finishAnimationDuration: TimeInterval = 2.05
+    private let finishButtonRevealDelay: TimeInterval = 0.28
     private let lostBallPromptFrameThreshold = 18
 
     private var size: CGSize = .zero
@@ -199,6 +209,8 @@ private final class HunterCoordinator: ObservableObject {
     private let difficulty: HunterDifficulty
     private var gameState: HunterGameState
     private weak var renderView: HunterRenderView?
+    private var caughtOverlayWorkItem: DispatchWorkItem?
+    private var finishWorkItem: DispatchWorkItem?
 
     init(difficulty: HunterDifficulty) {
         self.difficulty = difficulty
@@ -215,13 +227,24 @@ private final class HunterCoordinator: ObservableObject {
         )
     }
 
+    func tearDown() {
+        cancelFinishWorkItem()
+        caughtOverlayWorkItem?.cancel()
+        caughtOverlayWorkItem = nil
+    }
+
     func reset(in size: CGSize) {
+        cancelFinishWorkItem()
+        caughtOverlayWorkItem?.cancel()
+        caughtOverlayWorkItem = nil
         self.size = size
         phase = .readiness
         ballFoundStartedAt = nil
         countdownStartedAt = nil
         timerText = "60"
         survivedTimeText = "0s"
+        finishStartedAt = nil
+        showsFinishButtons = false
         liveElapsed = 0
         lastStepAt = nil
         lostBallFrameCount = 0
@@ -375,16 +398,50 @@ private final class HunterCoordinator: ObservableObject {
         )
 
         switch event {
-        case .caught:
-            phase = .gameOver
+        case .caught(let point):
+            BallrDrillSoundPlayer.playHunterExplosion()
+            renderView?.triggerExplosion(at: point)
+            phase = .caughtAnimating
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.phase == .caughtAnimating else {
+                    return
+                }
+                self.finish(as: .gameOver, at: timestamp)
+                self.caughtOverlayWorkItem = nil
+            }
+            caughtOverlayWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: workItem)
         case .none:
             if liveElapsed >= roundDuration {
                 BallrDrillSoundPlayer.playWinner()
-                phase = .won
                 timerText = "0"
                 survivedTimeText = "60s"
+                finish(as: .won, at: timestamp)
             }
         }
+    }
+
+    private func finish(as finishPhase: HunterPhase, at timestamp: Date) {
+        guard phase != .gameOver, phase != .won else {
+            return
+        }
+
+        phase = finishPhase
+        finishStartedAt = timestamp
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
+        }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 
     private var promptText: String? {
@@ -393,6 +450,8 @@ private final class HunterCoordinator: ObservableObject {
             return nil
         case .live:
             return isTracking ? nil : "Find the ball"
+        case .caughtAnimating:
+            return nil
         case .gameOver:
             return "Game over"
         case .won:
@@ -416,10 +475,19 @@ private struct HunterRenderSurface: UIViewRepresentable {
 
 private final class HunterRenderView: UIView {
     private let hunterGlowLayer = CAShapeLayer()
+    private let hunterImageLayer = CALayer()
+    private let hunterLegLayer = CAShapeLayer()
+    private let hunterFootLayer = CAShapeLayer()
     private let hunterFillLayer = CAShapeLayer()
     private let hunterStrokeLayer = CAShapeLayer()
     private let hunterTickLayer = CAShapeLayer()
+    private let hunterHighlightLayer = CAShapeLayer()
     private let hunterImpactLayer = CAShapeLayer()
+    private let bombFuseLayer = CAShapeLayer()
+    private let bombBodyLayer = CAShapeLayer()
+    private let bombShineLayer = CAShapeLayer()
+    private let bombFlameLayer = CAShapeLayer()
+    private let explosionLayer = CALayer()
     private let ballRingLayer = CAShapeLayer()
     private let ballCenterLayer = CAShapeLayer()
     private let promptLabel = UILabel()
@@ -454,6 +522,54 @@ private final class HunterRenderView: UIView {
         render()
     }
 
+    func triggerExplosion(at point: CGPoint) {
+        let radius = max(86, min(bounds.width, bounds.height) * 0.20)
+        let explosionBounds = CGRect(x: 0, y: 0, width: radius * 2, height: radius * 2)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if explosionLayer.contents == nil {
+            explosionLayer.contents = Self.loadExplosionImage()?.cgImage
+        }
+        explosionLayer.bounds = explosionBounds
+        explosionLayer.position = point
+        explosionLayer.opacity = 1
+        explosionLayer.transform = CATransform3DIdentity
+        explosionLayer.isHidden = false
+        CATransaction.commit()
+
+        let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+        scale.values = [0.18, 1.08, 0.96, 1.0]
+        scale.keyTimes = [0, 0.36, 0.62, 1]
+        scale.duration = 0.46
+        scale.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeInEaseOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0, 1, 1, 0]
+        fade.keyTimes = [0, 0.12, 0.62, 1]
+        fade.duration = 0.58
+        fade.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .linear),
+            CAMediaTimingFunction(name: .easeIn)
+        ]
+
+        let group = CAAnimationGroup()
+        group.animations = [scale, fade]
+        group.duration = 0.58
+        group.isRemovedOnCompletion = true
+
+        explosionLayer.add(group, forKey: "hunterExplosion")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + group.duration) { [weak self] in
+            self?.explosionLayer.isHidden = true
+        }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         render()
@@ -461,33 +577,82 @@ private final class HunterRenderView: UIView {
 
     private func configureLayers() {
         hunterGlowLayer.fillColor = UIColor.clear.cgColor
-        hunterGlowLayer.strokeColor = UIColor.red.withAlphaComponent(0.26).cgColor
-        hunterGlowLayer.lineWidth = 20
-        hunterGlowLayer.shadowColor = UIColor.red.cgColor
-        hunterGlowLayer.shadowOpacity = 0.72
-        hunterGlowLayer.shadowRadius = 18
+        hunterGlowLayer.strokeColor = UIColor.clear.cgColor
+        hunterGlowLayer.lineWidth = 0
+        hunterGlowLayer.shadowOpacity = 0
         hunterGlowLayer.shadowOffset = .zero
         layer.addSublayer(hunterGlowLayer)
 
-        hunterFillLayer.fillColor = UIColor(red: 1.0, green: 0.02, blue: 0.02, alpha: 0.17).cgColor
+        hunterImageLayer.contentsGravity = .resizeAspect
+        hunterImageLayer.magnificationFilter = .linear
+        hunterImageLayer.minificationFilter = .linear
+        hunterImageLayer.contents = Self.loadTargetImage()?.cgImage
+        layer.addSublayer(hunterImageLayer)
+
+        hunterLegLayer.fillColor = UIColor(red: 0.12, green: 0.10, blue: 0.10, alpha: 1).cgColor
+        hunterLegLayer.strokeColor = UIColor.black.cgColor
+        hunterLegLayer.lineWidth = 0.9
+        layer.addSublayer(hunterLegLayer)
+
+        hunterFootLayer.fillColor = UIColor(red: 0.84, green: 0.84, blue: 0.82, alpha: 1).cgColor
+        hunterFootLayer.strokeColor = UIColor.black.cgColor
+        hunterFootLayer.lineWidth = 1.1
+        layer.addSublayer(hunterFootLayer)
+
+        hunterFillLayer.fillColor = UIColor(red: 0.96, green: 0.42, blue: 0.00, alpha: 1).cgColor
         layer.addSublayer(hunterFillLayer)
 
         hunterStrokeLayer.fillColor = UIColor.clear.cgColor
-        hunterStrokeLayer.strokeColor = UIColor(red: 1.0, green: 0.06, blue: 0.03, alpha: 0.92).cgColor
-        hunterStrokeLayer.lineWidth = 5
+        hunterStrokeLayer.strokeColor = UIColor.black.cgColor
+        hunterStrokeLayer.lineWidth = 1.1
+        hunterStrokeLayer.lineCap = .round
+        hunterStrokeLayer.lineJoin = .round
         layer.addSublayer(hunterStrokeLayer)
 
-        hunterTickLayer.fillColor = UIColor.clear.cgColor
-        hunterTickLayer.strokeColor = UIColor(red: 1.0, green: 0.92, blue: 0.32, alpha: 0.88).cgColor
-        hunterTickLayer.lineWidth = 4
-        hunterTickLayer.lineCap = .round
-        hunterTickLayer.lineJoin = .round
+        hunterTickLayer.fillColor = UIColor(red: 1.0, green: 0.70, blue: 0.43, alpha: 1).cgColor
+        hunterTickLayer.strokeColor = UIColor.clear.cgColor
         layer.addSublayer(hunterTickLayer)
 
+        hunterHighlightLayer.fillColor = UIColor(red: 1.0, green: 0.72, blue: 0.46, alpha: 0.94).cgColor
+        layer.addSublayer(hunterHighlightLayer)
+
         hunterImpactLayer.fillColor = UIColor.clear.cgColor
-        hunterImpactLayer.strokeColor = UIColor(red: 1.0, green: 0.08, blue: 0.02, alpha: 0.48).cgColor
-        hunterImpactLayer.lineWidth = 5
+        hunterImpactLayer.strokeColor = UIColor(red: 1.0, green: 0.72, blue: 0.20, alpha: 0.56).cgColor
+        hunterImpactLayer.lineWidth = 4
         layer.addSublayer(hunterImpactLayer)
+
+        bombFuseLayer.fillColor = UIColor.clear.cgColor
+        bombFuseLayer.strokeColor = UIColor(red: 0.48, green: 0.48, blue: 0.47, alpha: 1).cgColor
+        bombFuseLayer.lineWidth = 9
+        bombFuseLayer.lineCap = .round
+        layer.addSublayer(bombFuseLayer)
+
+        bombBodyLayer.fillColor = UIColor(red: 0.17, green: 0.15, blue: 0.15, alpha: 1).cgColor
+        bombBodyLayer.strokeColor = UIColor.clear.cgColor
+        bombBodyLayer.shadowColor = UIColor(red: 1.0, green: 0.76, blue: 0.20, alpha: 1).cgColor
+        bombBodyLayer.shadowOpacity = 0.32
+        bombBodyLayer.shadowRadius = 8
+        bombBodyLayer.shadowOffset = .zero
+        layer.addSublayer(bombBodyLayer)
+
+        bombShineLayer.fillColor = UIColor.white.withAlphaComponent(0.22).cgColor
+        bombShineLayer.strokeColor = UIColor.clear.cgColor
+        layer.addSublayer(bombShineLayer)
+
+        bombFlameLayer.fillColor = UIColor(red: 1.0, green: 0.69, blue: 0.18, alpha: 1).cgColor
+        bombFlameLayer.strokeColor = UIColor.clear.cgColor
+        bombFlameLayer.shadowColor = UIColor(red: 1.0, green: 0.64, blue: 0.08, alpha: 1).cgColor
+        bombFlameLayer.shadowOpacity = 0.70
+        bombFlameLayer.shadowRadius = 7
+        bombFlameLayer.shadowOffset = .zero
+        layer.addSublayer(bombFlameLayer)
+
+        explosionLayer.contentsGravity = .resizeAspect
+        explosionLayer.magnificationFilter = .linear
+        explosionLayer.minificationFilter = .linear
+        explosionLayer.contents = Self.loadExplosionImage()?.cgImage
+        explosionLayer.isHidden = true
+        layer.addSublayer(explosionLayer)
 
         ballRingLayer.fillColor = UIColor.clear.cgColor
         ballRingLayer.strokeColor = UIColor.white.cgColor
@@ -522,45 +687,89 @@ private final class HunterRenderView: UIView {
     private func renderHunter() {
         guard let hunter else {
             hunterGlowLayer.isHidden = true
+            hunterImageLayer.isHidden = true
             hunterFillLayer.isHidden = true
             hunterStrokeLayer.isHidden = true
             hunterTickLayer.isHidden = true
+            hunterHighlightLayer.isHidden = true
+            hunterLegLayer.isHidden = true
+            hunterFootLayer.isHidden = true
             hunterImpactLayer.isHidden = true
+            bombFuseLayer.isHidden = true
+            bombBodyLayer.isHidden = true
+            bombShineLayer.isHidden = true
+            bombFlameLayer.isHidden = true
             return
         }
 
-        hunterGlowLayer.isHidden = false
-        hunterFillLayer.isHidden = false
-        hunterStrokeLayer.isHidden = false
-        hunterTickLayer.isHidden = false
+        hunterGlowLayer.isHidden = true
+        hunterImageLayer.isHidden = false
+        hunterLegLayer.isHidden = true
+        hunterFootLayer.isHidden = true
+        hunterFillLayer.isHidden = true
+        hunterStrokeLayer.isHidden = true
+        hunterTickLayer.isHidden = true
+        hunterHighlightLayer.isHidden = true
         hunterImpactLayer.isHidden = hunter.phase != .impact
+        bombFuseLayer.isHidden = true
+        bombBodyLayer.isHidden = true
+        bombShineLayer.isHidden = true
+        bombFlameLayer.isHidden = true
 
-        let pulse = 0.5 + 0.5 * sin(hunter.pulsePhase)
-        let pulseInset = hunter.radius * CGFloat(0.08 * pulse)
-        let ringRect = CGRect(
-            x: hunter.center.x - hunter.radius - pulseInset,
-            y: hunter.center.y - hunter.radius - pulseInset,
-            width: (hunter.radius + pulseInset) * 2,
-            height: (hunter.radius + pulseInset) * 2
-        )
-        let coreRect = CGRect(
-            x: hunter.center.x - hunter.radius,
-            y: hunter.center.y - hunter.radius,
-            width: hunter.radius * 2,
-            height: hunter.radius * 2
+        let width = hunter.radius * 3.76
+        let height = width * (164.0 / 260.0)
+        let characterRect = CGRect(
+            x: hunter.center.x - width * 0.5,
+            y: hunter.center.y - height * 0.48,
+            width: width,
+            height: height
         )
 
-        hunterGlowLayer.path = UIBezierPath(ovalIn: ringRect).cgPath
-        hunterGlowLayer.lineWidth = hunter.phase == .diving ? 18 + pulse * 13 : 12 + pulse * 8
-        hunterGlowLayer.opacity = Float((hunter.phase == .recovering ? 0.28 : 0.48) + pulse * 0.28)
-
-        hunterFillLayer.path = UIBezierPath(ovalIn: coreRect).cgPath
-        hunterFillLayer.fillColor = fillColor(for: hunter).cgColor
-        hunterStrokeLayer.path = UIBezierPath(ovalIn: coreRect).cgPath
-        hunterStrokeLayer.strokeColor = strokeColor(for: hunter).cgColor
-        hunterTickLayer.path = makeTickPath(for: hunter).cgPath
+        if hunterImageLayer.contents == nil {
+            hunterImageLayer.contents = Self.loadTargetImage()?.cgImage
+        }
+        hunterImageLayer.frame = characterRect
         hunterImpactLayer.path = impactPath(for: hunter).cgPath
         hunterImpactLayer.opacity = Float(max(0, 1 - hunter.phaseElapsed / 0.22))
+        renderBomb(for: hunter)
+    }
+
+    private static func loadTargetImage() -> UIImage? {
+        if let image = UIImage(named: "HunterTarget") {
+            return image
+        }
+        if let image = UIImage(named: "TARGET") {
+            return image
+        }
+        if let image = UIImage(named: "Features/Practice/TARGET") {
+            return image
+        }
+        if let url = Bundle.main.url(forResource: "TARGET", withExtension: "svg") {
+            return UIImage(contentsOfFile: url.path)
+        }
+        if let url = Bundle.main.url(forResource: "TARGET", withExtension: "svg", subdirectory: "Features/Practice") {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return nil
+    }
+
+    private static func loadExplosionImage() -> UIImage? {
+        if let image = UIImage(named: "HunterExplosion") {
+            return image
+        }
+        if let image = UIImage(named: "Explosion") {
+            return image
+        }
+        if let image = UIImage(named: "Features/Practice/Explosion") {
+            return image
+        }
+        if let url = Bundle.main.url(forResource: "Explosion", withExtension: "svg") {
+            return UIImage(contentsOfFile: url.path)
+        }
+        if let url = Bundle.main.url(forResource: "Explosion", withExtension: "svg", subdirectory: "Features/Practice") {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return nil
     }
 
     private func fillColor(for hunter: HunterZone) -> UIColor {
@@ -588,10 +797,11 @@ private final class HunterRenderView: UIView {
     }
 
     private func impactPath(for hunter: HunterZone) -> UIBezierPath {
-        let radius = hunter.radius * (1.15 + min(hunter.phaseElapsed / 0.22, 1) * 0.65)
+        let center = hunter.bombCenter ?? hunter.bombSpawnPoint
+        let radius = hunter.bombRadius * (1.15 + min(hunter.phaseElapsed / 0.22, 1) * 0.65)
         let rect = CGRect(
-            x: hunter.center.x - radius,
-            y: hunter.center.y - radius,
+            x: center.x - radius,
+            y: center.y - radius,
             width: radius * 2,
             height: radius * 2
         )
@@ -615,6 +825,337 @@ private final class HunterRenderView: UIView {
             path.move(to: start)
             path.addLine(to: end)
         }
+        return path
+    }
+
+    private func renderBomb(for hunter: HunterZone) {
+        guard hunter.phase != .impact, let bombCenter = hunter.bombCenter else {
+            bombFuseLayer.isHidden = true
+            bombBodyLayer.isHidden = true
+            bombShineLayer.isHidden = true
+            bombFlameLayer.isHidden = true
+            return
+        }
+
+        bombFuseLayer.isHidden = false
+        bombBodyLayer.isHidden = false
+        bombShineLayer.isHidden = false
+        bombFlameLayer.isHidden = false
+
+        let radius = hunter.bombRadius
+        let rect = CGRect(
+            x: bombCenter.x - radius,
+            y: bombCenter.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+        bombBodyLayer.path = bombBodyPath(in: rect).cgPath
+        bombBodyLayer.shadowPath = bombBodyLayer.path
+        bombShineLayer.path = bombShinePath(in: rect).cgPath
+        bombFuseLayer.path = bombFusePath(in: rect).cgPath
+        bombFuseLayer.lineWidth = max(4, radius * 0.22)
+        bombFlameLayer.path = bombFlamePath(in: rect).cgPath
+    }
+
+    private func hunterFillPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        path.append(hunterCrownPath(in: rect))
+        path.append(hunterBrimPath(in: rect))
+        return path
+    }
+
+    private func hunterOutlinePath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        path.append(hunterCrownVisibleStrokePath(in: rect))
+        path.append(hunterBrimVisibleStrokePath(in: rect))
+        return path
+    }
+
+    private func hunterCrownPath(in rect: CGRect) -> UIBezierPath {
+        UIBezierPath(
+            roundedRect: CGRect(
+                x: rect.minX + rect.width * 0.265,
+                y: rect.minY + rect.height * 0.01,
+                width: rect.width * 0.47,
+                height: rect.height * 0.52
+            ),
+            cornerRadius: rect.width * 0.15
+        )
+    }
+
+    private func hunterBrimPath(in rect: CGRect) -> UIBezierPath {
+        UIBezierPath(
+            ovalIn: CGRect(
+                x: rect.minX,
+                y: rect.minY + rect.height * 0.48,
+                width: rect.width,
+                height: rect.height * 0.36
+            )
+        )
+    }
+
+    private func hunterBrimVisibleStrokePath(in rect: CGRect) -> UIBezierPath {
+        let brim = CGRect(
+            x: rect.minX,
+            y: rect.minY + rect.height * 0.48,
+            width: rect.width,
+            height: rect.height * 0.36
+        )
+        let crownLeft = rect.minX + rect.width * 0.265
+        let crownRight = rect.minX + rect.width * 0.735
+        let brimTop = brim.minY
+        let brimMidY = brim.midY
+        let brimBottom = brim.maxY
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: crownLeft, y: brimTop))
+        path.addCurve(
+            to: CGPoint(x: crownRight, y: brimTop),
+            controlPoint1: CGPoint(x: rect.minX + rect.width * 0.40, y: rect.minY + rect.height * 0.56),
+            controlPoint2: CGPoint(x: rect.minX + rect.width * 0.60, y: rect.minY + rect.height * 0.56)
+        )
+
+        path.move(to: CGPoint(x: crownLeft, y: brimTop))
+        path.addCurve(
+            to: CGPoint(x: brim.minX, y: brimMidY),
+            controlPoint1: CGPoint(x: rect.minX + rect.width * 0.12, y: brimTop),
+            controlPoint2: CGPoint(x: brim.minX, y: rect.minY + rect.height * 0.54)
+        )
+        path.addCurve(
+            to: CGPoint(x: brim.midX, y: brimBottom),
+            controlPoint1: CGPoint(x: brim.minX, y: rect.minY + rect.height * 0.78),
+            controlPoint2: CGPoint(x: rect.minX + rect.width * 0.22, y: brimBottom)
+        )
+        path.addCurve(
+            to: CGPoint(x: brim.maxX, y: brimMidY),
+            controlPoint1: CGPoint(x: rect.minX + rect.width * 0.78, y: brimBottom),
+            controlPoint2: CGPoint(x: brim.maxX, y: rect.minY + rect.height * 0.78)
+        )
+        path.addCurve(
+            to: CGPoint(x: crownRight, y: brimTop),
+            controlPoint1: CGPoint(x: brim.maxX, y: rect.minY + rect.height * 0.54),
+            controlPoint2: CGPoint(x: rect.minX + rect.width * 0.88, y: brimTop)
+        )
+        return path
+    }
+
+    private func hunterCrownVisibleStrokePath(in rect: CGRect) -> UIBezierPath {
+        let crown = CGRect(
+            x: rect.minX + rect.width * 0.265,
+            y: rect.minY + rect.height * 0.01,
+            width: rect.width * 0.47,
+            height: rect.height * 0.52
+        )
+        let radius = rect.width * 0.15
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: crown.minX, y: crown.maxY))
+        path.addLine(to: CGPoint(x: crown.minX, y: crown.minY + radius))
+        path.addCurve(
+            to: CGPoint(x: crown.minX + radius, y: crown.minY),
+            controlPoint1: CGPoint(x: crown.minX, y: crown.minY + radius * 0.45),
+            controlPoint2: CGPoint(x: crown.minX + radius * 0.45, y: crown.minY)
+        )
+        path.addLine(to: CGPoint(x: crown.maxX - radius, y: crown.minY))
+        path.addCurve(
+            to: CGPoint(x: crown.maxX, y: crown.minY + radius),
+            controlPoint1: CGPoint(x: crown.maxX - radius * 0.45, y: crown.minY),
+            controlPoint2: CGPoint(x: crown.maxX, y: crown.minY + radius * 0.45)
+        )
+        path.addLine(to: CGPoint(x: crown.maxX, y: crown.maxY))
+        return path
+    }
+
+    private func hunterLegPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let legWidth = rect.width * 0.038
+        let legHeight = rect.height * 0.20
+        let legY = rect.minY + rect.height * 0.80
+        let leftCenterX = rect.minX + rect.width * 0.245
+        let rightCenterX = rect.minX + rect.width * 0.755
+        let leftLeg = UIBezierPath(
+            roundedRect: CGRect(x: leftCenterX - legWidth * 0.5, y: legY, width: legWidth, height: legHeight),
+            cornerRadius: legWidth * 0.5
+        )
+        .rotated(by: 12.83 * .pi / 180, around: CGPoint(x: leftCenterX, y: legY))
+        let rightLeg = UIBezierPath(
+            roundedRect: CGRect(x: rightCenterX - legWidth * 0.5, y: legY, width: legWidth, height: legHeight),
+            cornerRadius: legWidth * 0.5
+        )
+        .rotated(by: -12.83 * .pi / 180, around: CGPoint(x: rightCenterX, y: legY))
+        path.append(leftLeg)
+        path.append(rightLeg)
+        return path
+    }
+
+    private func hunterFootPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let footWidth = rect.width * 0.095
+        let footHeight = rect.height * 0.07
+        let footY = rect.minY + rect.height * 0.95
+        let leftCenterX = rect.minX + rect.width * 0.225
+        let rightCenterX = rect.minX + rect.width * 0.775
+        path.append(semicirclePath(in: CGRect(x: leftCenterX - footWidth * 0.5, y: footY, width: footWidth, height: footHeight)))
+        path.append(semicirclePath(in: CGRect(x: rightCenterX - footWidth * 0.5, y: footY, width: footWidth, height: footHeight)))
+        return path
+    }
+
+    private func semicirclePath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addArc(
+            withCenter: CGPoint(x: rect.midX, y: rect.maxY),
+            radius: rect.width * 0.5,
+            startAngle: .pi,
+            endAngle: 0,
+            clockwise: true
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.close()
+        return path
+    }
+
+    private func hunterDotPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let dots: [CGPoint] = [
+            CGPoint(x: rect.minX + rect.width * 0.052, y: rect.minY + rect.height * 0.66),
+            CGPoint(x: rect.minX + rect.width * 0.150, y: rect.minY + rect.height * 0.73),
+            CGPoint(x: rect.minX + rect.width * 0.258, y: rect.minY + rect.height * 0.77),
+            CGPoint(x: rect.minX + rect.width * 0.363, y: rect.minY + rect.height * 0.79),
+            CGPoint(x: rect.minX + rect.width * 0.468, y: rect.minY + rect.height * 0.80),
+            CGPoint(x: rect.minX + rect.width * 0.572, y: rect.minY + rect.height * 0.79),
+            CGPoint(x: rect.minX + rect.width * 0.676, y: rect.minY + rect.height * 0.77),
+            CGPoint(x: rect.minX + rect.width * 0.783, y: rect.minY + rect.height * 0.72),
+            CGPoint(x: rect.minX + rect.width * 0.876, y: rect.minY + rect.height * 0.67),
+            CGPoint(x: rect.minX + rect.width * 0.958, y: rect.minY + rect.height * 0.62)
+        ]
+        let dotSize = rect.width * 0.043
+        for dot in dots {
+            path.append(UIBezierPath(ovalIn: CGRect(x: dot.x - dotSize * 0.5, y: dot.y - dotSize * 0.5, width: dotSize, height: dotSize)))
+        }
+        return path
+    }
+
+    private func hunterHighlightPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let x = rect.minX
+        let y = rect.minY
+        let w = rect.width
+        let h = rect.height
+        path.move(to: CGPoint(x: x + w * 0.46, y: y + h * 0.08))
+        path.addLine(to: CGPoint(x: x + w * 0.64, y: y + h * 0.08))
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.70, y: y + h * 0.41),
+            controlPoint1: CGPoint(x: x + w * 0.71, y: y + h * 0.08),
+            controlPoint2: CGPoint(x: x + w * 0.70, y: y + h * 0.22)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.67, y: y + h * 0.41),
+            controlPoint1: CGPoint(x: x + w * 0.70, y: y + h * 0.47),
+            controlPoint2: CGPoint(x: x + w * 0.67, y: y + h * 0.48)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.62, y: y + h * 0.24),
+            controlPoint1: CGPoint(x: x + w * 0.65, y: y + h * 0.30),
+            controlPoint2: CGPoint(x: x + w * 0.65, y: y + h * 0.29)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.49, y: y + h * 0.15),
+            controlPoint1: CGPoint(x: x + w * 0.59, y: y + h * 0.20),
+            controlPoint2: CGPoint(x: x + w * 0.53, y: y + h * 0.18)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.46, y: y + h * 0.08),
+            controlPoint1: CGPoint(x: x + w * 0.43, y: y + h * 0.10),
+            controlPoint2: CGPoint(x: x + w * 0.44, y: y + h * 0.08)
+        )
+        path.close()
+        return path
+    }
+
+    private func bombBodyPath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let x = rect.minX
+        let y = rect.minY
+        let w = rect.width
+        let h = rect.height
+        path.append(UIBezierPath(ovalIn: CGRect(x: x + w * 0.08, y: y + h * 0.28, width: w * 0.84, height: h * 0.84)))
+        path.append(UIBezierPath(roundedRect: CGRect(x: x + w * 0.42, y: y + h * 0.16, width: w * 0.16, height: h * 0.18), cornerRadius: w * 0.04))
+        path.append(UIBezierPath(roundedRect: CGRect(x: x + w * 0.35, y: y + h * 0.26, width: w * 0.30, height: h * 0.15), cornerRadius: w * 0.05))
+        return path
+    }
+
+    private func bombShinePath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let x = rect.minX
+        let y = rect.minY
+        let w = rect.width
+        let h = rect.height
+        path.append(UIBezierPath(
+            ovalIn: CGRect(
+                x: x + w * 0.23,
+                y: y + h * 0.43,
+                width: w * 0.22,
+                height: h * 0.13
+            )
+        ))
+        path.append(UIBezierPath(
+            ovalIn: CGRect(
+                x: x + w * 0.31,
+                y: y + h * 0.58,
+                width: w * 0.10,
+                height: h * 0.07
+            )
+        ))
+        return path
+    }
+
+    private func bombFusePath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let x = rect.minX
+        let y = rect.minY
+        let w = rect.width
+        let h = rect.height
+        path.move(to: CGPoint(x: x + w * 0.51, y: y + h * 0.18))
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.66, y: y - h * 0.08),
+            controlPoint1: CGPoint(x: x + w * 0.52, y: y + h * 0.06),
+            controlPoint2: CGPoint(x: x + w * 0.58, y: y - h * 0.05)
+        )
+        return path
+    }
+
+    private func bombFlamePath(in rect: CGRect) -> UIBezierPath {
+        let path = UIBezierPath()
+        let x = rect.minX
+        let y = rect.minY
+        let w = rect.width
+        let h = rect.height
+        path.move(to: CGPoint(x: x + w * 0.62, y: y - h * 0.30))
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.66, y: y - h * 0.14),
+            controlPoint1: CGPoint(x: x + w * 0.59, y: y - h * 0.30),
+            controlPoint2: CGPoint(x: x + w * 0.59, y: y - h * 0.17)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.72, y: y - h * 0.18),
+            controlPoint1: CGPoint(x: x + w * 0.69, y: y - h * 0.13),
+            controlPoint2: CGPoint(x: x + w * 0.71, y: y - h * 0.15)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.61, y: y - h * 0.01),
+            controlPoint1: CGPoint(x: x + w * 0.77, y: y - h * 0.08),
+            controlPoint2: CGPoint(x: x + w * 0.71, y: y + h * 0.01)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.53, y: y - h * 0.16),
+            controlPoint1: CGPoint(x: x + w * 0.53, y: y - h * 0.04),
+            controlPoint2: CGPoint(x: x + w * 0.51, y: y - h * 0.10)
+        )
+        path.addCurve(
+            to: CGPoint(x: x + w * 0.62, y: y - h * 0.30),
+            controlPoint1: CGPoint(x: x + w * 0.54, y: y - h * 0.24),
+            controlPoint2: CGPoint(x: x + w * 0.58, y: y - h * 0.30)
+        )
+        path.close()
         return path
     }
 
@@ -651,6 +1192,17 @@ private final class HunterRenderView: UIView {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+private extension UIBezierPath {
+    func rotated(by radians: CGFloat, around anchor: CGPoint) -> UIBezierPath {
+        let copy = UIBezierPath(cgPath: cgPath)
+        var transform = CGAffineTransform(translationX: anchor.x, y: anchor.y)
+        transform = transform.rotated(by: radians)
+        transform = transform.translatedBy(x: -anchor.x, y: -anchor.y)
+        copy.apply(transform)
+        return copy
     }
 }
 
@@ -693,9 +1245,15 @@ private struct HunterGameState {
             config: config,
             delta: delta
         )
-        hunter = activeHunter
+        if let collisionPoint = activeHunter.collisionPoint(with: ballDisplayRect) {
+            activeHunter.phase = .impact
+            activeHunter.phaseElapsed = 0
+            hunter = activeHunter
+            return .caught(collisionPoint)
+        }
 
-        return activeHunter.collides(with: ballDisplayRect) ? .caught : nil
+        hunter = activeHunter
+        return nil
     }
 
     private func makeHunter(awayFrom ballDisplayRect: CGRect, in size: CGSize) -> HunterZone {
@@ -715,6 +1273,7 @@ private struct HunterGameState {
             center: spawn,
             target: spawn,
             radius: radius,
+            bombCenter: nil,
             pulsePhase: 0,
             phase: .aiming,
             phaseElapsed: 0
@@ -733,9 +1292,18 @@ private struct HunterZone {
     var center: CGPoint
     var target: CGPoint
     let radius: CGFloat
+    var bombCenter: CGPoint?
     var pulsePhase: CGFloat
     var phase: HunterAttackPhase
     var phaseElapsed: TimeInterval
+
+    var bombRadius: CGFloat {
+        radius * 1.00
+    }
+
+    var bombSpawnPoint: CGPoint {
+        CGPoint(x: center.x, y: center.y + radius * 1.46)
+    }
 
     mutating func advance(
         toward target: CGPoint,
@@ -762,16 +1330,29 @@ private struct HunterZone {
             )
 
             let aimDuration = max(0.38, (0.82 - progress * 0.30) * config.aimDurationMultiplier)
-            if phaseElapsed >= aimDuration {
-                self.target = impactTarget(for: target, in: size)
+            let releaseTarget = impactTarget(for: target, in: size)
+            let horizontalAlignment = abs(center.x - releaseTarget.x)
+            let isAlignedForDrop = horizontalAlignment <= max(10, radius * 0.22)
+            if phaseElapsed >= aimDuration, isAlignedForDrop {
+                self.target = releaseTarget
+                bombCenter = bombSpawnPoint
                 phase = .diving
                 phaseElapsed = 0
             }
 
         case .diving:
+            let topY = topLine(in: size)
+            let xSpeed = minDimension * CGFloat(0.42 + easedProgress * 0.24) * config.xSpeedMultiplier
+            moveToward(
+                CGPoint(x: target.x, y: topY),
+                speed: xSpeed,
+                delta: delta,
+                in: size
+            )
+            self.target = impactTarget(for: target, in: size)
             let diveSpeed = minDimension * CGFloat(0.78 + easedProgress * 0.62) * config.diveSpeedMultiplier
-            moveToward(self.target, speed: diveSpeed, delta: delta, in: size)
-            if distance(to: self.target) <= max(8, radius * 0.18) || center.y >= lowerLimit(in: size) {
+            moveBombDown(speed: diveSpeed, delta: delta)
+            if bombDistance(to: self.target) <= max(8, bombRadius * 0.28) || (bombCenter?.y ?? 0) >= lowerLimit(in: size) {
                 phase = .impact
                 phaseElapsed = 0
             }
@@ -780,6 +1361,7 @@ private struct HunterZone {
             if phaseElapsed >= max(0.13, (0.22 - progress * 0.06) * config.impactDurationMultiplier) {
                 let topY = topLine(in: size)
                 self.target = CGPoint(x: center.x, y: topY)
+                bombCenter = nil
                 phase = .recovering
                 phaseElapsed = 0
             }
@@ -788,23 +1370,30 @@ private struct HunterZone {
             let recoverSpeed = minDimension * CGFloat(0.88 + easedProgress * 0.42) * config.recoverSpeedMultiplier
             moveToward(self.target, speed: recoverSpeed, delta: delta, in: size)
             if distance(to: self.target) <= max(8, radius * 0.18) {
+                bombCenter = nil
                 phase = .aiming
                 phaseElapsed = 0
             }
         }
 
         center.x = min(max(center.x, radius), size.width - radius)
-        center.y = min(max(center.y, radius), size.height - radius)
+        center.y = topLine(in: size)
     }
 
-    func collides(with ballDisplayRect: CGRect) -> Bool {
-        guard phase == .diving || phase == .impact else {
-            return false
+    func collisionPoint(with ballDisplayRect: CGRect) -> CGPoint? {
+        guard (phase == .diving || phase == .impact), let bombCenter else {
+            return nil
         }
         let ballCenter = CGPoint(x: ballDisplayRect.midX, y: ballDisplayRect.midY)
         let ballRadius = max(ballDisplayRect.width, ballDisplayRect.height) * 0.5 * 0.72
-        let distance = hypot(ballCenter.x - center.x, ballCenter.y - center.y)
-        return distance <= radius + ballRadius
+        let distance = hypot(ballCenter.x - bombCenter.x, ballCenter.y - bombCenter.y)
+        guard distance <= bombRadius + ballRadius else {
+            return nil
+        }
+        return CGPoint(
+            x: (ballCenter.x + bombCenter.x) * 0.5,
+            y: (ballCenter.y + bombCenter.y) * 0.5
+        )
     }
 
     private mutating func moveToward(
@@ -819,6 +1408,15 @@ private struct HunterZone {
         let step = min(speed * CGFloat(delta), distance)
         center.x += dx / distance * step
         center.y += dy / distance * step
+    }
+
+    private mutating func moveBombDown(speed: CGFloat, delta: TimeInterval) {
+        guard var bombCenter else {
+            self.bombCenter = bombSpawnPoint
+            return
+        }
+        bombCenter.y += speed * CGFloat(delta)
+        self.bombCenter = bombCenter
     }
 
     private func impactTarget(for ballCenter: CGPoint, in size: CGSize) -> CGPoint {
@@ -839,10 +1437,17 @@ private struct HunterZone {
     private func distance(to point: CGPoint) -> CGFloat {
         hypot(center.x - point.x, center.y - point.y)
     }
+
+    private func bombDistance(to point: CGPoint) -> CGFloat {
+        guard let bombCenter else {
+            return .greatestFiniteMagnitude
+        }
+        return hypot(bombCenter.x - point.x, bombCenter.y - point.y)
+    }
 }
 
 private enum HunterEvent {
-    case caught
+    case caught(CGPoint)
 }
 
 private struct HunterHudChip: View {

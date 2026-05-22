@@ -1,14 +1,16 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var hasCompletedOnboarding = true
+    @State private var isShowingLaunchSplash = true
 
     var body: some View {
         Group {
-            if hasCompletedOnboarding {
-                MainBallrView()
+            if isShowingLaunchSplash {
+                BallrLaunchSplashView {
+                    isShowingLaunchSplash = false
+                }
             } else {
-                OnboardingFlowView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                MainBallrView()
             }
         }
         .font(.ballr(size: 16, weight: .regular))
@@ -34,107 +36,458 @@ private struct AchievementSlot: Identifiable {
 
 private extension Color {
     static let ballrOrange = Color(red: 0.78, green: 0.27, blue: 0.07)
+    static let ballrActiveOrange = Color(red: 253.0 / 255.0, green: 86.0 / 255.0, blue: 52.0 / 255.0)
     static let ballrYellow = Color(red: 0.98, green: 0.79, blue: 0.19)
     static let ballrCream = Color(red: 0.99, green: 0.97, blue: 0.91)
     static let ballrBlack = Color(red: 0.08, green: 0.08, blue: 0.08)
-}
-
-private struct OnboardingFlowView: View {
-    @Binding var hasCompletedOnboarding: Bool
-
-    var body: some View {
-        ZStack {
-            BallrBackground()
-            StartPageView {
-                hasCompletedOnboarding = true
-            }
-        }
-    }
 }
 
 private struct MainBallrView: View {
     @State private var selectedTab: BallrTab = .practice
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            LevelsHomeView()
-                .tabItem {
-                    Label("Levels", systemImage: "map.fill")
+        ZStack(alignment: .bottom) {
+            Group {
+                switch selectedTab {
+                case .practice:
+                    PracticeHomeView()
+                case .levels:
+                    LevelsHomeView()
+                case .profile:
+                    ProfileHomeView()
                 }
-                .tag(BallrTab.levels)
+            }
+            .padding(.bottom, 5)
 
-            PracticeHomeView()
-                .tabItem {
-                    Label("Practice", systemImage: "diamond.fill")
-                }
-                .tag(BallrTab.practice)
-
-            ProfileHomeView()
-                .tabItem {
-                    Label("Profile", systemImage: "person.crop.shield.fill")
-                }
-                .tag(BallrTab.profile)
+            BallrBottomNavBar(selectedTab: $selectedTab)
         }
-        .tint(Color.ballrOrange)
     }
 }
 
-private struct StartPageView: View {
-    let onStart: () -> Void
+private struct BallrBottomNavBar: View {
+    @Binding var selectedTab: BallrTab
+    private let barHeight: CGFloat = 64
+
+    var body: some View {
+        GeometryReader { geometry in
+            let bottomInset = geometry.safeAreaInsets.bottom
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                ZStack {
+                    Image("NavBar")
+                        .resizable()
+                        .frame(height: barHeight + bottomInset)
+
+                    VStack(spacing: 0) {
+                        Rectangle()
+                            .fill(Color.black)
+                            .frame(height: 5)
+
+                        Spacer()
+                    }
+
+                    HStack(spacing: 0) {
+                        BallrBottomNavButton(
+                            tab: .practice,
+                            selectedTab: $selectedTab
+                        )
+
+                        BallrBottomNavButton(
+                            tab: .levels,
+                            selectedTab: $selectedTab
+                        )
+
+                        BallrBottomNavButton(
+                            tab: .profile,
+                            selectedTab: $selectedTab
+                        )
+                    }
+                    .frame(height: barHeight)
+                    .padding(.bottom, bottomInset)
+                }
+                .frame(height: barHeight + bottomInset)
+            }
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+}
+
+private struct BallrBottomNavButton: View {
+    let tab: BallrTab
+    @Binding var selectedTab: BallrTab
+
+    private var isSelected: Bool {
+        selectedTab == tab
+    }
+
+    var body: some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            BallrBottomNavIcon(tab: tab, isSelected: isSelected)
+                .frame(width: 31, height: 31)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityTitle)
+    }
+
+    private var accessibilityTitle: String {
+        switch tab {
+        case .practice:
+            "Home"
+        case .levels:
+            "Levels"
+        case .profile:
+            "Profile"
+        }
+    }
+}
+
+private struct BallrBottomNavIcon: View {
+    let tab: BallrTab
+    let isSelected: Bool
+
+    private var activeColor: Color {
+        Color.ballrActiveOrange
+    }
+
+    private var inactiveColor: Color {
+        Color(red: 0.137, green: 0.122, blue: 0.125)
+    }
+
+    private var iconColor: Color {
+        isSelected ? activeColor : inactiveColor
+    }
+
+    var body: some View {
+        switch tab {
+        case .practice:
+            BallrHomeNavIcon(color: iconColor, isSelected: isSelected)
+        case .levels:
+            BallrLevelsNavIcon(color: iconColor, isSelected: isSelected)
+        case .profile:
+            BallrProfileNavIcon(color: iconColor, isSelected: isSelected)
+        }
+    }
+}
+
+private struct BallrHomeNavIcon: View {
+    let color: Color
+    let isSelected: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let iconWidth = 32.5
+            let iconHeight = 31.0
+            let scale = min(size.width / iconWidth, size.height / iconHeight)
+            let xOffset = (size.width - iconWidth * scale) / 2
+            let yOffset = (size.height - iconHeight * scale) / 2
+
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: xOffset + x * scale, y: yOffset + y * scale)
+            }
+
+            if isSelected {
+                var fillPath = Path()
+                fillPath.addRect(CGRect(
+                    x: xOffset + 4.25 * scale,
+                    y: yOffset + 12.0 * scale,
+                    width: 24.0 * scale,
+                    height: 9.0 * scale
+                ))
+                fillPath.addRect(CGRect(
+                    x: xOffset + 4.25 * scale,
+                    y: yOffset + 21.0 * scale,
+                    width: 8.0 * scale,
+                    height: 10.0 * scale
+                ))
+                fillPath.addRect(CGRect(
+                    x: xOffset + 20.25 * scale,
+                    y: yOffset + 21.0 * scale,
+                    width: 8.0 * scale,
+                    height: 10.0 * scale
+                ))
+                fillPath.addRect(CGRect(
+                    x: xOffset + 10.25 * scale,
+                    y: yOffset + 19.0 * scale,
+                    width: 3.0 * scale,
+                    height: 3.0 * scale
+                ))
+                fillPath.addRect(CGRect(
+                    x: xOffset + 19.25 * scale,
+                    y: yOffset + 19.0 * scale,
+                    width: 2.0 * scale,
+                    height: 3.0 * scale
+                ))
+                fillPath.move(to: point(16.25, 0.0))
+                fillPath.addLine(to: point(28.37, 12.0))
+                fillPath.addLine(to: point(4.13, 12.0))
+                fillPath.closeSubpath()
+                context.fill(fillPath, with: .color(color))
+            }
+
+            var strokePath = Path()
+            strokePath.move(to: point(0.0, 16.0))
+            strokePath.addLine(to: point(14.92, 1.07))
+            strokePath.addQuadCurve(to: point(17.58, 1.07), control: point(16.25, 0.0))
+            strokePath.addLine(to: point(32.5, 16.0))
+            strokePath.move(to: point(3.75, 12.25))
+            strokePath.addLine(to: point(3.75, 29.12))
+            strokePath.addQuadCurve(to: point(5.62, 31.0), control: point(3.75, 30.16))
+            strokePath.addLine(to: point(12.5, 31.0))
+            strokePath.addLine(to: point(12.5, 22.87))
+            strokePath.addQuadCurve(to: point(14.37, 21.0), control: point(12.5, 21.84))
+            strokePath.addLine(to: point(18.12, 21.0))
+            strokePath.addQuadCurve(to: point(20.0, 22.87), control: point(20.0, 21.84))
+            strokePath.addLine(to: point(20.0, 31.0))
+            strokePath.addLine(to: point(26.87, 31.0))
+            strokePath.addQuadCurve(to: point(28.75, 29.12), control: point(28.75, 30.16))
+            strokePath.addLine(to: point(28.75, 12.25))
+            strokePath.move(to: point(10.0, 31.0))
+            strokePath.addLine(to: point(23.75, 31.0))
+
+            context.stroke(
+                strokePath,
+                with: .color(color),
+                style: StrokeStyle(lineWidth: 1.5 * scale, lineCap: .round, lineJoin: .round)
+            )
+        }
+    }
+}
+
+private struct BallrLevelsNavIcon: View {
+    let color: Color
+    let isSelected: Bool
 
     var body: some View {
         ZStack {
-            Color(red: 0.11, green: 0.10, blue: 0.11)
-                .ignoresSafeArea()
+            if isSelected {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(color.opacity(0.18))
+                    .frame(width: 30, height: 18)
+                    .offset(y: 7)
+            }
 
-            LevelsScreenBackground()
-                .ignoresSafeArea()
+            Path { path in
+                path.move(to: CGPoint(x: 5.0, y: 7.0))
+                path.addLine(to: CGPoint(x: 5.0, y: 5.5))
+                path.addQuadCurve(to: CGPoint(x: 8.8, y: 1.8), control: CGPoint(x: 5.0, y: 3.4))
+                path.addLine(to: CGPoint(x: 21.2, y: 1.8))
+                path.addQuadCurve(to: CGPoint(x: 25.0, y: 5.5), control: CGPoint(x: 25.0, y: 3.4))
+                path.addLine(to: CGPoint(x: 25.0, y: 7.0))
 
-            VStack(spacing: 0) {
-                Spacer(minLength: 58)
+                path.move(to: CGPoint(x: 5.0, y: 7.0))
+                path.addQuadCurve(to: CGPoint(x: 6.2, y: 6.8), control: CGPoint(x: 5.4, y: 6.8))
+                path.addLine(to: CGPoint(x: 23.8, y: 6.8))
+                path.addQuadCurve(to: CGPoint(x: 25.0, y: 7.0), control: CGPoint(x: 24.6, y: 6.8))
 
-                LevelsMapIcon()
-                    .frame(width: 178, height: 128)
+                path.move(to: CGPoint(x: 5.0, y: 7.0))
+                path.addQuadCurve(to: CGPoint(x: 2.5, y: 10.5), control: CGPoint(x: 3.5, y: 7.5))
+                path.addLine(to: CGPoint(x: 2.5, y: 12.0))
 
-                Spacer(minLength: 48)
+                path.move(to: CGPoint(x: 25.0, y: 7.0))
+                path.addQuadCurve(to: CGPoint(x: 27.5, y: 10.5), control: CGPoint(x: 26.5, y: 7.5))
+                path.addLine(to: CGPoint(x: 27.5, y: 12.0))
 
-                Text("Ballr")
-                    .font(.ballr(size: 52, weight: .black))
-                    .foregroundStyle(Color.yellow)
+                path.move(to: CGPoint(x: 2.5, y: 12.0))
+                path.addQuadCurve(to: CGPoint(x: 3.8, y: 11.8), control: CGPoint(x: 2.9, y: 11.8))
+                path.addLine(to: CGPoint(x: 26.2, y: 11.8))
+                path.addQuadCurve(to: CGPoint(x: 27.5, y: 12.0), control: CGPoint(x: 27.1, y: 11.8))
 
-                Text("SOCCER TRAINING")
-                    .font(.ballr(size: 18, weight: .bold))
-                    .tracking(4)
-                    .foregroundStyle(.white.opacity(0.35))
-                    .padding(.top, 14)
+                path.move(to: CGPoint(x: 2.5, y: 12.0))
+                path.addQuadCurve(to: CGPoint(x: 0.0, y: 15.5), control: CGPoint(x: 1.0, y: 12.5))
+                path.addLine(to: CGPoint(x: 0.0, y: 25.5))
+                path.addQuadCurve(to: CGPoint(x: 3.8, y: 29.2), control: CGPoint(x: 0.0, y: 27.6))
+                path.addLine(to: CGPoint(x: 26.2, y: 29.2))
+                path.addQuadCurve(to: CGPoint(x: 30.0, y: 25.5), control: CGPoint(x: 30.0, y: 27.6))
+                path.addLine(to: CGPoint(x: 30.0, y: 15.5))
+                path.addQuadCurve(to: CGPoint(x: 27.5, y: 12.0), control: CGPoint(x: 29.0, y: 13.2))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.55, lineCap: .round, lineJoin: .round))
+        }
+    }
+}
 
-                Spacer(minLength: 48)
+private struct BallrProfileNavIcon: View {
+    let color: Color
+    let isSelected: Bool
 
-                Button(action: onStart) {
-                    Text("START")
-                        .font(.ballr(size: 27, weight: .black))
-                        .tracking(3)
-                        .foregroundStyle(Color(red: 0.04, green: 0.04, blue: 0.04))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 84)
-                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(alignment: .bottom) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(red: 0.78, green: 0.64, blue: 0.00))
-                                .frame(height: 8)
-                                .offset(y: 5)
-                        }
+    var body: some View {
+        ZStack {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color.opacity(0.18))
+                    .frame(width: 28, height: 29)
+            }
+
+            Path { path in
+                path.move(to: CGPoint(x: 0.0, y: 7.7))
+                path.addLine(to: CGPoint(x: 29.2, y: 7.7))
+                path.move(to: CGPoint(x: 0.0, y: 9.2))
+                path.addLine(to: CGPoint(x: 29.2, y: 9.2))
+                path.move(to: CGPoint(x: 4.5, y: 20.0))
+                path.addLine(to: CGPoint(x: 13.5, y: 20.0))
+                path.move(to: CGPoint(x: 4.5, y: 24.6))
+                path.addLine(to: CGPoint(x: 9.0, y: 24.6))
+                path.move(to: CGPoint(x: 3.4, y: 30.7))
+                path.addLine(to: CGPoint(x: 25.9, y: 30.7))
+                path.addQuadCurve(to: CGPoint(x: 29.2, y: 26.1), control: CGPoint(x: 29.2, y: 30.0))
+                path.addLine(to: CGPoint(x: 29.2, y: 4.6))
+                path.addQuadCurve(to: CGPoint(x: 25.9, y: 0.0), control: CGPoint(x: 29.2, y: 1.0))
+                path.addLine(to: CGPoint(x: 3.4, y: 0.0))
+                path.addQuadCurve(to: CGPoint(x: 0.0, y: 4.6), control: CGPoint(x: 0.0, y: 1.0))
+                path.addLine(to: CGPoint(x: 0.0, y: 26.1))
+                path.addQuadCurve(to: CGPoint(x: 3.4, y: 30.7), control: CGPoint(x: 0.0, y: 30.0))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.55, lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+private struct BallrLaunchSplashView: View {
+    let onFinished: () -> Void
+    @State private var hasJoinedLogo = false
+    @State private var lensActivationProgress: CGFloat = 0
+    @State private var lensGlowProgress: CGFloat = 0
+    @State private var settledLogoOpacity = 0.0
+    @State private var isHidingSplitLogo = false
+    @State private var isDismissing = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            let logoHeight = min(geometry.size.width * 0.39, 168)
+            let logoWidth = logoHeight * 1.43
+            let pieceWidth = logoHeight * 0.80
+            let logoOverlap = logoHeight * 0.17
+            let travelDistance = geometry.size.width * 0.72
+
+            ZStack {
+                BallrAppBackground()
+
+                HStack(spacing: -logoOverlap) {
+                    BallrLaunchLogoPiece(assetName: "BallrLaunchLeft")
+                        .frame(width: pieceWidth, height: logoHeight)
+                        .offset(x: hasJoinedLogo ? 0 : -travelDistance)
+
+                    BallrLaunchLogoPiece(assetName: "BallrLaunchRight")
+                        .frame(width: pieceWidth, height: logoHeight)
+                        .offset(x: hasJoinedLogo ? 0 : travelDistance)
                 }
-                .padding(.horizontal, 42)
+                .frame(width: logoWidth, height: logoHeight)
+                .scaleEffect(hasJoinedLogo ? 1.0 : 0.92)
+                .opacity(isHidingSplitLogo || isDismissing ? 0 : 1)
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
 
-                Text("Already have an account? Sign in")
-                    .font(.ballr(size: 16, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.28))
-                    .padding(.top, 32)
+                BallrLaunchLogoPiece(assetName: "Image")
+                    .frame(width: logoWidth, height: logoHeight)
+                    .opacity(isDismissing ? 0 : settledLogoOpacity)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
 
-                Spacer(minLength: 82)
+                BallrLaunchLensActivationOverlay(
+                    fillProgress: lensActivationProgress,
+                    glowProgress: lensGlowProgress
+                )
+                    .frame(width: logoWidth, height: logoHeight)
+                    .opacity(isDismissing ? 0 : 1)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                .onAppear {
+                    withAnimation(.spring(response: 1.05, dampingFraction: 0.78).delay(0.20)) {
+                        hasJoinedLogo = true
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.24) {
+                        withAnimation(.easeInOut(duration: 0.34)) {
+                            settledLogoOpacity = 1
+                        }
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.42) {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            lensActivationProgress = 1
+                        }
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.00) {
+                        withAnimation(.easeInOut(duration: 0.42)) {
+                            lensGlowProgress = 1
+                        }
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.62) {
+                        isHidingSplitLogo = true
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.65) {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            isDismissing = true
+                        }
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                        onFinished()
+                    }
+                }
             }
         }
+    }
+}
+
+private struct BallrLaunchLensActivationOverlay: View {
+    let fillProgress: CGFloat
+    let glowProgress: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let lensWidth = size.width * 0.182
+            let lensHeight = size.height * 0.124
+            let lensY = size.height * 0.70
+            let lensPositions = [
+                CGPoint(x: size.width * 0.28, y: lensY),
+                CGPoint(x: size.width * 0.72, y: lensY)
+            ]
+
+            ZStack {
+                ForEach(Array(lensPositions.enumerated()), id: \.offset) { _, point in
+                    Capsule()
+                        .fill(Color.white)
+                        .frame(width: lensWidth, height: lensHeight)
+                        .opacity(fillProgress)
+                        .overlay {
+                            Capsule()
+                                .fill(Color.white.opacity(0.34 * glowProgress))
+                                .blur(radius: 6)
+                                .scaleEffect(1.22 + 0.18 * glowProgress)
+                        }
+                        .overlay {
+                            Capsule()
+                                .stroke(Color.white.opacity(0.76 * glowProgress), lineWidth: 1.7)
+                                .blur(radius: 0.4)
+                        }
+                        .shadow(color: .white.opacity(0.38 * glowProgress), radius: 10, x: 0, y: 0)
+                        .shadow(color: .white.opacity(0.20 * glowProgress), radius: 18, x: 0, y: 0)
+                        .position(point)
+                }
+            }
+        }
+    }
+}
+
+private struct BallrLaunchLogoPiece: View {
+    let assetName: String
+
+    var body: some View {
+        Image(assetName)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(Color.yellow)
+            .compositingGroup()
+            .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 16)
     }
 }
 
@@ -148,7 +501,7 @@ private struct LevelsHomeView: View {
     @AppStorage("levelsLastPlayedAt") private var lastPlayedAt = 0.0
 
     private let currentLevel = 1
-    private let lockedLevels = Set(12...18)
+    private let lockedLevels = Set<Int>()
 
     private let levelDrills = (1...20).map { level in
         Drill(
@@ -160,13 +513,13 @@ private struct LevelsHomeView: View {
                 case 2:
                     return "Ball Targets"
                 case 3:
-                    return "Ball Timed Targets"
+                    return "Ball Targets"
                 case 4:
                     return "Rock Drop"
                 case 5:
                     return "Timed Ball Targets"
                 case 6:
-                    return "Rock Drop Medium"
+                    return "Agility Challenge"
                 case 7:
                     return "Ball Magician"
                 case 8:
@@ -174,13 +527,27 @@ private struct LevelsHomeView: View {
                 case 9:
                     return "Timed Hand Targets"
                 case 10:
-                    return "Piano Tiles Hard"
+                    return "Hunter Easy"
                 case 11:
-                    return "Bomb Hand Targets"
+                    return "Rock Drop Medium"
+                case 12:
+                    return "Toe Touches"
+                case 13:
+                    return "Jumping Challenge"
+                case 14:
+                    return "Hunter Hard"
+                case 15:
+                    return "Piano Tiles Hard"
+                case 16:
+                    return "Rock Drop Hard"
+                case 17:
+                    return "Jumping + Hand Targets"
+                case 18:
+                    return "Toe Touches + Hand Targets"
                 case 19:
-                    return "Ball Blast"
+                    return "Ball + Hand Targets"
                 case 20:
-                    return "The Hunter"
+                    return "Agility + Ball Targets"
                 default:
                     return ["Juggling", "Dribbling", "First Touch"][(level - 1) % 3]
                 }
@@ -192,11 +559,7 @@ private struct LevelsHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.11, green: 0.10, blue: 0.11)
-                    .ignoresSafeArea()
-
-                LevelsScreenBackground()
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 ScrollViewReader { proxy in
                     ScrollView(showsIndicators: false) {
@@ -249,31 +612,9 @@ private struct LevelsHomeView: View {
                             .frame(width: 64, height: 46)
 
                         Spacer()
-
-                        HStack(spacing: 8) {
-                            LevelsHeaderStatChip(
-                                systemImage: "flame.fill",
-                                value: "\(dailyStreak)",
-                                label: "Streak"
-                            )
-
-                            LevelsHeaderStatChip(
-                                systemImage: "bolt.fill",
-                                value: "\(authSession.xp)",
-                                label: "XP"
-                            )
-                        }
                     }
                     .padding(.horizontal, 22)
                     .padding(.top, 18)
-                    .frame(height: 78)
-                    .background(.ultraThinMaterial)
-                    .background(Color(red: 0.11, green: 0.10, blue: 0.11).opacity(0.76))
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(.white.opacity(0.24))
-                            .frame(height: 1)
-                    }
 
                     Spacer()
                 }
@@ -293,10 +634,10 @@ private struct LevelsHomeView: View {
                     LevelOneCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 2 {
-                    LevelFourCameraView()
+                    LevelFourCameraView(nextDestination: .levelThreeBallTargets)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 3 {
-                    LevelFiveCameraView(nextDestination: .rockDropEasy, targetPattern: .far)
+                    LevelFourCameraView(nextDestination: .rockDropEasy)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 4 {
                     BallBlastRockDropCameraView(difficulty: .easy)
@@ -305,34 +646,53 @@ private struct LevelsHomeView: View {
                     LevelFiveCameraView(targetPattern: .mixed)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 6 {
-                    BallBlastRockDropCameraView(difficulty: .medium)
+                    AgilityChallengeCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 7 {
                     LevelSevenCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 8 {
-                    PianoTilesCameraView(difficulty: .medium)
+                    PianoTilesCameraView(difficulty: .medium, hudStyle: .tilesLeftOnly)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 9 {
                     HandTargetCameraView(
                         nextDestination: .levelTen,
-                        configuration: .levelSevenTimed
+                        configuration: .levelSevenTimed,
+                        showsJeffCountdown: true
                     )
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 10 {
-                    PianoTilesCameraView(difficulty: .hard)
+                    HunterCameraView(difficulty: .easy)
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 11 {
-                    HandTargetCameraView(
-                        nextDestination: .levelTen,
-                        configuration: .levelElevenBombTimed
-                    )
+                    LevelElevenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 12 {
+                    LevelTwelveCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 13 {
+                    LevelThirteenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 14 {
+                    LevelFourteenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 15 {
+                    LevelFifteenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 16 {
+                    LevelSixteenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 17 {
+                    LevelSeventeenCameraView()
+                        .ballrCameraPresentationChrome()
+                } else if drill.level == 18 {
+                    LevelEighteenCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 19 {
-                    TargetDrillCameraView()
+                    LevelNineteenCameraView()
                         .ballrCameraPresentationChrome()
                 } else if drill.level == 20 {
-                    HunterCameraView(difficulty: .hard)
+                    LevelTwentyCameraView()
                         .ballrCameraPresentationChrome()
                 } else {
                     DrillPlaceholderView(drill: drill)
@@ -477,29 +837,40 @@ private struct LevelsStreakLostOverlay: View {
 private struct PracticeHomeView: View {
     @State private var selectedDrill: Drill?
     @State private var isShowingDribbling = false
+    @State private var isShowingDribblingTwo = false
     @State private var isShowingJumpingChallenge = false
     @State private var isShowingAgilityChallenge = false
     @State private var isShowingFastTouching = false
     @State private var promptedDifficultyDrill: Drill?
     @State private var selectedRockDropDifficulty: BallBlastRockDropDifficulty?
     @State private var selectedPianoTilesDifficulty: PianoTilesDifficulty?
+    @State private var selectedHunterDifficulty: HunterDifficulty?
     @State private var isShowingPrecisionTargets = false
     @State private var isShowingMultiplayerPrecisionTargets = false
+    @State private var isShowingShootingZones = false
+    @State private var isShowingTicTacToeShootingVS = false
+    @State private var isShowingCrossbarChallenge = false
     @State private var isShowingBallMagician = false
     @State private var isShowingPassingCones = false
+    @State private var selectedCarouselIndex = 0
 
     private let drills = [
+        Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
+        Drill(title: "Precision VS", subtitle: "Alternate 5 shots each", level: nil),
         Drill(title: "Jumping Challenge", subtitle: "Jump over the hurdles", level: nil),
         Drill(title: "Agility Challenge", subtitle: "Cross side to side fast", level: nil),
         Drill(title: "Fast Touching", subtitle: "Count every toe touch", level: nil),
         Drill(title: "Ball Magician", subtitle: "Follow the arrows", level: nil),
         Drill(title: "Juggling", subtitle: "Keep it up, score points", level: nil),
         Drill(title: "Dribbling", subtitle: "Weave through targets", level: nil),
+        Drill(title: "Dribbling 2", subtitle: "Weave with Jeff's score flip", level: nil),
         Drill(title: "Rock Drop", subtitle: "Dodge the falling rocks", level: nil),
-        Drill(title: "Precision Targets", subtitle: "Hit the wall target", level: nil),
-        Drill(title: "Precision VS", subtitle: "Alternate 5 shots each", level: nil),
+        Drill(title: "Shooting Zones", subtitle: "Place a target box and score zones", level: nil),
+        Drill(title: "Tic Tac Toe ShootingVS", subtitle: "Shoot tiles to claim Xs and Os", level: nil),
+        Drill(title: "Crossbar Challenge", subtitle: "Hit the bar and posts", level: nil),
         Drill(title: "Passing Cones", subtitle: "Pass through the cones", level: nil),
-        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil)
+        Drill(title: "Piano Tiles", subtitle: "Hit every tile", level: nil),
+        Drill(title: "Hunter", subtitle: "Escape the hunter", level: nil)
     ]
 
     private let columns = [
@@ -510,180 +881,1054 @@ private struct PracticeHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.11, green: 0.10, blue: 0.11)
-                    .ignoresSafeArea()
-
-                LevelsScreenBackground()
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 GeometryReader { geometry in
-                    ZStack {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 14) {
-                                HStack(alignment: .center) {
-                                    LevelsMapIcon()
-                                        .frame(width: 64, height: 46)
+                    PracticeHomeScaffold(
+                        drills: drills,
+                        selectedIndex: $selectedCarouselIndex,
+                        onPlay: startPracticeDrill
+                    )
+                        .frame(width: geometry.size.width, height: geometry.size.height)
 
-                                    Spacer()
-
-                                    Text("FREE PRACTICE")
-                                        .font(.ballr(size: 13, weight: .black))
-                                        .tracking(2)
-                                        .foregroundStyle(Color.yellow)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 9)
-                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(Color.yellow.opacity(0.26), lineWidth: 1)
-                                        }
-                                }
-                                .padding(.bottom, 26)
-
-                                LazyVGrid(columns: columns, spacing: 12) {
-                                    ForEach(Array(drills.enumerated()), id: \.element.id) { index, drill in
-                                        Button {
-                                            if drill.title == "Jumping Challenge" {
-                                                isShowingJumpingChallenge = true
-                                            } else if drill.title == "Agility Challenge" {
-                                                isShowingAgilityChallenge = true
-                                            } else if drill.title == "Fast Touching" {
-                                                isShowingFastTouching = true
-                                            } else if drill.title == "Ball Magician" {
-                                                isShowingBallMagician = true
-                                            } else if drill.title == "Dribbling" {
-                                                isShowingDribbling = true
-                                            } else if drill.title == "Rock Drop" {
-                                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                                    if promptedDifficultyDrill?.id == drill.id {
-                                                        promptedDifficultyDrill = nil
-                                                    } else {
-                                                        promptedDifficultyDrill = drill
-                                                    }
-                                                }
-                                            } else if drill.title == "Piano Tiles" {
-                                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                                    if promptedDifficultyDrill?.id == drill.id {
-                                                        promptedDifficultyDrill = nil
-                                                    } else {
-                                                        promptedDifficultyDrill = drill
-                                                    }
-                                                }
-                                            } else if drill.title == "Precision Targets" {
-                                                isShowingPrecisionTargets = true
-                                            } else if drill.title == "Precision VS" {
-                                                isShowingMultiplayerPrecisionTargets = true
-                                            } else if drill.title == "Passing Cones" {
-                                                isShowingPassingCones = true
-                                            } else {
-                                                selectedDrill = drill
-                                            }
-                                        } label: {
-                                            PracticeDrillCardView(drill: drill, style: PracticeDrillStyle(index: index))
-                                        }
-                                        .buttonStyle(.plain)
-                                        .background(
-                                            GeometryReader { cardGeometry in
-                                                Color.clear.preference(
-                                                    key: PracticeDrillFramePreferenceKey.self,
-                                                    value: [drill.id: cardGeometry.frame(in: .named("PracticeHomeView"))]
-                                                )
-                                            }
-                                        )
-                                    }
+                    if let activePromptDrill = promptedDifficultyDrill {
+                        Color.black.opacity(0.42)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                    promptedDifficultyDrill = nil
                                 }
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 22)
-                            .padding(.bottom, 34)
-                        }
-                        .overlayPreferenceValue(PracticeDrillFramePreferenceKey.self) { frames in
-                            if
-                                let activePromptDrill = promptedDifficultyDrill,
-                                let frame = frames[activePromptDrill.id]
-                            {
-                                let promptWidth = min(248, max(218, geometry.size.width * 0.62))
-                                let promptHeight: CGFloat = 176
-                                let promptCenterX = min(max(frame.midX, promptWidth * 0.5 + 16), geometry.size.width - promptWidth * 0.5 - 16)
-                                let promptCenterY = max(frame.minY - 98, promptHeight * 0.5 + 12)
 
-                                PracticeDifficultyPromptView(
-                                    drill: activePromptDrill,
-                                    onSelectEasy: {
-                                        promptedDifficultyDrill = nil
-                                        if activePromptDrill.title == "Rock Drop" {
-                                            selectedRockDropDifficulty = .easy
-                                        } else if activePromptDrill.title == "Piano Tiles" {
-                                            selectedPianoTilesDifficulty = .easy
-                                        }
-                                    },
-                                    onSelectHard: {
-                                        promptedDifficultyDrill = nil
-                                        if activePromptDrill.title == "Rock Drop" {
-                                            selectedRockDropDifficulty = .hard
-                                        } else if activePromptDrill.title == "Piano Tiles" {
-                                            selectedPianoTilesDifficulty = .hard
-                                        }
-                                    },
-                                    onCancel: {
-                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                                            promptedDifficultyDrill = nil
-                                        }
-                                    }
-                                )
-                                .frame(width: promptWidth)
-                                .position(x: promptCenterX, y: promptCenterY)
-                                .transition(.scale(scale: 0.94).combined(with: .opacity))
-                                .zIndex(2)
+                        PracticeDifficultyPromptView(
+                            drill: activePromptDrill,
+                            onSelectEasy: {
+                                promptedDifficultyDrill = nil
+                                if activePromptDrill.title == "Rock Drop" {
+                                    selectedRockDropDifficulty = .easy
+                                } else if activePromptDrill.title == "Piano Tiles" {
+                                    selectedPianoTilesDifficulty = .easy
+                                } else if activePromptDrill.title == "Hunter" {
+                                    selectedHunterDifficulty = .easy
+                                }
+                            },
+                            onSelectHard: {
+                                promptedDifficultyDrill = nil
+                                if activePromptDrill.title == "Rock Drop" {
+                                    selectedRockDropDifficulty = .hard
+                                } else if activePromptDrill.title == "Piano Tiles" {
+                                    selectedPianoTilesDifficulty = .hard
+                                } else if activePromptDrill.title == "Hunter" {
+                                    selectedHunterDifficulty = .hard
+                                }
+                            },
+                            onCancel: {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                    promptedDifficultyDrill = nil
+                                }
                             }
-                        }
+                        )
+                        .frame(width: min(260, geometry.size.width - 52))
+                        .position(x: geometry.size.width / 2, y: geometry.size.height * 0.48)
+                        .transition(.scale(scale: 0.94).combined(with: .opacity))
+                        .zIndex(2)
                     }
                 }
             }
             .coordinateSpace(name: "PracticeHomeView")
             .fullScreenCover(isPresented: $isShowingJumpingChallenge) {
                 JumpingChallengeIntroScreen()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingAgilityChallenge) {
-                AgilityChallengeIntroScreen()
+                AgilityChallengeCameraView()
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingFastTouching) {
                 FastTouchingIntroScreen()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingDribbling) {
                 DribblingCameraView()
                     .ballrCameraPresentationChrome()
             }
-            .fullScreenCover(isPresented: $isShowingBallMagician) {
-                BallMagicianCameraView()
+            .fullScreenCover(isPresented: $isShowingDribblingTwo) {
+                DribblingCameraView(isDribblingTwo: true)
                     .ballrCameraPresentationChrome()
+            }
+            .fullScreenCover(isPresented: $isShowingBallMagician) {
+                LevelSevenCameraView()
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(item: $selectedDrill) { drill in
                 if drill.title == "Juggling" {
                     JugglingDrillIntroScreen()
+                        .ballrCompletionXPAward(20)
                 } else {
                     DrillPlaceholderView(drill: drill)
                 }
             }
             .fullScreenCover(item: $selectedRockDropDifficulty) { difficulty in
                 BallBlastRockDropIntroScreen(difficulty: difficulty)
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(item: $selectedPianoTilesDifficulty) { difficulty in
                 PianoTilesIntroScreen(difficulty: difficulty)
+                    .ballrCompletionXPAward(20)
+            }
+            .fullScreenCover(item: $selectedHunterDifficulty) { difficulty in
+                HunterCameraView(difficulty: difficulty)
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingPrecisionTargets) {
                 PrecisionTargetIntroScreen()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingMultiplayerPrecisionTargets) {
                 MultiplayerPrecisionTargetCameraView()
                     .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
+            }
+            .fullScreenCover(isPresented: $isShowingShootingZones) {
+                ShootingZonesCameraView()
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
+            }
+            .fullScreenCover(isPresented: $isShowingTicTacToeShootingVS) {
+                TicTacToeShootingVSCameraView()
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
+            }
+            .fullScreenCover(isPresented: $isShowingCrossbarChallenge) {
+                CrossbarChallengeCameraView()
+                    .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
             }
             .fullScreenCover(isPresented: $isShowingPassingCones) {
                 PassingConesCameraView()
                     .ballrCameraPresentationChrome()
+                    .ballrCompletionXPAward(20)
             }
         }
+    }
+
+    private func startPracticeDrill(_ drill: Drill) {
+        if drill.title == "Jumping Challenge" {
+            isShowingJumpingChallenge = true
+        } else if drill.title == "Agility Challenge" {
+            isShowingAgilityChallenge = true
+        } else if drill.title == "Fast Touching" {
+            isShowingFastTouching = true
+        } else if drill.title == "Ball Magician" {
+            isShowingBallMagician = true
+        } else if drill.title == "Dribbling" {
+            isShowingDribbling = true
+        } else if drill.title == "Dribbling 2" {
+            isShowingDribblingTwo = true
+        } else if drill.title == "Rock Drop" || drill.title == "Piano Tiles" || drill.title == "Hunter" {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                promptedDifficultyDrill = drill
+            }
+        } else if drill.title == "Precision Targets" {
+            isShowingPrecisionTargets = true
+        } else if drill.title == "Precision VS" {
+            isShowingMultiplayerPrecisionTargets = true
+        } else if drill.title == "Shooting Zones" {
+            isShowingShootingZones = true
+        } else if drill.title == "Tic Tac Toe ShootingVS" {
+            isShowingTicTacToeShootingVS = true
+        } else if drill.title == "Crossbar Challenge" {
+            isShowingCrossbarChallenge = true
+        } else if drill.title == "Passing Cones" {
+            isShowingPassingCones = true
+        } else {
+            selectedDrill = drill
+        }
+    }
+}
+
+private struct PracticeHomeScaffold: View {
+    @AppStorage("ballrDarkModeEnabled") private var isDarkModeEnabled = true
+
+    let drills: [Drill]
+    @Binding var selectedIndex: Int
+    let onPlay: (Drill) -> Void
+
+    @State private var dragTranslation: CGFloat = 0
+    @State private var isCarouselModeEnabled = true
+
+    private let cardYellow = Color(red: 255.0 / 255.0, green: 216.0 / 255.0, blue: 0.0 / 255.0)
+    private let cardSize = CGSize(width: 330, height: 440)
+    private let compactCardSize = CGSize(width: 329, height: 127)
+    private let cardSpacing: CGFloat = 12
+    private let bottomPanelHeight: CGFloat = 102.93
+    private let triangleHeight: CGFloat = 212.64
+    private let compactTriangleHeight: CGFloat = 87.33
+
+    private var panelGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: .white, location: 0),
+                .init(color: cardYellow, location: 1)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var compactDrills: [Drill] {
+        let preferredOrder = [
+            "Precision Targets",
+            "Fast Touching",
+            "Shooting Zones",
+            "Rock Drop",
+            "Hunter",
+            "Passing Cones",
+            "Piano Tiles",
+            "Agility Challenge",
+            "Crossbar Challenge",
+            "Ball Magician",
+            "Jumping Challenge",
+            "Precision VS",
+            "Tic Tac Toe ShootingVS"
+        ]
+
+        let orderedDrills = preferredOrder.compactMap { title in
+            drills.first { $0.title == title }
+        }
+        let remainingDrills = drills.filter { drill in
+            !preferredOrder.contains(drill.title)
+        }
+
+        return orderedDrills + remainingDrills
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let safeTop = geometry.safeAreaInsets.top
+            let headerTop = max(10.0, safeTop - 48.0)
+            let switchTop = max(28.0, safeTop - 30.0)
+            let pageStride = cardSize.width + cardSpacing
+            let visibleIndices = drills.indices.filter { abs($0 - selectedIndex) <= 2 }
+            let boundedDrag = boundedDragTranslation(dragTranslation, pageStride: pageStride)
+
+            ZStack {
+                LevelsMapIcon()
+                    .frame(width: 64, height: 46)
+                    .position(x: 58, y: headerTop + 27)
+                    .zIndex(3)
+
+                Button {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                        isCarouselModeEnabled.toggle()
+                        dragTranslation = 0
+                    }
+                } label: {
+                    ZStack(alignment: isCarouselModeEnabled ? .trailing : .leading) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(cardYellow)
+
+                        Circle()
+                            .fill(Color(red: 0.137, green: 0.122, blue: 0.125))
+                            .frame(width: 17, height: 17)
+                            .padding(.trailing, isCarouselModeEnabled ? 5 : 0)
+                            .padding(.leading, isCarouselModeEnabled ? 0 : 5)
+                    }
+                    .frame(width: 52, height: 28)
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .position(x: geometry.size.width - 44, y: switchTop + 14)
+                .zIndex(3)
+
+                if !isDarkModeEnabled {
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: 0))
+                        path.addLine(to: CGPoint(x: 393, y: 0))
+                    }
+                    .stroke(Color.black, lineWidth: 1)
+                    .frame(width: 393, height: 1)
+                    .position(
+                        x: geometry.size.width / 2,
+                        y: max(headerTop + 60, switchTop + 42)
+                    )
+                    .zIndex(2)
+                }
+
+                if isCarouselModeEnabled {
+                    ZStack {
+                        ForEach(visibleIndices, id: \.self) { index in
+                            PracticeCarouselCardSlot(
+                                drill: drills[index],
+                                index: index,
+                                selectedIndex: selectedIndex,
+                                dragTranslation: dragTranslation,
+                                boundedDrag: boundedDrag,
+                                center: CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2),
+                                pageStride: pageStride,
+                                cardSize: cardSize,
+                                panelGradient: panelGradient,
+                                triangleHeight: triangleHeight,
+                                bottomPanelHeight: bottomPanelHeight,
+                                onPlay: { onPlay(drills[index]) }
+                            )
+                        }
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
+                    .transition(.opacity)
+                    .gesture(
+                        DragGesture(minimumDistance: 6)
+                            .onChanged { value in
+                                var transaction = Transaction()
+                                transaction.animation = nil
+                                withTransaction(transaction) {
+                                    dragTranslation = value.translation.width
+                                }
+                            }
+                            .onEnded { value in
+                                let threshold = pageStride * 0.30
+                                let endingDrag = boundedDragTranslation(value.translation.width, pageStride: pageStride)
+                                let previousIndex = selectedIndex
+                                let nextIndex: Int
+
+                                if value.translation.width < -threshold {
+                                    nextIndex = min(selectedIndex + 1, drills.count - 1)
+                                } else if value.translation.width > threshold {
+                                    nextIndex = max(selectedIndex - 1, 0)
+                                } else {
+                                    nextIndex = selectedIndex
+                                }
+
+                                var transaction = Transaction()
+                                transaction.animation = nil
+                                withTransaction(transaction) {
+                                    selectedIndex = nextIndex
+                                    dragTranslation = endingDrag + CGFloat(nextIndex - previousIndex) * pageStride
+                                }
+
+                                withAnimation(.interactiveSpring(response: 0.48, dampingFraction: 0.90, blendDuration: 0.12)) {
+                                    dragTranslation = 0
+                                }
+                            }
+                    )
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        LazyVStack(spacing: 20) {
+                            ForEach(compactDrills) { drill in
+                                Button {
+                                    onPlay(drill)
+                                } label: {
+                                    PracticeHomeCompactDrillCard(
+                                        drill: drill,
+                                        cardSize: compactCardSize,
+                                        panelGradient: panelGradient,
+                                        triangleHeight: compactTriangleHeight
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.top, max(headerTop + 100, switchTop + 82))
+                        .padding(.bottom, 104)
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .transition(.opacity)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func boundedDragTranslation(_ translation: CGFloat, pageStride: CGFloat) -> CGFloat {
+        if selectedIndex == 0 && translation > 0 {
+            return min(translation * 0.28, pageStride * 0.22)
+        }
+
+        if selectedIndex == drills.count - 1 && translation < 0 {
+            return max(translation * 0.28, -pageStride * 0.22)
+        }
+
+        return translation
+    }
+}
+
+private struct PracticeCarouselCardSlot: View {
+    let drill: Drill
+    let index: Int
+    let selectedIndex: Int
+    let dragTranslation: CGFloat
+    let boundedDrag: CGFloat
+    let center: CGPoint
+    let pageStride: CGFloat
+    let cardSize: CGSize
+    let panelGradient: LinearGradient
+    let triangleHeight: CGFloat
+    let bottomPanelHeight: CGFloat
+    let onPlay: () -> Void
+
+    private var xPosition: CGFloat {
+        let distance = CGFloat(index - selectedIndex)
+        return center.x + distance * pageStride + boundedDrag
+    }
+
+    private var visualDistance: CGFloat {
+        abs((xPosition - center.x) / pageStride)
+    }
+
+    var body: some View {
+        PracticeHomeDrillCard(
+            drill: drill,
+            cardSize: cardSize,
+            panelGradient: panelGradient,
+            triangleHeight: triangleHeight,
+            bottomPanelHeight: bottomPanelHeight,
+            isSelected: index == selectedIndex && abs(dragTranslation) < 8,
+            onPlay: onPlay
+        )
+        .frame(width: cardSize.width, height: cardSize.height)
+        .scaleEffect(max(0.955, 1 - visualDistance * 0.035))
+        .opacity(max(0.72, 1 - visualDistance * 0.18))
+        .position(x: xPosition, y: center.y)
+        .zIndex(10 - Double(visualDistance))
+    }
+}
+
+private struct PracticeHomeCompactDrillCard: View {
+    let drill: Drill
+    let cardSize: CGSize
+    let panelGradient: LinearGradient
+    let triangleHeight: CGFloat
+
+    private let cardYellow = Color(red: 255.0 / 255.0, green: 216.0 / 255.0, blue: 0.0 / 255.0)
+    private let playCircle = Color(red: 0.244, green: 0.244, blue: 0.244)
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(cardYellow)
+
+            if drill.title == "Precision Targets" {
+                Image("green1")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 97.48, height: 111)
+                    .position(x: 101, y: 55.5)
+            } else if drill.title == "Precision VS" {
+                Image("green1")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 93, height: 110)
+                    .position(x: 101, y: 60)
+            } else if drill.title == "Fast Touching" {
+                Image("orange1")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 91.09, height: 109.48)
+                    .position(x: 101, y: 58)
+            } else if drill.title == "Agility Challenge" {
+                Image("purple1")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 104, height: 108)
+                    .position(x: 101, y: 58)
+            } else if ["Hunter", "Ball Magician"].contains(drill.title) {
+                Image("blue")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 97.48, height: 111)
+                    .position(x: 101, y: 58)
+            } else if drill.title == "Jumping Challenge" {
+                Image("purple")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 104, height: 108)
+                    .position(x: 101, y: 58)
+            } else if ["Shooting Zones", "Crossbar Challenge", "Tic Tac Toe ShootingVS", "Passing Cones"].contains(drill.title) {
+                Image("yellow")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 104, height: 111)
+                    .position(x: 101, y: 58)
+            } else if ["Rock Drop", "Piano Tiles"].contains(drill.title) {
+                Image("pink")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 106, height: 111)
+                    .position(x: 101, y: 58)
+            }
+
+            panelGradient
+                .frame(width: cardSize.width, height: triangleHeight)
+                .mask {
+                    PracticeCompactCardTriangleShape()
+                }
+
+            Text(drill.title)
+                .font(.ballr(size: 20, weight: .black))
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .foregroundStyle(Color.black)
+                .frame(width: 190, alignment: .leading)
+                .position(x: 145, y: 101)
+
+            ZStack {
+                Circle()
+                    .fill(playCircle)
+
+                Image(systemName: "play.fill")
+                    .font(.system(size: 38, weight: .black))
+                    .foregroundStyle(cardYellow)
+            }
+            .frame(width: 72, height: 72)
+            .position(x: 261, y: 64)
+        }
+        .frame(width: cardSize.width, height: cardSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+    }
+}
+
+private struct PracticeCompactCardTriangleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.height * 0.47))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.height * 0.18))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PracticeHomeDrillCard: View {
+    @AppStorage("ballrDarkModeEnabled") private var isDarkModeEnabled = true
+
+    let drill: Drill
+    let cardSize: CGSize
+    let panelGradient: LinearGradient
+    let triangleHeight: CGFloat
+    let bottomPanelHeight: CGFloat
+    let isSelected: Bool
+    let onPlay: () -> Void
+
+    private var titleText: String {
+        switch drill.title {
+        case "Precision Targets":
+            "Precision\ntargets"
+        case "Precision VS":
+            "Precision\nVS"
+        case "Tic Tac Toe ShootingVS":
+            "Tic Tac Toe\nShootingVS"
+        default:
+            drill.title
+        }
+    }
+
+    var body: some View {
+        let panelHeight = triangleHeight + bottomPanelHeight
+
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(Color(red: 1.0, green: 0.847, blue: 0.0))
+                .opacity(isDarkModeEnabled ? 0.40 : 1.0)
+
+            Image("cardTile")
+                .resizable()
+                .frame(width: 268, height: 314)
+                .position(x: cardSize.width / 2, y: 199)
+
+            PracticeCharacterView()
+                .frame(width: 171, height: 179)
+                .position(x: cardSize.width / 2, y: 195)
+
+            panelGradient
+                .frame(width: cardSize.width, height: panelHeight)
+                .mask {
+                    PracticeCardBottomPanelShape(
+                        triangleHeight: triangleHeight,
+                        rectangleHeight: bottomPanelHeight,
+                        cornerRadius: 31
+                    )
+                }
+
+            PracticeCharacterView()
+                .frame(width: 171, height: 179)
+                .position(x: cardSize.width / 2, y: 195)
+                .mask {
+                    PracticeCharacterVisibleMask()
+                }
+
+            panelGradient
+                .frame(width: cardSize.width, height: cardSize.height)
+                .mask {
+                    Rectangle()
+                        .frame(width: 80.51, height: 25.11)
+                        .rotationEffect(.degrees(-32.85))
+                        .position(x: 101, y: 287)
+                }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(titleText)
+                    .font(.ballr(size: 36, weight: .black))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.58)
+                    .foregroundStyle(Color.black)
+                    .frame(maxWidth: 190, alignment: .leading)
+
+                Text(drill.subtitle)
+                    .font(.ballr(size: 14, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+                    .foregroundStyle(Color.black)
+                    .frame(maxWidth: 205, alignment: .leading)
+            }
+            .position(x: 146, y: 365)
+
+            Button(action: onPlay) {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.244, green: 0.244, blue: 0.244))
+
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 38, weight: .black))
+                        .foregroundStyle(Color(red: 1.0, green: 0.847, blue: 0.0))
+                }
+                .frame(width: 73, height: 73)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .position(x: 260, y: 344)
+            .disabled(!isSelected)
+        }
+        .frame(width: cardSize.width, height: cardSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+    }
+}
+
+private struct PracticeCardBottomPanelShape: Shape {
+    let triangleHeight: CGFloat
+    let rectangleHeight: CGFloat
+    let cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let panelTopY = rect.minY + triangleHeight
+        let radius = min(cornerRadius, rectangleHeight / 2, rect.width / 2)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: panelTopY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: panelTopY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PracticeCharacterView: View {
+    private let bodyFill = Color(red: 0.878, green: 0.239, blue: 0.6)
+    private let outline = Color(red: 0.580, green: 0.082, blue: 0.365)
+    private let eyeWhite = Color(red: 0.929, green: 0.910, blue: 0.910)
+    private let faceBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
+
+    var body: some View {
+        ZStack {
+            PracticeCharacterBodyShape()
+                .fill(bodyFill)
+
+            PracticeCharacterBodyShape()
+                .strokeBorder(outline, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+
+            Circle()
+                .fill(eyeWhite)
+                .frame(width: 41.443, height: 41.443)
+                .position(x: 53.396, y: 59.079)
+
+            Circle()
+                .fill(eyeWhite)
+                .frame(width: 41.443, height: 41.443)
+                .position(x: 116.884, y: 59.079)
+
+            Circle()
+                .fill(faceBlack)
+                .frame(width: 20.281, height: 20.281)
+                .position(x: 47.781, y: 66.705)
+
+            Ellipse()
+                .fill(faceBlack)
+                .frame(width: 21.162, height: 20.281)
+                .position(x: 122.71, y: 53.463)
+
+            RoundedRectangle(cornerRadius: 7.495, style: .continuous)
+                .fill(faceBlack)
+                .frame(width: 42.325, height: 14.99)
+                .position(x: 85.237, y: 100.474)
+        }
+        .frame(width: 171, height: 179)
+    }
+}
+
+private struct PracticeCharacterBodyShape: InsettableShape {
+    var insetAmount: CGFloat = 0
+
+    func inset(by amount: CGFloat) -> some InsettableShape {
+        var shape = self
+        shape.insetAmount += amount
+        return shape
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let drawingRect = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let scaleX = drawingRect.width / 171.0
+        let scaleY = drawingRect.height / 179.0
+        let topRadius: CGFloat = 30.0
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: drawingRect.minX + x * scaleX, y: drawingRect.minY + y * scaleY)
+        }
+
+        var path = Path()
+        path.move(to: point(topRadius, 0))
+        path.addLine(to: point(170.477 - topRadius, 0))
+        path.addArc(
+            center: point(170.477 - topRadius, topRadius),
+            radius: topRadius * min(scaleX, scaleY),
+            startAngle: .degrees(-90),
+            endAngle: .degrees(0),
+            clockwise: false
+        )
+        path.addLine(to: point(170.477, 179))
+        path.addLine(to: point(126.437, 179))
+        path.addLine(to: point(126.437, 141.96))
+        path.addCurve(
+            to: point(119.437, 134.96),
+            control1: point(126.436, 138.094),
+            control2: point(123.302, 134.96)
+        )
+        path.addLine(to: point(114.968, 134.96))
+        path.addCurve(
+            to: point(107.968, 141.96),
+            control1: point(111.102, 134.96),
+            control2: point(107.968, 138.094)
+        )
+        path.addLine(to: point(107.968, 179))
+        path.addLine(to: point(63.929, 179))
+        path.addLine(to: point(63.929, 141.96))
+        path.addCurve(
+            to: point(56.929, 134.96),
+            control1: point(63.929, 138.094),
+            control2: point(60.795, 134.96)
+        )
+        path.addLine(to: point(51.04, 134.96))
+        path.addCurve(
+            to: point(44.04, 141.96),
+            control1: point(47.174, 134.96),
+            control2: point(44.04, 138.094)
+        )
+        path.addLine(to: point(44.04, 179))
+        path.addLine(to: point(0, 179))
+        path.addLine(to: point(0, 30))
+        path.addArc(
+            center: point(topRadius, topRadius),
+            radius: topRadius * min(scaleX, scaleY),
+            startAngle: .degrees(180),
+            endAngle: .degrees(270),
+            clockwise: false
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PracticeCharacterVisibleMask: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 171.0
+        let scaleY = rect.height / 179.0
+        let cutRightX = 44.04
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        var path = Path()
+
+        path.addRect(CGRect(
+            x: point(cutRightX, 0).x,
+            y: rect.minY,
+            width: rect.maxX - point(cutRightX, 0).x,
+            height: rect.height
+        ))
+
+        path.move(to: point(0, 0))
+        path.addLine(to: point(cutRightX, 0))
+        path.addLine(to: point(cutRightX, 145.0))
+        path.addLine(to: point(0, 173.34))
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+private struct PracticeSwipeDrillCard: View {
+    let drill: Drill
+    let index: Int
+    let onPlay: () -> Void
+
+    private var titleText: String {
+        switch drill.title {
+        case "Precision VS":
+            return "Precision\nTarget VS"
+        case "Tic Tac Toe ShootingVS":
+            return "Tic Tac Toe\nShooting VS"
+        default:
+            return drill.title
+        }
+    }
+
+    private var accentColor: Color {
+        let colors: [Color] = [
+            Color(red: 0.88, green: 0.24, blue: 0.60),
+            Color(red: 0.18, green: 0.48, blue: 0.95),
+            Color(red: 0.96, green: 0.32, blue: 0.20),
+            Color(red: 0.10, green: 0.64, blue: 0.44),
+            Color(red: 0.50, green: 0.30, blue: 0.95)
+        ]
+
+        return colors[index % colors.count]
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let cardWidth = geometry.size.width
+            let cardHeight = geometry.size.height
+            let artHeight = cardHeight * 0.64
+
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 30)
+                    .fill(Color(red: 1.0, green: 0.847, blue: 0.0))
+
+                PracticeSwipeCardArt(accentColor: accentColor)
+                    .frame(width: cardWidth * 0.82, height: artHeight)
+                    .position(x: cardWidth * 0.5, y: cardHeight * 0.34)
+
+                PracticeSwipeCardBottomPanel(
+                    title: titleText,
+                    subtitle: drill.subtitle,
+                    onPlay: onPlay
+                )
+                .frame(height: cardHeight * 0.43)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 30))
+        }
+        .aspectRatio(0.75, contentMode: .fit)
+    }
+}
+
+private struct PracticeSwipeCardArt: View {
+    let accentColor: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+
+            ZStack {
+                PracticePaperShape()
+                    .fill(Color.black)
+                    .frame(width: width * 0.84, height: height * 0.76)
+                    .offset(x: width * 0.04, y: height * 0.08)
+
+                PracticePaperShape()
+                    .fill(Color(red: 1.0, green: 0.973, blue: 0.890))
+                    .frame(width: width * 0.84, height: height * 0.76)
+                    .offset(x: width * 0.02, y: height * 0.05)
+
+                Ellipse()
+                    .fill(Color(red: 1.0, green: 0.451, blue: 0.0))
+                    .frame(width: width * 0.58, height: height * 0.12)
+                    .offset(y: -height * 0.28)
+
+                PracticePrecisionCharacter(accentColor: accentColor)
+                    .frame(width: width * 0.60, height: height * 0.55)
+                    .offset(y: height * 0.06)
+            }
+        }
+    }
+}
+
+private struct PracticePrecisionCharacter: View {
+    let accentColor: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+
+            ZStack {
+                RoundedRectangle(cornerRadius: width * 0.18)
+                    .fill(accentColor)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: width * 0.18)
+                            .stroke(Color(red: 0.58, green: 0.08, blue: 0.36), lineWidth: max(3, width * 0.025))
+                    }
+
+                HStack(spacing: width * 0.12) {
+                    PracticeEye(pupilOffset: CGSize(width: -width * 0.018, height: height * 0.028))
+                    PracticeEye(pupilOffset: CGSize(width: width * 0.03, height: -height * 0.026))
+                }
+                .frame(height: height * 0.24)
+                .offset(y: -height * 0.16)
+
+                RoundedRectangle(cornerRadius: height * 0.04)
+                    .fill(Color(red: 0.137, green: 0.122, blue: 0.125))
+                    .frame(width: width * 0.34, height: height * 0.075)
+                    .offset(y: height * 0.08)
+
+                HStack(spacing: width * 0.16) {
+                    RoundedRectangle(cornerRadius: width * 0.04)
+                        .fill(accentColor)
+                        .frame(width: width * 0.24, height: height * 0.31)
+                    RoundedRectangle(cornerRadius: width * 0.04)
+                        .fill(accentColor)
+                        .frame(width: width * 0.24, height: height * 0.31)
+                }
+                .offset(y: height * 0.36)
+            }
+        }
+    }
+}
+
+private struct PracticeEye: View {
+    let pupilOffset: CGSize
+
+    var body: some View {
+        Circle()
+            .fill(Color(red: 0.93, green: 0.91, blue: 0.91))
+            .overlay {
+                Circle()
+                    .fill(Color(red: 0.137, green: 0.122, blue: 0.125))
+                    .frame(width: 19, height: 19)
+                    .offset(pupilOffset)
+            }
+            .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct PracticePaperShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cutSize = min(rect.width, rect.height) * 0.18
+        let radius = min(rect.width, rect.height) * 0.10
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius), control: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cutSize))
+        path.addLine(to: CGPoint(x: rect.maxX - cutSize, y: rect.maxY - cutSize))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - cutSize * 1.55, y: rect.maxY), control: CGPoint(x: rect.maxX - cutSize * 1.55, y: rect.maxY - cutSize))
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius), control: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+private struct PracticeSwipeCardBottomPanel: View {
+    let title: String
+    let subtitle: String
+    let onPlay: () -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                PracticeCardDiagonalPanel()
+                    .fill(
+                        LinearGradient(
+                            colors: [.white, Color(red: 1.0, green: 0.847, blue: 0.0)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(title)
+                        .font(.ballr(size: 33, weight: .black))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.64)
+                        .foregroundStyle(Color.black)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(subtitle)
+                        .font(.ballr(size: 13, weight: .black))
+                        .foregroundStyle(Color.black.opacity(0.66))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+                }
+                .frame(maxWidth: geometry.size.width * 0.66, alignment: .leading)
+                .position(x: geometry.size.width * 0.27, y: geometry.size.height * 0.58)
+
+                Button(action: onPlay) {
+                    ZStack {
+                        Circle()
+                            .fill(Color(red: 0.244, green: 0.244, blue: 0.244))
+
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 24, weight: .black))
+                            .foregroundStyle(Color(red: 1.0, green: 0.847, blue: 0.0))
+                            .offset(x: 2)
+                    }
+                    .frame(width: 73, height: 73)
+                    .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, geometry.size.height * 0.24)
+                .padding(.trailing, geometry.size.width * 0.10)
+            }
+        }
+    }
+}
+
+private struct PracticeCardDiagonalPanel: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.height * 0.30))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PracticeCarouselPageDots: View {
+    let count: Int
+    let selectedIndex: Int
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(0..<count, id: \.self) { index in
+                Capsule()
+                    .fill(index == selectedIndex ? Color(red: 1.0, green: 0.847, blue: 0.0) : Color.white.opacity(0.30))
+                    .frame(width: index == selectedIndex ? 20 : 7, height: 7)
+                    .animation(.easeInOut(duration: 0.18), value: selectedIndex)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -694,11 +1939,7 @@ private struct ProfileHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.11, green: 0.10, blue: 0.11)
-                    .ignoresSafeArea()
-
-                LevelsScreenBackground()
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -793,7 +2034,6 @@ private struct JugglingDrillIntroScreen: View {
     @State private var isLaunchingDrill = false
     @State private var introBounceOffset: CGFloat = 0
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterPurple = Color(red: 0.631, green: 0.427, blue: 0.757)
     private let characterStrokePurple = Color(red: 0.463, green: 0.306, blue: 0.561)
     private let cardPurple = Color(red: 0.463, green: 0.306, blue: 0.561)
@@ -849,8 +2089,7 @@ private struct JugglingDrillIntroScreen: View {
             let faceScaleFactor = isLandscape ? 0.84 : 1.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 Group {
                     Capsule()
@@ -1011,7 +2250,6 @@ private struct JumpingChallengeIntroScreen: View {
     @State private var isLaunchingDrill = false
     @State private var introBounceOffset: CGFloat = 0
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterCyan = Color(red: 0.10, green: 0.70, blue: 0.84)
     private let cardTeal = Color(red: 0.13, green: 0.52, blue: 0.60)
     private let faceWhite = Color(red: 0.96, green: 0.95, blue: 0.95)
@@ -1065,8 +2303,7 @@ private struct JumpingChallengeIntroScreen: View {
             let cardTopPadding = isLandscape ? 16.0 : 48.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 JumpingChallengeCharacterShape()
                     .fill(characterCyan)
@@ -1192,7 +2429,7 @@ private struct JumpingChallengeIntroScreen: View {
         .fullScreenCover(isPresented: $showsCamera, onDismiss: {
             resetLaunchState()
         }) {
-            JumpingChallengeCameraView()
+            JumpingChallengeCameraView(targetsFootX: true)
                 .ballrCameraPresentationChrome()
         }
         .onAppear {
@@ -1311,7 +2548,6 @@ private struct AgilityChallengeIntroScreen: View {
     @State private var isLaunchingAgility = false
     @State private var showsFlipPrompt = false
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterOrange = Color(red: 1.0, green: 0.60, blue: 0.0)
     private let cardOrange = Color(red: 1.0, green: 0.76, blue: 0.36)
     private let logoBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
@@ -1344,8 +2580,7 @@ private struct AgilityChallengeIntroScreen: View {
             let characterStrokeWidth = 10.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 AgilityChallengeCharacterShape()
                     .fill(characterOrange)
@@ -1582,7 +2817,6 @@ private struct PianoTilesIntroScreen: View {
     @State private var isLaunchingDrill = false
     @State private var introBounceOffset: CGFloat = 0
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterBlue = Color(red: 0.02, green: 0.44, blue: 0.94)
     private let cardBlue = Color(red: 0.36, green: 0.63, blue: 0.96)
     private let faceWhite = Color(red: 0.93, green: 0.91, blue: 0.91)
@@ -1638,8 +2872,7 @@ private struct PianoTilesIntroScreen: View {
             let cardTopPadding = isLandscape ? 26.0 : 92.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 PianoTilesCharacterShape()
                     .fill(characterBlue)
@@ -1891,7 +3124,6 @@ private struct FastTouchingIntroScreen: View {
     @State private var introBounceOffset: CGFloat = 0
     @State private var didPlayIntroAnimation = false
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterGreen = Color(red: 0.0, green: 0.71, blue: 0.45)
     private let cardGreen = Color(red: 0.12, green: 0.80, blue: 0.02)
     private let stripeWhite = Color(red: 0.95, green: 0.93, blue: 0.93)
@@ -1943,8 +3175,7 @@ private struct FastTouchingIntroScreen: View {
             let cardTopPadding = isLandscape ? 28.0 : 58.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 FastTouchingCharacterShape()
                     .fill(characterGreen)
@@ -2121,7 +3352,6 @@ private struct PrecisionTargetIntroScreen: View {
     @State private var introBounceOffset: CGFloat = 0
     @State private var didPlayIntroAnimation = false
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.847, blue: 0.0)
     private let characterRed = Color(red: 1.0, green: 0.177, blue: 0.125)
     private let cardRed = Color(red: 0.737, green: 0.145, blue: 0.098)
     private let faceWhite = Color(red: 0.93, green: 0.91, blue: 0.91)
@@ -2170,8 +3400,7 @@ private struct PrecisionTargetIntroScreen: View {
             let cardTopPadding = isLandscape ? 28.0 : 38.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 PrecisionTargetCharacterShape()
                     .fill(characterRed)
@@ -2381,7 +3610,6 @@ private struct BallBlastRockDropIntroScreen: View {
     @State private var introBounceOffset: CGFloat = 0
     @State private var didPlayIntroAnimation = false
 
-    private let backgroundYellow = Color(red: 1.0, green: 0.84, blue: 0.0)
     private let characterPink = Color(red: 0.93, green: 0.80, blue: 0.96)
     private let cardPurple = Color(red: 0.77, green: 0.50, blue: 0.82)
     private let faceBlack = Color(red: 0.137, green: 0.122, blue: 0.125)
@@ -2429,8 +3657,7 @@ private struct BallBlastRockDropIntroScreen: View {
             let cardTopPadding = isLandscape ? 42.0 : 54.0
 
             ZStack(alignment: .topLeading) {
-                backgroundYellow
-                    .ignoresSafeArea()
+                BallrAppBackground()
 
                 BallBlastRockDropCharacterShape()
                     .fill(characterPink)
@@ -2911,8 +4138,7 @@ private struct AchievementBadgeSlot: View {
 private struct BallrCardDetailView: View {
     var body: some View {
         ZStack {
-            SoccerFieldBackground(showsStadiumLabels: false)
-                .ignoresSafeArea()
+            BallrAppBackground()
 
             VStack(spacing: 22) {
                 BallrEliteCard()
@@ -3117,6 +4343,7 @@ private struct BallrCardStat: View {
 private struct BallrSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authSession: AuthSessionManager
+    @AppStorage("ballrDarkModeEnabled") private var isDarkModeEnabled = true
     @State private var soundEnabled = true
     @State private var notificationsEnabled = false
     @State private var isShowingNameEditor = false
@@ -3125,8 +4352,7 @@ private struct BallrSettingsView: View {
 
     var body: some View {
         ZStack {
-            SoccerFieldBackground(showsStadiumLabels: false)
-                .ignoresSafeArea()
+            BallrAppBackground()
 
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 16) {
@@ -3167,6 +4393,16 @@ private struct BallrSettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(authSession.isWorking)
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        icon: "moon.fill",
+                        title: "Dark mode",
+                        iconBackground: Color.yellow.opacity(0.12),
+                        iconColor: Color.yellow.opacity(0.78),
+                        isOn: $isDarkModeEnabled
+                    )
 
                     SettingsDivider()
 
@@ -3509,155 +4745,7 @@ private struct LevelsHeaderStatChip: View {
 
 private struct LevelsScreenBackground: View {
     var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let height = geometry.size.height
-            let fieldInset = width * 0.11
-            let fieldTop = height * 0.155
-            let fieldBottom = height * 0.90
-            let centerY = (fieldTop + fieldBottom) / 2
-
-            ZStack {
-                Color(red: 0.11, green: 0.10, blue: 0.11)
-
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.02, green: 0.10, blue: 0.04),
-                        Color(red: 0.03, green: 0.15, blue: 0.06),
-                        Color(red: 0.02, green: 0.09, blue: 0.04)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                VStack(spacing: 0) {
-                    ForEach(0..<14, id: \.self) { index in
-                        Rectangle()
-                            .fill(index.isMultiple(of: 2) ? Color.white.opacity(0.018) : Color.black.opacity(0.055))
-                    }
-                }
-
-                VStack(spacing: 8) {
-                    ForEach(0..<4, id: \.self) { row in
-                        HStack(spacing: 8) {
-                            ForEach(0..<24, id: \.self) { seat in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill((seat + row).isMultiple(of: 5) ? Color.yellow.opacity(0.16) : Color.white.opacity(0.055))
-                                    .frame(width: 6, height: 5)
-                            }
-                        }
-                        .offset(x: row.isMultiple(of: 2) ? -12 : 12)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 94)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .opacity(0.62)
-
-                VStack(spacing: 8) {
-                    ForEach(0..<3, id: \.self) { row in
-                        HStack(spacing: 9) {
-                            ForEach(0..<22, id: \.self) { seat in
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill((seat + row * 2).isMultiple(of: 6) ? Color.yellow.opacity(0.12) : Color.white.opacity(0.04))
-                                    .frame(width: 6, height: 5)
-                            }
-                        }
-                        .offset(x: row.isMultiple(of: 2) ? 10 : -10)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 96)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .opacity(0.42)
-
-                Path { path in
-                    path.addRoundedRect(
-                        in: CGRect(
-                            x: fieldInset,
-                            y: fieldTop,
-                            width: width - fieldInset * 2,
-                            height: fieldBottom - fieldTop
-                        ),
-                        cornerSize: CGSize(width: 8, height: 8)
-                    )
-
-                    path.move(to: CGPoint(x: fieldInset, y: centerY))
-                    path.addLine(to: CGPoint(x: width - fieldInset, y: centerY))
-                    path.addEllipse(
-                        in: CGRect(
-                            x: width / 2 - 72,
-                            y: centerY - 72,
-                            width: 144,
-                            height: 144
-                        )
-                    )
-                    path.addEllipse(
-                        in: CGRect(
-                            x: width / 2 - 5,
-                            y: centerY - 5,
-                            width: 10,
-                            height: 10
-                        )
-                    )
-                    path.addRoundedRect(
-                        in: CGRect(
-                            x: width / 2 - 54,
-                            y: fieldTop + 2,
-                            width: 108,
-                            height: 46
-                        ),
-                        cornerSize: CGSize(width: 6, height: 6)
-                    )
-                    path.addRoundedRect(
-                        in: CGRect(
-                            x: width / 2 - 54,
-                            y: fieldBottom - 48,
-                            width: 108,
-                            height: 46
-                        ),
-                        cornerSize: CGSize(width: 6, height: 6)
-                    )
-                }
-                .stroke(Color.white.opacity(0.055), lineWidth: 2)
-
-                Path { path in
-                    path.move(to: CGPoint(x: fieldInset, y: fieldTop))
-                    path.addLine(to: CGPoint(x: width - fieldInset, y: fieldTop))
-                }
-                .stroke(Color.white.opacity(0.075), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-
-                ForEach(0..<10, id: \.self) { index in
-                    Path { path in
-                        let y = fieldTop + 28 + CGFloat(index) * (fieldBottom - fieldTop) / 10
-                        path.move(to: CGPoint(x: fieldInset + 12, y: y))
-                        path.addLine(to: CGPoint(x: width - fieldInset - 12, y: y - 18))
-                    }
-                    .stroke(Color.white.opacity(0.024), lineWidth: 1)
-                }
-
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.50),
-                        Color.clear,
-                        Color.clear,
-                        Color.black.opacity(0.38)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.30),
-                        Color.clear,
-                        Color.black.opacity(0.30)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            }
-        }
+        BallrAppBackground()
     }
 }
 
@@ -3701,40 +4789,15 @@ private struct LevelStartPromptView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 26)
 
-                    if drill.level == 20 {
-                        HStack(spacing: 10) {
-                            Button(action: { onSelectEasy?() }) {
-                                Text("EASY")
-                                    .font(.ballr(size: 14, weight: .black))
-                                    .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 48)
-                                    .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
-                            }
-                            .buttonStyle(.plain)
-
-                            Button(action: { onSelectHard?() }) {
-                                Text("HARD")
-                                    .font(.ballr(size: 14, weight: .black))
-                                    .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 48)
-                                    .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 18)
-                    } else {
-                        Button(action: onStart) {
-                            Text("START")
-                                .font(.ballr(size: 15, weight: .black))
-                                .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 52)
-                                .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
+                    Button(action: onStart) {
+                        Text("START")
+                            .font(.ballr(size: 15, weight: .black))
+                            .foregroundStyle(Color(red: 0.11, green: 0.10, blue: 0.11))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(Color(red: 1.0, green: 0.29, blue: 0.18), in: RoundedRectangle(cornerRadius: 8))
                     }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
@@ -3867,79 +4930,7 @@ private struct SoccerFieldBackground: View {
     var showsStadiumLabels = true
 
     var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let height = geometry.size.height
-
-            ZStack {
-                Color(red: 0.01, green: 0.14, blue: 0.04)
-
-                VStack(spacing: 0) {
-                    ForEach(0..<8, id: \.self) { index in
-                        Rectangle()
-                            .fill(index.isMultiple(of: 2) ? Color.white.opacity(0.018) : Color.black.opacity(0.045))
-                    }
-                }
-
-                Path { path in
-                    path.addRect(CGRect(x: 24, y: 0, width: width - 48, height: height - 18))
-
-                    for index in 1..<8 {
-                        let y = CGFloat(index) * height / 8
-                        path.move(to: CGPoint(x: 24, y: y))
-                        path.addLine(to: CGPoint(x: width - 24, y: y))
-                    }
-
-                    for index in 0..<4 {
-                        let y = CGFloat(index) * height / 3
-                        path.addEllipse(in: CGRect(x: width / 2 - 54, y: y + 80, width: 108, height: 108))
-                    }
-
-                    for index in 0..<4 {
-                        let y = CGFloat(index) * height / 3
-                        path.addRect(CGRect(x: width / 2 - 62, y: y, width: 124, height: 70))
-                    }
-                }
-                .stroke(Color.white.opacity(0.045), lineWidth: 3)
-
-                if showsStadiumLabels {
-                    ForEach(0..<4, id: \.self) { section in
-                        let sectionHeight = height * 0.18
-                        let sectionGap = height * 0.06
-                        let bottomY = height * 0.94
-                        let sectionBottomY = bottomY - CGFloat(section) * (sectionHeight + sectionGap)
-                        let labelY = sectionBottomY - sectionHeight + 26
-
-                        Text("STADIUM \(section + 1)")
-                            .font(.ballr(size: 16, weight: .black))
-                            .tracking(2)
-                            .foregroundStyle(Color.yellow.opacity(0.22))
-                            .frame(width: width)
-                            .position(x: width / 2, y: labelY)
-                    }
-
-                    ForEach(1..<4, id: \.self) { section in
-                        let sectionHeight = height * 0.18
-                        let sectionGap = height * 0.06
-                        let bottomY = height * 0.94
-                        let dividerY = bottomY - CGFloat(section) * sectionHeight - CGFloat(section - 1) * sectionGap - sectionGap / 2
-
-                        VStack(spacing: 8) {
-                            Rectangle()
-                                .fill(Color.yellow.opacity(0.22))
-                                .frame(height: 2)
-
-                            Text("NEXT STADIUM")
-                                .font(.ballr(size: 12, weight: .black))
-                                .tracking(2)
-                                .foregroundStyle(Color.yellow.opacity(0.35))
-                        }
-                        .frame(width: width - 52)
-                        .position(x: width / 2, y: dividerY)
-                    }
-                }
-            }
-        }
+        BallrAppBackground()
     }
 }
 
@@ -4132,7 +5123,31 @@ private struct PracticeDrillStyle {
             iconColor = .yellow
             iconForeground = Color.ballrBlack
             accentColor = .yellow
+            symbol = "rectangle.grid.3x3.fill"
+            playOpacity = 0.28
+        case 11:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "soccerball"
+            playOpacity = 0.28
+        case 12:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
+            symbol = "figure.soccer"
+            playOpacity = 0.28
+        case 13:
+            iconColor = .yellow
+            iconForeground = Color.ballrBlack
+            accentColor = .yellow
             symbol = "pianokeys"
+            playOpacity = 0.28
+        case 14:
+            iconColor = .orange
+            iconForeground = .white
+            accentColor = .orange
+            symbol = "scope"
             playOpacity = 0.28
         default:
             iconColor = Color.white.opacity(0.10)

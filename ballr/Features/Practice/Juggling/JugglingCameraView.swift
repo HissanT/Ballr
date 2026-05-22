@@ -47,10 +47,20 @@ struct JugglingCameraView: View {
 
                 if coordinator.phase == .readiness, cameraController.errorMessage == nil {
                     JugglingReadinessOverlay(readyStartedAt: coordinator.readyStartedAt)
+                    JugglingJeffStandingOverlay()
+                        .zIndex(90)
                 }
 
                 if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                    JugglingJeffCountdownOverlay(
+                        startedAt: countdownStartedAt,
+                        scoreText: "\(coordinator.juggleCount)"
+                    )
+                    .zIndex(90)
+                } else if coordinator.phase == .live {
+                    JugglingJeffHangingOverlay(scoreText: "\(coordinator.juggleCount)")
+                        .zIndex(90)
                 }
         }
         .ballrCameraPresentationChrome()
@@ -87,7 +97,25 @@ struct JugglingCameraView: View {
     }
 
     private var topBar: some View {
-        HStack(alignment: .top) {
+        ZStack(alignment: .top) {
+            HStack(alignment: .top) {
+                if coordinator.phase == .live {
+                    JugglingTimerChip(startedAt: coordinator.liveStartedAt)
+                        .padding(.top, 2)
+                } else {
+                    Text(coordinator.statusText)
+                        .font(.ballr(size: 12, weight: .black))
+                        .tracking(1.2)
+                        .foregroundStyle(.white.opacity(0.72))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(.black.opacity(0.50), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.top, 8)
+                }
+
+                Spacer()
+            }
+
             Button {
                 showsQuitConfirmation = true
             } label: {
@@ -98,23 +126,9 @@ struct JugglingCameraView: View {
                     .background(.black.opacity(0.60), in: Circle())
             }
             .buttonStyle(.plain)
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 8) {
-                JugglingHudChip(title: "JUGGLES", value: "\(coordinator.juggleCount)", tint: .yellow)
-
-                Text(coordinator.statusText)
-                    .font(.ballr(size: 12, weight: .black))
-                    .tracking(1.2)
-                    .foregroundStyle(.white.opacity(0.72))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.black.opacity(0.50), in: RoundedRectangle(cornerRadius: 8))
-            }
-            .padding(.top, 8)
         }
         .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -128,7 +142,8 @@ private final class JugglingCoordinator: ObservableObject {
     @Published private(set) var phase: JugglingPhase = .readiness
     @Published private(set) var readyStartedAt: Date?
     @Published private(set) var countdownStartedAt: Date?
-    @Published private(set) var juggleCount = 0
+    @Published private(set) var liveStartedAt: Date?
+    @Published private(set) var juggleCount = 23
     @Published private(set) var statusText = "SEARCHING"
 
     private let requiredReadyLockSeconds: TimeInterval = 1.2
@@ -163,7 +178,8 @@ private final class JugglingCoordinator: ObservableObject {
         phase = .readiness
         readyStartedAt = nil
         countdownStartedAt = nil
-        juggleCount = 0
+        liveStartedAt = nil
+        juggleCount = 23
         statusText = "SEARCHING"
         lostBallFrameCount = 0
         lostBodyFrameCount = 0
@@ -334,6 +350,7 @@ private final class JugglingCoordinator: ObservableObject {
                 timestamp.timeIntervalSince(countdownStartedAt) >= countdownDuration
             {
                 phase = .live
+                liveStartedAt = timestamp
                 readyStartedAt = nil
                 self.countdownStartedAt = nil
                 gameState.start()
@@ -1077,6 +1094,31 @@ private struct JugglingHudChip: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct JugglingTimerChip: View {
+    let startedAt: Date?
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Text(timerText(at: timeline.date))
+                .font(.ballr(size: 38, weight: .black))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func timerText(at date: Date) -> String {
+        guard let startedAt else {
+            return "0:00"
+        }
+
+        let elapsed = max(0, Int(date.timeIntervalSince(startedAt)))
+        return String(format: "%d:%02d", elapsed / 60, elapsed % 60)
     }
 }
 

@@ -184,13 +184,14 @@ final class AuthSessionManager: ObservableObject {
         }
     }
 
-    func awardSuccessfulDrillCompletion() async {
+    func awardSuccessfulDrillCompletion(xpAward: Int = 50) async {
         guard let userID = session?.user.id else { return }
 
+        let normalizedAward = max(xpAward, 0)
         let currentProgress = progress ?? BallrUserProgress.empty(for: userID)
         let previousXP = max(currentProgress.xp, 0)
         let previousLevel = max(currentProgress.level, Self.level(forXP: previousXP))
-        let updatedXP = previousXP + 50
+        let updatedXP = previousXP + normalizedAward
         let updatedLevel = Self.level(forXP: updatedXP)
 
         do {
@@ -210,7 +211,8 @@ final class AuthSessionManager: ObservableObject {
             if updatedLevel > previousLevel {
                 levelUpEvent = BallrLevelUpEvent(
                     previousLevel: previousLevel,
-                    newLevel: updatedLevel
+                    newLevel: updatedLevel,
+                    xpAward: normalizedAward
                 )
             }
         } catch {

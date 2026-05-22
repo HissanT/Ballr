@@ -1263,7 +1263,7 @@ private final class LevelNineCoordinator: ObservableObject {
     private let requiredPairLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let requiredSuccessfulHits = 20
-    private let completionAnimationDuration: TimeInterval = 1.2
+    private let completionAnimationDuration: TimeInterval = 2.05
     private let completionButtonRevealDelay: TimeInterval = 0.28
 
     private var gameState = LevelNineGameState()

@@ -54,6 +54,7 @@ struct BallrLevelUpEvent: Identifiable, Equatable {
     let id = UUID()
     let previousLevel: Int
     let newLevel: Int
+    let xpAward: Int
 }
 
 struct BallrProfileBootstrapRequest: Codable {

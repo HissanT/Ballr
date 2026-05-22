@@ -26,23 +26,12 @@ struct FastTouchingCameraView: View {
                     .ignoresSafeArea()
 
                 if coordinator.phase == .readiness {
-                    BallrJeffCameraOverlay()
+                    FastTouchingJeffStandingOverlay()
                         .zIndex(90)
-                } else if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
-                    BallrJeffCameraOverlay(
-                        presentation: .countdown(
-                            startedAt: countdownStartedAt,
-                            scoreText: "\(coordinator.touchCount)",
-                            timeText: coordinator.timerText
-                        )
-                    )
-                    .zIndex(90)
                 } else if coordinator.phase == .live {
-                    BallrJeffCameraOverlay(
-                        presentation: .planted(
-                            scoreText: "\(coordinator.touchCount)",
-                            timeText: coordinator.timerText
-                        )
+                    FastTouchingJeffPlantedOverlay(
+                        scoreText: "\(coordinator.touchCount)",
+                        timeText: coordinator.timerText
                     )
                     .zIndex(90)
                 }
@@ -74,13 +63,23 @@ struct FastTouchingCameraView: View {
 
                 if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+
+                    FastTouchingJeffCountdownOverlay(
+                        startedAt: countdownStartedAt,
+                        scoreText: "\(coordinator.touchCount)",
+                        timeText: coordinator.timerText
+                    )
+                    .zIndex(90)
                 }
 
                 if coordinator.phase == .finished {
-                    FastTouchingFinishedOverlay(
-                        touchCount: coordinator.touchCount,
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
             }
@@ -168,10 +167,14 @@ private final class FastTouchingCoordinator: ObservableObject {
     @Published private(set) var countdownStartedAt: Date?
     @Published private(set) var timerText = "30"
     @Published private(set) var touchCount = 0
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
 
     private let requiredReadyLockSeconds: TimeInterval = 1.6
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 30.0
+    private let finishAnimationDuration: TimeInterval = 2.05
+    private let finishButtonRevealDelay: TimeInterval = 0.28
     private let lostBallPromptFrameThreshold = 8
     private let lostFootPromptFrameThreshold = 8
 
@@ -184,6 +187,7 @@ private final class FastTouchingCoordinator: ObservableObject {
     private var ballDisplayRect: CGRect?
     private var ballStability = FastTouchingBallStabilityTracker()
     private var gameState = FastTouchingGameState()
+    private var finishWorkItem: DispatchWorkItem?
     private weak var renderView: FastTouchingRenderView?
 
     func attach(renderView: FastTouchingRenderView) {
@@ -198,15 +202,20 @@ private final class FastTouchingCoordinator: ObservableObject {
         )
     }
 
-    func tearDown() {}
+    func tearDown() {
+        cancelFinishWorkItem()
+    }
 
     func reset(in size: CGSize) {
+        cancelFinishWorkItem()
         self.size = size
         phase = .readiness
         readyStartedAt = nil
         countdownStartedAt = nil
         timerText = "30"
         touchCount = 0
+        finishStartedAt = nil
+        showsFinishButtons = false
         liveElapsed = 0
         lastStepAt = nil
         lostBallFrameCount = 0
@@ -302,8 +311,7 @@ private final class FastTouchingCoordinator: ObservableObject {
             }
 
             if liveElapsed >= roundDuration {
-                phase = .finished
-                BallrDrillSoundPlayer.playWinner()
+                finish(at: frame.timestamp)
             }
         }
 
@@ -370,6 +378,30 @@ private final class FastTouchingCoordinator: ObservableObject {
             countdownStartedAt = timestamp
             phase = .countdown
         }
+    }
+
+    private func finish(at timestamp: Date) {
+        guard phase != .finished else {
+            return
+        }
+
+        phase = .finished
+        finishStartedAt = timestamp
+        BallrDrillSoundPlayer.playWinner()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
+        }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 
     private var contactZones: (left: CGRect?, right: CGRect?) {

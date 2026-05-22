@@ -9,6 +9,7 @@ struct BallMagicianCameraView: View {
     @StateObject private var cameraController = JugglingCameraController()
     @StateObject private var coordinator: BallMagicianCoordinator
     @State private var showsQuitConfirmation = false
+    @State private var showsNextLevel = false
     private let configuration: BallMagicianConfiguration
 
     init(configuration: BallMagicianConfiguration = .standard) {
@@ -37,12 +38,14 @@ struct BallMagicianCameraView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if coordinator.phase != .completed {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.vertical, 14)
-                .zIndex(100)
 
                 if coordinator.phase == .live {
                     BallMagicianCommandCard(
@@ -50,7 +53,8 @@ struct BallMagicianCameraView: View {
                         commandID: coordinator.currentCommandID,
                         timerProgress: coordinator.timerProgress,
                         lastResult: coordinator.lastResult,
-                        scale: configuration.commandCardScale
+                        scale: configuration.commandCardScale,
+                        style: configuration.commandCardStyle
                     )
                     .position(commandCardPosition(in: geometry.size))
                 }
@@ -74,9 +78,24 @@ struct BallMagicianCameraView: View {
                 if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
                 }
+
+                if coordinator.phase == .completed {
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.completionStartedAt,
+                        buttonsVisible: coordinator.showsCompletionButtons,
+                        showsNextLevelButton: configuration.showsNextLevelButton,
+                        onNextLevel: { showsNextLevel = true },
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
+                    )
+                }
             }
             .ballrCameraPresentationChrome()
-            .ballrAwardsXPOnSuccess(coordinator.score >= 10)
+            .ballrAwardsXPOnSuccess(coordinator.phase == .completed || coordinator.score >= 10)
+            .navigationDestination(isPresented: $showsNextLevel) {
+                LevelEightCameraView()
+                    .ballrCameraPresentationChrome()
+            }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -126,6 +145,9 @@ struct BallMagicianCameraView: View {
             VStack(alignment: .trailing, spacing: 8) {
                 HStack(spacing: 10) {
                     BallMagicianHudChip(title: "SCORE", value: "\(coordinator.score)", tint: .yellow)
+                    if configuration.roundDuration != nil {
+                        BallMagicianHudChip(title: "TIME", value: coordinator.timerText, tint: .orange)
+                    }
                     BallMagicianHudChip(title: "MISSES", value: "\(coordinator.misses)", tint: .orange)
                 }
 
@@ -154,11 +176,13 @@ private enum BallMagicianPhase {
     case readiness
     case countdown
     case live
+    case completed
 }
 
 struct BallMagicianConfiguration {
     let upCommandWeight: Int
     let lateralCommandWeight: Int
+    let commandTimeLimit: TimeInterval?
     let commandCardScale: CGFloat
     let showsTitlePlate: Bool
     let centersUpCommand: Bool
@@ -166,30 +190,52 @@ struct BallMagicianConfiguration {
     let depthCommandWeight: Int
     let frontScaleThreshold: CGFloat
     let backScaleThreshold: CGFloat
+    let completionScore: Int?
+    let roundDuration: TimeInterval?
+    let prioritizesLateralCorrections: Bool
+    let showsNextLevelButton: Bool
+    let commandCardStyle: BallMagicianCommandCardStyle
 
     static let standard = BallMagicianConfiguration(
         upCommandWeight: 3,
         lateralCommandWeight: 1,
+        commandTimeLimit: 3.5,
         commandCardScale: 1.0,
         showsTitlePlate: true,
         centersUpCommand: false,
         rightLaneFraction: 0.68,
         depthCommandWeight: 0,
         frontScaleThreshold: 1.27,
-        backScaleThreshold: 0.77
+        backScaleThreshold: 0.77,
+        completionScore: nil,
+        roundDuration: nil,
+        prioritizesLateralCorrections: true,
+        showsNextLevelButton: false,
+        commandCardStyle: .standard
     )
 
     static let levelSeven = BallMagicianConfiguration(
-        upCommandWeight: 6,
+        upCommandWeight: 0,
         lateralCommandWeight: 1,
-        commandCardScale: 0.78,
+        commandTimeLimit: nil,
+        commandCardScale: 1.0,
         showsTitlePlate: false,
         centersUpCommand: true,
         rightLaneFraction: 0.80,
-        depthCommandWeight: 2,
+        depthCommandWeight: 1,
         frontScaleThreshold: 1.27,
-        backScaleThreshold: 0.77
+        backScaleThreshold: 0.77,
+        completionScore: nil,
+        roundDuration: 60.0,
+        prioritizesLateralCorrections: false,
+        showsNextLevelButton: true,
+        commandCardStyle: .plainArrows
     )
+}
+
+enum BallMagicianCommandCardStyle {
+    case standard
+    case plainArrows
 }
 
 private enum BallMagicianCommand: CaseIterable { 
@@ -282,6 +328,7 @@ private final class BallMagicianCoordinator: ObservableObject {
     @Published private(set) var countdownStartedAt: Date?
     @Published private(set) var score = 0
     @Published private(set) var misses = 0
+    @Published private(set) var timerText = "60"
     @Published private(set) var statusText = "SEARCHING"
     @Published private(set) var currentCommand: BallMagicianCommand?
     @Published private(set) var timerProgress: CGFloat = 1
@@ -290,10 +337,13 @@ private final class BallMagicianCoordinator: ObservableObject {
     @Published private(set) var lastResult: BallMagicianResult?
     @Published private(set) var currentCommandPosition: BallMagicianCommandPosition = .center
     @Published private(set) var currentCommandID = UUID()
+    @Published private(set) var completionStartedAt: Date?
+    @Published private(set) var showsCompletionButtons = false
 
     private let requiredReadyLockSeconds: TimeInterval = 1.2
     private let countdownDuration: TimeInterval = 4.0
-    private let commandDuration: TimeInterval = 3.5
+    private let completionAnimationDuration: TimeInterval = 2.05
+    private let completionButtonRevealDelay: TimeInterval = 0.28
     private let resultFeedbackDuration: TimeInterval = 0.5
     private let lostBallPromptFrameThreshold = 8
     private let lostBodyPromptFrameThreshold = 12
@@ -305,30 +355,37 @@ private final class BallMagicianCoordinator: ObservableObject {
     private var lostBallFrameCount = 0
     private var lostBodyFrameCount = 0
     private var commandStartedAt: Date?
+    private var liveStartedAt: Date?
     private var nextCommandAllowedAt: Date?
     private var pendingBallRectForNextCommand: CGRect?
     private var commandStartBallDiameter: CGFloat?
     private var commandHistory: [BallMagicianCommand] = []
     private var juggleDetector = BallMagicianJuggleDetector()
+    private var completionWorkItem: DispatchWorkItem?
 
     init(configuration: BallMagicianConfiguration = .standard) {
         self.configuration = configuration
     }
 
-    func tearDown() {}
+    func tearDown() {
+        cancelCompletionWorkItem()
+    }
 
     func reset(in size: CGSize) {
+        cancelCompletionWorkItem()
         self.size = size
         phase = .readiness
         readyStartedAt = nil
         countdownStartedAt = nil
         score = 0
         misses = 0
+        timerText = timeString(configuration.roundDuration ?? 60)
         statusText = "SEARCHING"
         currentCommand = nil
         currentCommandID = UUID()
         currentCommandPosition = .center
         commandStartedAt = nil
+        liveStartedAt = nil
         timerProgress = 1
         nextCommandAllowedAt = nil
         pendingBallRectForNextCommand = nil
@@ -340,6 +397,8 @@ private final class BallMagicianCoordinator: ObservableObject {
         commandHistory.removeAll()
         promptText = nil
         lastResult = nil
+        completionStartedAt = nil
+        showsCompletionButtons = false
         juggleDetector.reset()
     }
 
@@ -374,6 +433,11 @@ private final class BallMagicianCoordinator: ObservableObject {
         updateStatus(isBallTracked: isBallTracked, hasBody: body != nil)
         updateStartGate(isReady: isBallTracked && body != nil, timestamp: frame.timestamp)
 
+        guard phase != .completed else {
+            updatePrompt()
+            return
+        }
+
         guard phase == .live else {
             juggleDetector.observe(
                 ballDisplayRect: rawBallRect,
@@ -381,6 +445,11 @@ private final class BallMagicianCoordinator: ObservableObject {
                 timestamp: frame.timestamp,
                 isBallTracked: isBallTracked
             )
+            updatePrompt()
+            return
+        }
+
+        if updateRoundTimer(at: frame.timestamp) {
             updatePrompt()
             return
         }
@@ -432,7 +501,8 @@ private final class BallMagicianCoordinator: ObservableObject {
 
         if
             let commandStartedAt,
-            frame.timestamp.timeIntervalSince(commandStartedAt) >= commandDuration
+            let commandTimeLimit = configuration.commandTimeLimit,
+            frame.timestamp.timeIntervalSince(commandStartedAt) >= commandTimeLimit
         {
             resolveCurrentCommand(as: .miss, at: frame.timestamp, ballRect: rawBallRect)
         }
@@ -441,7 +511,7 @@ private final class BallMagicianCoordinator: ObservableObject {
     }
 
     private func updateStartGate(isReady: Bool, timestamp: Date) {
-        guard phase != .live else {
+        guard phase != .live, phase != .completed else {
             return
         }
 
@@ -453,8 +523,10 @@ private final class BallMagicianCoordinator: ObservableObject {
                 phase = .live
                 readyStartedAt = nil
                 self.countdownStartedAt = nil
+                liveStartedAt = timestamp
                 score = 0
                 misses = 0
+                timerText = timeString(configuration.roundDuration ?? 60)
                 currentCommand = nil
                 currentCommandPosition = .center
                 commandStartedAt = nil
@@ -505,11 +577,41 @@ private final class BallMagicianCoordinator: ObservableObject {
                 BallrDrillSoundPlayer.playCombo()
             }
             lastResult = .success(timestamp, resolvedCommandID)
+            if let completionScore = configuration.completionScore, score >= completionScore {
+                complete(at: timestamp)
+            }
         case .miss:
             misses += 1
             BallrDrillSoundPlayer.playIncorrect()
             lastResult = .miss(timestamp, resolvedCommandID)
         }
+    }
+
+    private func complete(at timestamp: Date) {
+        guard phase != .completed else {
+            return
+        }
+
+        phase = .completed
+        completionStartedAt = timestamp
+        currentCommand = nil
+        commandStartedAt = nil
+        nextCommandAllowedAt = nil
+        BallrDrillSoundPlayer.playWinner()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsCompletionButtons = true
+        }
+        completionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + completionAnimationDuration + completionButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelCompletionWorkItem() {
+        completionWorkItem?.cancel()
+        completionWorkItem = nil
     }
 
     private func startNextCommand(at timestamp: Date, ballRect: CGRect?) {
@@ -534,20 +636,46 @@ private final class BallMagicianCoordinator: ObservableObject {
             return .up
         }
 
-        switch ballLane {
-        case .left:
-            if previousCommand != .right {
-                return .right
+        if configuration.prioritizesLateralCorrections {
+            switch ballLane {
+            case .left:
+                if previousCommand != .right {
+                    return .right
+                }
+            case .right:
+                if previousCommand != .left {
+                    return .left
+                }
+            case .center:
+                break
             }
-        case .right:
-            if previousCommand != .left {
-                return .left
-            }
-        case .center:
-            break
         }
 
         return balancedRandomCommand(excluding: previousCommand)
+    }
+
+    private func updateRoundTimer(at timestamp: Date) -> Bool {
+        guard let roundDuration = configuration.roundDuration else {
+            return false
+        }
+
+        guard let liveStartedAt else {
+            timerText = timeString(roundDuration)
+            return false
+        }
+
+        let remaining = max(roundDuration - timestamp.timeIntervalSince(liveStartedAt), 0)
+        timerText = timeString(remaining)
+        if remaining <= 0 {
+            complete(at: timestamp)
+            return true
+        }
+
+        return false
+    }
+
+    private func timeString(_ seconds: TimeInterval) -> String {
+        "\(Int(ceil(max(seconds, 0))))"
     }
 
     private func balancedRandomCommand(excluding excludedCommand: BallMagicianCommand?) -> BallMagicianCommand {
@@ -562,7 +690,7 @@ private final class BallMagicianCoordinator: ObservableObject {
 
         return candidates.randomElement()
             ?? BallMagicianCommand.allCases.first { $0 != excludedCommand }
-            ?? .up
+            ?? .left
     }
 
     private func position(for command: BallMagicianCommand) -> BallMagicianCommandPosition {
@@ -580,13 +708,18 @@ private final class BallMagicianCoordinator: ObservableObject {
     }
 
     private func updateTimer(at timestamp: Date) {
+        guard let commandTimeLimit = configuration.commandTimeLimit else {
+            timerProgress = 1
+            return
+        }
+
         guard let commandStartedAt else {
             timerProgress = 1
             return
         }
 
-        let remaining = max(commandDuration - timestamp.timeIntervalSince(commandStartedAt), 0)
-        timerProgress = CGFloat(min(max(remaining / commandDuration, 0), 1))
+        let remaining = max(commandTimeLimit - timestamp.timeIntervalSince(commandStartedAt), 0)
+        timerProgress = CGFloat(min(max(remaining / commandTimeLimit, 0), 1))
     }
 
     private func updateStatus(isBallTracked: Bool, hasBody: Bool) {
@@ -760,8 +893,24 @@ private struct BallMagicianCommandCard: View {
     let timerProgress: CGFloat
     let lastResult: BallMagicianResult?
     let scale: CGFloat
+    let style: BallMagicianCommandCardStyle
 
     var body: some View {
+        content
+        .scaleEffect(scale)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch style {
+        case .standard:
+            standardContent
+        case .plainArrows:
+            plainArrowContent
+        }
+    }
+
+    private var standardContent: some View {
         VStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 22)
@@ -785,7 +934,7 @@ private struct BallMagicianCommandCard: View {
                     .rotationEffect(.degrees(-90))
                     .opacity(timerProgress > 0 ? 1 : 0.2)
 
-                commandIcon
+                standardCommandIcon
                     .symbolEffect(.bounce, value: command?.label)
             }
 
@@ -794,21 +943,43 @@ private struct BallMagicianCommandCard: View {
                 .tracking(1.5)
                 .foregroundStyle(.white)
                 .frame(minWidth: 112)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 12))
         }
-        .scaleEffect(scale)
+    }
+
+    private var plainArrowContent: some View {
+        ZStack {
+            plainCommandIcon
+                .symbolEffect(.bounce, value: command?.label)
+        }
+        .frame(width: 140, height: 120)
     }
 
     @ViewBuilder
-    private var commandIcon: some View {
+    private var standardCommandIcon: some View {
         switch command {
         case .front:
             BallMagicianDepthArrowIcon(direction: .back, motion: .front)
                 .id(commandID)
         case .back:
             BallMagicianDepthArrowIcon(direction: .front, motion: .back)
+                .id(commandID)
+        default:
+            BallMagicianMotionArrowIcon(command: command, color: borderColor)
+                .id(commandID)
+        }
+    }
+
+    @ViewBuilder
+    private var plainCommandIcon: some View {
+        switch command {
+        case .front:
+            BallMagicianPlainDepthArrowIcon(systemImageName: "arrow.up", color: borderColor, motion: .front)
+                .id(commandID)
+        case .back:
+            BallMagicianPlainDepthArrowIcon(systemImageName: "arrow.down", color: borderColor, motion: .back)
                 .id(commandID)
         default:
             BallMagicianMotionArrowIcon(command: command, color: borderColor)
@@ -956,6 +1127,48 @@ private struct BallMagicianDepthArrowIcon: View {
     }
 }
 
+private struct BallMagicianPlainDepthArrowIcon: View {
+    let systemImageName: String
+    let color: Color
+    let motion: BallMagicianDepthMotion
+    @State private var animationStartedAt = Date()
+
+    private let animationDuration: TimeInterval = 2.0
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let progress = animationProgress(at: timeline.date)
+            let scale = motion.iconScale(progress: progress)
+            let yOffset = motion.plainYOffset(progress: progress)
+
+            ZStack {
+                Image(systemName: systemImageName)
+                    .font(.ballr(size: 78, weight: .black))
+                    .foregroundStyle(.black.opacity(0.76))
+                    .offset(x: 0, y: yOffset + 4)
+
+                Image(systemName: systemImageName)
+                    .font(.ballr(size: 76, weight: .black))
+                    .foregroundStyle(color)
+                    .shadow(color: .white.opacity(0.95), radius: 2)
+                    .shadow(color: color.opacity(0.80), radius: 18)
+                    .shadow(color: .black.opacity(0.82), radius: 7)
+                    .offset(y: yOffset)
+            }
+            .scaleEffect(scale)
+        }
+        .onAppear {
+            animationStartedAt = Date()
+        }
+    }
+
+    private func animationProgress(at date: Date) -> CGFloat {
+        let rawProgress = min(max(date.timeIntervalSince(animationStartedAt) / animationDuration, 0), 1)
+        let easedProgress = rawProgress * rawProgress * (3 - (2 * rawProgress))
+        return CGFloat(easedProgress)
+    }
+}
+
 private enum BallMagicianDepthMotion {
     case front
     case back
@@ -985,6 +1198,15 @@ private enum BallMagicianDepthMotion {
         let stagger = CGFloat(index) * 0.12
         let adjustedProgress = min(max((progress - stagger) / 0.76, 0), 1)
         return 0.72 * (1 - abs(0.5 - adjustedProgress))
+    }
+
+    func plainYOffset(progress: CGFloat) -> CGFloat {
+        switch self {
+        case .front:
+            return 18 - (36 * progress)
+        case .back:
+            return -18 + (36 * progress)
+        }
     }
 }
 

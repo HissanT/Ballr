@@ -7,6 +7,8 @@ import Vision
 
 struct BallTrackerFrame {
     let overlayState: BallTrackerOverlayState
+    let handOverlayState: HandPoseOverlayState
+    let bodyOverlayState: AgilityChallengeOverlayState
     let timestamp: Date
     let framePixelSize: CGSize
 }
@@ -21,6 +23,9 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
     let previewLayer: AVCaptureVideoPreviewLayer
     var onTrackingFrame: ((BallTrackerFrame) -> Void)?
     var publishesTrackingFramesToSwiftUI = true
+    var detectsHands = false
+    var detectsBody = false
+    var trackingProfile: BallTrackerTrackingProfile = .standard
 
     private let sessionQueue = DispatchQueue(label: "ballr.dribbling.session")
     private let videoOutputQueue = DispatchQueue(label: "ballr.dribbling.output")
@@ -31,12 +36,27 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
 
     private var resources: BallTrackerResources?
     private var request: VNCoreMLRequest?
+    private let handRequest = VNDetectHumanHandPoseRequest()
+    private let bodyRequest = VNDetectHumanBodyPoseRequest()
     private var videoInput: AVCaptureDeviceInput?
     private var isConfigured = false
     private var isObservingOrientationChanges = false
     private var lastTrackingPublishTimestamp = Date.distantPast
     private var lastPublishedTrackingStatus: Bool?
     private var currentFramePixelSize: CGSize = .zero
+    private var currentHandOverlayState: HandPoseOverlayState = .idle
+    private var currentBodyOverlayState: AgilityChallengeOverlayState = .idle
+    private var trackedHands: [BallTrackerTrackedHand] = []
+    private var trackedBody: BallTrackerTrackedBody?
+    private var nextHandID = 0
+    private let minHandPointConfidence: VNConfidence = 0.25
+    private let minRequiredHandPoints = 4
+    private let maxTrackedHandMisses = 1
+    private let handMatchDistanceThreshold: CGFloat = 0.22
+    private let handRectBlendAmount: CGFloat = 0.42
+    private let minBodyPointConfidence: VNConfidence = 0.25
+    private let maxTrackedBodyMisses = 2
+    private let bodyBlendAmount: CGFloat = 0.24
     #if DEBUG
     private var processedFrameCount = 0
     private var droppedFrameCount = 0
@@ -48,6 +68,7 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         super.init()
         previewLayer.videoGravity = .resizeAspectFill
+        handRequest.maximumHandCount = 2
     }
 
     deinit {
@@ -104,6 +125,10 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
                 session.stopRunning()
             }
             tracker.reset()
+            trackedHands = []
+            trackedBody = nil
+            currentHandOverlayState = .idle
+            currentBodyOverlayState = .idle
         }
 
         publish {
@@ -333,11 +358,14 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
             observations: observations,
             frameSize: framePixelSize,
             timestamp: timestamp,
-            config: resources.config
+            config: resources.config,
+            profile: trackingProfile
         )
         logFilteredObservationsIfNeeded(observations, overlayState: overlayState, config: resources.config)
         let frame = BallTrackerFrame(
             overlayState: overlayState,
+            handOverlayState: currentHandOverlayState,
+            bodyOverlayState: currentBodyOverlayState,
             timestamp: timestamp,
             framePixelSize: framePixelSize
         )
@@ -355,6 +383,263 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.onTrackingFrame?(frame)
         }
+    }
+
+    private func processHandObservations(_ observations: [VNHumanHandPoseObservation]) -> HandPoseOverlayState {
+        let candidates = observations
+            .compactMap(handCandidate(from:))
+            .sorted(by: { $0.confidence > $1.confidence })
+            .prefix(2)
+
+        var unmatchedPrevious = trackedHands
+        var resolvedHands: [BallTrackerTrackedHand] = []
+
+        for candidate in candidates {
+            if let matchIndex = bestHandMatchIndex(for: candidate, in: unmatchedPrevious) {
+                let previous = unmatchedPrevious.remove(at: matchIndex)
+                resolvedHands.append(
+                    BallTrackerTrackedHand(
+                        id: previous.id,
+                        normalizedRect: blendHandRect(from: previous.normalizedRect, to: candidate.normalizedRect),
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: previous.confidence * Double(1 - handRectBlendAmount) + candidate.confidence * Double(handRectBlendAmount),
+                        misses: 0
+                    )
+                )
+            } else {
+                resolvedHands.append(
+                    BallTrackerTrackedHand(
+                        id: nextHandID,
+                        normalizedRect: candidate.normalizedRect,
+                        normalizedPoints: candidate.normalizedPoints,
+                        confidence: candidate.confidence,
+                        misses: 0
+                    )
+                )
+                nextHandID += 1
+            }
+        }
+
+        for previous in unmatchedPrevious where previous.misses < maxTrackedHandMisses {
+            resolvedHands.append(
+                BallTrackerTrackedHand(
+                    id: previous.id,
+                    normalizedRect: previous.normalizedRect,
+                    normalizedPoints: previous.normalizedPoints,
+                    confidence: previous.confidence * 0.82,
+                    misses: previous.misses + 1
+                )
+            )
+        }
+
+        trackedHands = Array(resolvedHands.sorted(by: { $0.confidence > $1.confidence }).prefix(2))
+        let hands = trackedHands.map {
+            HandOverlayState(
+                id: $0.id,
+                normalizedRect: $0.normalizedRect,
+                normalizedPoints: $0.normalizedPoints,
+                confidence: $0.confidence
+            )
+        }
+        return HandPoseOverlayState(
+            hands: hands,
+            statusText: hands.isEmpty ? "Searching" : (hands.count == 1 ? "Hand Found" : "Hands Found"),
+            isTracking: !hands.isEmpty,
+            candidateCount: candidates.count
+        )
+    }
+
+    private func handCandidate(from observation: VNHumanHandPoseObservation) -> HandCandidate? {
+        guard let points = try? observation.recognizedPoints(.all) else {
+            return nil
+        }
+        let jointNames: [VNHumanHandPoseObservation.JointName] = [
+            .wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip,
+            .indexMCP, .indexPIP, .indexDIP, .indexTip,
+            .middleMCP, .middlePIP, .middleDIP, .middleTip,
+            .ringMCP, .ringPIP, .ringDIP, .ringTip,
+            .littleMCP, .littlePIP, .littleDIP, .littleTip
+        ]
+        let validPoints = jointNames.compactMap { jointName -> VNRecognizedPoint? in
+            guard let point = points[jointName], point.confidence >= minHandPointConfidence else {
+                return nil
+            }
+            return point
+        }
+        guard validPoints.count >= minRequiredHandPoints else {
+            return nil
+        }
+        let normalizedPoints = validPoints.map {
+            CGPoint(x: min(max($0.location.x, 0), 1), y: min(max($0.location.y, 0), 1))
+        }
+        let minX = normalizedPoints.map(\.x).min() ?? 0
+        let maxX = normalizedPoints.map(\.x).max() ?? 0
+        let minY = normalizedPoints.map(\.y).min() ?? 0
+        let maxY = normalizedPoints.map(\.y).max() ?? 0
+        let rawWidth = max(maxX - minX, 0.035)
+        let rawHeight = max(maxY - minY, 0.045)
+        let horizontalPadding = max(rawWidth * 0.10, 0.018)
+        let verticalPadding = max(rawHeight * 0.10, 0.018)
+        let rect = CGRect(
+            x: minX - horizontalPadding,
+            y: minY - verticalPadding,
+            width: rawWidth + horizontalPadding * 2,
+            height: rawHeight + verticalPadding * 2
+        )
+        let normalizedRect = expandedHandRect(rect.standardized.intersection(unitRect))
+        guard !normalizedRect.isNull, !normalizedRect.isEmpty else {
+            return nil
+        }
+        let averageConfidence = validPoints.reduce(0.0) { $0 + Double($1.confidence) } / Double(validPoints.count)
+        return HandCandidate(normalizedRect: normalizedRect, normalizedPoints: normalizedPoints, confidence: averageConfidence)
+    }
+
+    private func bestHandMatchIndex(for candidate: HandCandidate, in previousHands: [BallTrackerTrackedHand]) -> Int? {
+        let candidateCenter = CGPoint(x: candidate.normalizedRect.midX, y: candidate.normalizedRect.midY)
+        return previousHands.enumerated()
+            .filter { _, previous in
+                let previousCenter = CGPoint(x: previous.normalizedRect.midX, y: previous.normalizedRect.midY)
+                return hypot(previousCenter.x - candidateCenter.x, previousCenter.y - candidateCenter.y) <= handMatchDistanceThreshold
+            }
+            .min { lhs, rhs in
+                let lhsCenter = CGPoint(x: lhs.element.normalizedRect.midX, y: lhs.element.normalizedRect.midY)
+                let rhsCenter = CGPoint(x: rhs.element.normalizedRect.midX, y: rhs.element.normalizedRect.midY)
+                return hypot(lhsCenter.x - candidateCenter.x, lhsCenter.y - candidateCenter.y)
+                    < hypot(rhsCenter.x - candidateCenter.x, rhsCenter.y - candidateCenter.y)
+            }?
+            .offset
+    }
+
+    private func blendHandRect(from previous: CGRect, to current: CGRect) -> CGRect {
+        CGRect(
+            x: previous.origin.x + (current.origin.x - previous.origin.x) * handRectBlendAmount,
+            y: previous.origin.y + (current.origin.y - previous.origin.y) * handRectBlendAmount,
+            width: previous.width + (current.width - previous.width) * handRectBlendAmount,
+            height: previous.height + (current.height - previous.height) * handRectBlendAmount
+        )
+        .standardized
+        .intersection(unitRect)
+    }
+
+    private func expandedHandRect(_ rect: CGRect) -> CGRect {
+        guard !rect.isNull, !rect.isEmpty else {
+            return .null
+        }
+        let width = max(rect.width, 0.075)
+        let height = max(rect.height, 0.09)
+        return CGRect(
+            x: rect.midX - width * 0.5,
+            y: rect.midY - height * 0.5,
+            width: width,
+            height: height
+        )
+        .standardized
+        .intersection(unitRect)
+    }
+
+    private func processBodyObservations(_ observations: [VNHumanBodyPoseObservation]) -> AgilityChallengeOverlayState {
+        let candidates = observations.compactMap(bodyCandidate(from:))
+        let strongestCandidate = candidates.max(by: { $0.confidence < $1.confidence })
+
+        if let strongestCandidate {
+            if let trackedBody {
+                self.trackedBody = BallTrackerTrackedBody(
+                    normalizedCenter: CGPoint(
+                        x: trackedBody.normalizedCenter.x + (strongestCandidate.normalizedCenter.x - trackedBody.normalizedCenter.x) * bodyBlendAmount,
+                        y: trackedBody.normalizedCenter.y + (strongestCandidate.normalizedCenter.y - trackedBody.normalizedCenter.y) * bodyBlendAmount
+                    ),
+                    normalizedSpan: trackedBody.normalizedSpan + (strongestCandidate.normalizedSpan - trackedBody.normalizedSpan) * bodyBlendAmount,
+                    confidence: trackedBody.confidence * Double(1 - bodyBlendAmount) + strongestCandidate.confidence * Double(bodyBlendAmount),
+                    misses: 0
+                )
+            } else {
+                trackedBody = BallTrackerTrackedBody(
+                    normalizedCenter: strongestCandidate.normalizedCenter,
+                    normalizedSpan: strongestCandidate.normalizedSpan,
+                    confidence: strongestCandidate.confidence,
+                    misses: 0
+                )
+            }
+        } else if let trackedBody, trackedBody.misses < maxTrackedBodyMisses {
+            self.trackedBody = BallTrackerTrackedBody(
+                normalizedCenter: trackedBody.normalizedCenter,
+                normalizedSpan: trackedBody.normalizedSpan,
+                confidence: trackedBody.confidence * 0.84,
+                misses: trackedBody.misses + 1
+            )
+        } else {
+            trackedBody = nil
+        }
+
+        let overlayTrackedBody = trackedBody.map {
+            AgilityTrackedBodyOverlayState(
+                normalizedCenter: $0.normalizedCenter,
+                normalizedSpan: $0.normalizedSpan,
+                confidence: $0.confidence
+            )
+        }
+
+        return AgilityChallengeOverlayState(
+            trackedBody: overlayTrackedBody,
+            statusText: overlayTrackedBody == nil ? "Searching" : "Body Found",
+            isTracking: overlayTrackedBody != nil,
+            candidateCount: candidates.count
+        )
+    }
+
+    private func bodyCandidate(from observation: VNHumanBodyPoseObservation) -> BallTrackerBodyCandidate? {
+        let leftHip = recognizedBodyPoint(for: .leftHip, observation: observation)
+        let rightHip = recognizedBodyPoint(for: .rightHip, observation: observation)
+        let leftShoulder = recognizedBodyPoint(for: .leftShoulder, observation: observation)
+        let rightShoulder = recognizedBodyPoint(for: .rightShoulder, observation: observation)
+
+        let primaryPair: (VNRecognizedPoint, VNRecognizedPoint)?
+        if let leftHip, let rightHip {
+            primaryPair = (leftHip, rightHip)
+        } else if let leftShoulder, let rightShoulder {
+            primaryPair = (leftShoulder, rightShoulder)
+        } else {
+            primaryPair = nil
+        }
+
+        guard let pair = primaryPair else {
+            return nil
+        }
+
+        let leftPoint = clampToUnitPoint(pair.0.location)
+        let rightPoint = clampToUnitPoint(pair.1.location)
+        let center = CGPoint(
+            x: (leftPoint.x + rightPoint.x) * 0.5,
+            y: (leftPoint.y + rightPoint.y) * 0.5
+        )
+        let span = max(abs(rightPoint.x - leftPoint.x), 0.12)
+        let confidence = Double(pair.0.confidence + pair.1.confidence) * 0.5
+
+        return BallTrackerBodyCandidate(
+            normalizedCenter: clampToUnitPoint(center),
+            normalizedSpan: min(max(span, 0.12), 0.36),
+            confidence: confidence
+        )
+    }
+
+    private func recognizedBodyPoint(
+        for jointName: VNHumanBodyPoseObservation.JointName,
+        observation: VNHumanBodyPoseObservation
+    ) -> VNRecognizedPoint? {
+        guard
+            let point = try? observation.recognizedPoint(jointName),
+            point.confidence >= minBodyPointConfidence
+        else {
+            return nil
+        }
+        return point
+    }
+
+    private func clampToUnitPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 0), 1),
+            y: min(max(point.y, 0), 1)
+        )
     }
 
     private func shouldPublishTrackingFrameToSwiftUI(_ frame: BallTrackerFrame) -> Bool {
@@ -480,7 +765,31 @@ extension BallTrackerCameraController: AVCaptureVideoDataOutputSampleBufferDeleg
         )
 
         do {
-            try handler.perform([request])
+            var requests: [VNRequest] = [request]
+            if detectsHands {
+                requests.append(handRequest)
+            }
+            if detectsBody {
+                requests.append(bodyRequest)
+            }
+
+            try handler.perform(requests)
+
+            if detectsHands {
+                let handObservations = (handRequest.results as? [VNHumanHandPoseObservation]) ?? []
+                currentHandOverlayState = processHandObservations(handObservations)
+            } else {
+                currentHandOverlayState = .idle
+                trackedHands = []
+            }
+
+            if detectsBody {
+                let bodyObservations = bodyRequest.results ?? []
+                currentBodyOverlayState = processBodyObservations(bodyObservations)
+            } else {
+                currentBodyOverlayState = .idle
+                trackedBody = nil
+            }
             logVisionDurationIfNeeded(Date().timeIntervalSince(startedAt))
         } catch {
             publish {
@@ -607,6 +916,27 @@ private enum BallTrackerCameraError: LocalizedError {
             return message
         }
     }
+}
+
+private struct BallTrackerTrackedHand {
+    let id: Int
+    let normalizedRect: CGRect
+    let normalizedPoints: [CGPoint]
+    let confidence: Double
+    let misses: Int
+}
+
+private struct BallTrackerBodyCandidate {
+    let normalizedCenter: CGPoint
+    let normalizedSpan: CGFloat
+    let confidence: Double
+}
+
+private struct BallTrackerTrackedBody {
+    let normalizedCenter: CGPoint
+    let normalizedSpan: CGFloat
+    let confidence: Double
+    let misses: Int
 }
 
 extension AVCaptureVideoOrientation {

@@ -152,7 +152,7 @@ private final class LevelTenCoordinator: ObservableObject {
     private let countdownDuration: TimeInterval = 4.0
     private let requiredSuccessfulHits = 25
     private let allowedMisses = 5
-    private let finishAnimationDuration: TimeInterval = 1.2
+    private let finishAnimationDuration: TimeInterval = 2.05
     private let finishButtonRevealDelay: TimeInterval = 0.28
 
     private var gameState = LevelTenGameState()

@@ -109,12 +109,14 @@ struct BallBlastRockDropCameraView: View {
                 BallBlastRockDropRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    topBar
-                    Spacer()
+                if coordinator.phase != .gameOver && coordinator.phase != .won {
+                    VStack(spacing: 0) {
+                        topBar
+                        Spacer()
+                    }
+                    .padding(.vertical, 14)
+                    .zIndex(100)
                 }
-                .padding(.vertical, 14)
-                .zIndex(100)
 
                 if cameraController.isStarting {
                     BallBlastRockDropLoadingOverlay()
@@ -135,24 +137,26 @@ struct BallBlastRockDropCameraView: View {
                 }
 
                 if coordinator.phase == .gameOver {
-                    BallBlastRockDropFinishedOverlay(
-                        title: "SO CLOSE, TRY AGAIN",
-                        subtitle: "A rock hit the ball.",
-                        timeText: coordinator.survivedTimeText,
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        title: "TRY AGAIN",
+                        primaryTitle: "TRY AGAIN",
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
 
                 if coordinator.phase == .won {
-                    BallBlastRockDropFinishedOverlay(
-                        title: "YOU SURVIVED, GOOD JOB!",
-                        subtitle: "Clean run.",
-                        timeText: "60s",
-                        primaryTitle: "PLAY AGAIN",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        showsNextLevelButton: false,
+                        onNextLevel: {},
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
             }
@@ -228,10 +232,14 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     @Published private(set) var survivedTimeText = "0s"
     @Published private(set) var activeRockCount = 0
     @Published private(set) var modeText = "READY"
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
 
     private let requiredBallLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 60.0
+    private let finishAnimationDuration: TimeInterval = 2.05
+    private let finishButtonRevealDelay: TimeInterval = 0.28
     private let lostBallPromptFrameThreshold = 18
     private let difficulty: BallBlastRockDropDifficulty
 
@@ -242,6 +250,7 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     private var heldBallDisplayRect: CGRect?
     private var gameState: BallBlastRockDropGameState
     private weak var renderView: BallBlastRockDropRenderView?
+    private var finishWorkItem: DispatchWorkItem?
 
     init(difficulty: BallBlastRockDropDifficulty) {
         self.difficulty = difficulty
@@ -259,6 +268,7 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     }
 
     func reset(in size: CGSize) {
+        cancelFinishWorkItem()
         self.size = size
         BallrDrillSoundPlayer.stopRockDropSounds()
         phase = .readiness
@@ -271,6 +281,8 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         survivedTimeText = "0s"
         activeRockCount = 0
         modeText = "READY"
+        finishStartedAt = nil
+        showsFinishButtons = false
         liveElapsed = 0
         lastStepAt = nil
         lostBallFrameCount = 0
@@ -440,20 +452,43 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
         switch event {
         case .collision:
             BallrDrillSoundPlayer.playRockHitBall()
-            phase = .gameOver
+            finish(as: .gameOver, at: timestamp)
             modeText = "HIT"
         case .none:
             if liveElapsed >= roundDuration {
                 BallrDrillSoundPlayer.stopRockDropLoop()
                 BallrDrillSoundPlayer.playWinner()
-                phase = .won
                 timerText = "0"
                 survivedTimeText = "60s"
+                finish(as: .won, at: timestamp)
                 modeText = "CLEAR"
             } else {
                 modeText = "DODGE"
             }
         }
+    }
+
+    private func finish(as finishPhase: BallBlastRockDropPhase, at timestamp: Date) {
+        guard phase != .gameOver, phase != .won else {
+            return
+        }
+
+        phase = finishPhase
+        finishStartedAt = timestamp
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
+        }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 
     private var promptText: String? {
@@ -485,6 +520,7 @@ private final class BallBlastRockDropCoordinator: ObservableObject {
     }
 
     func stopSounds() {
+        cancelFinishWorkItem()
         BallrDrillSoundPlayer.stopRockDropSounds()
     }
 }
@@ -590,27 +626,39 @@ private final class BallBlastRockDropRenderView: UIView {
     private func makeRockLayerSet(for rock: BallBlastRock) -> BallBlastRockLayerSet {
         let container = CALayer()
         container.shadowColor = UIColor.black.cgColor
-        container.shadowOpacity = 0.36
-        container.shadowRadius = 8
-        container.shadowOffset = CGSize(width: 0, height: 4)
+        container.shadowOpacity = 0.78
+        container.shadowRadius = 14
+        container.shadowOffset = CGSize(width: 0, height: 5)
+
+        let halo = CAShapeLayer()
+        halo.fillColor = UIColor.clear.cgColor
+        halo.strokeColor = UIColor(red: 1.0, green: 0.84, blue: 0.10, alpha: 1).cgColor
+        halo.lineWidth = 9
+        halo.lineJoin = .round
+        halo.lineCap = .round
+        halo.shadowColor = UIColor.black.cgColor
+        halo.shadowOpacity = 0.85
+        halo.shadowRadius = 5
+        halo.shadowOffset = .zero
 
         let body = CAShapeLayer()
         body.lineJoin = .round
         body.lineCap = .round
-        body.fillColor = UIColor(red: 0.45, green: 0.47, blue: 0.50, alpha: 1).cgColor
-        body.strokeColor = UIColor(red: 0.12, green: 0.13, blue: 0.14, alpha: 1).cgColor
-        body.lineWidth = 4
+        body.fillColor = UIColor(red: 0.72, green: 0.74, blue: 0.77, alpha: 1).cgColor
+        body.strokeColor = UIColor.black.cgColor
+        body.lineWidth = 6
 
         let highlight = CAShapeLayer()
-        highlight.fillColor = UIColor.white.withAlphaComponent(0.28).cgColor
+        highlight.fillColor = UIColor.white.withAlphaComponent(0.62).cgColor
 
         let crack = CAShapeLayer()
         crack.fillColor = UIColor.clear.cgColor
-        crack.strokeColor = UIColor(red: 0.18, green: 0.19, blue: 0.21, alpha: 0.82).cgColor
-        crack.lineWidth = 3
+        crack.strokeColor = UIColor.black.withAlphaComponent(0.92).cgColor
+        crack.lineWidth = 4
         crack.lineCap = .round
         crack.lineJoin = .round
 
+        container.addSublayer(halo)
         container.addSublayer(body)
         container.addSublayer(highlight)
         container.addSublayer(crack)
@@ -618,6 +666,7 @@ private final class BallBlastRockDropRenderView: UIView {
 
         let set = BallBlastRockLayerSet(
             container: container,
+            halo: halo,
             body: body,
             highlight: highlight,
             crack: crack
@@ -635,6 +684,8 @@ private final class BallBlastRockDropRenderView: UIView {
 
         let rockRect = bounds.insetBy(dx: side * 0.12, dy: side * 0.14)
         let rockPath = makeRockPath(in: rockRect, seed: rock.seed)
+        layerSet.halo.frame = bounds
+        layerSet.halo.path = rockPath.cgPath
         layerSet.body.frame = bounds
         layerSet.body.path = rockPath.cgPath
 
@@ -724,6 +775,7 @@ private final class BallBlastRockDropRenderView: UIView {
 
 private struct BallBlastRockLayerSet {
     let container: CALayer
+    let halo: CAShapeLayer
     let body: CAShapeLayer
     let highlight: CAShapeLayer
     let crack: CAShapeLayer

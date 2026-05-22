@@ -8,6 +8,7 @@ struct AgilityChallengeCameraView: View {
     @StateObject private var cameraController = AgilityPoseCameraController()
     @StateObject private var coordinator = AgilityChallengeCoordinator()
     @State private var showsQuitConfirmation = false
+    @State private var showsNextLevel = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -55,15 +56,22 @@ struct AgilityChallengeCameraView: View {
                 }
 
                 if coordinator.phase == .finished {
-                    AgilityChallengeFinishedOverlay(
-                        scoreText: "\(coordinator.score)",
-                        onPrimary: { coordinator.reset(in: geometry.size) },
-                        onDone: { dismiss() }
+                    PracticeLevelCompletionOverlay(
+                        startedAt: coordinator.finishStartedAt,
+                        buttonsVisible: coordinator.showsFinishButtons,
+                        showsNextLevelButton: true,
+                        onNextLevel: { showsNextLevel = true },
+                        onTryAgain: { coordinator.reset(in: geometry.size) },
+                        onBackToLevels: { dismiss() }
                     )
                 }
             }
             .ballrCameraPresentationChrome()
             .ballrAwardsXPOnSuccess(coordinator.phase == .finished)
+            .navigationDestination(isPresented: $showsNextLevel) {
+                LevelSevenCameraView()
+                    .ballrCameraPresentationChrome()
+            }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()
                 coordinator.reset(in: geometry.size)
@@ -143,10 +151,14 @@ private final class AgilityChallengeCoordinator: ObservableObject {
     @Published private(set) var countdownStartedAt: Date?
     @Published private(set) var timerText = "30"
     @Published private(set) var score = 0
+    @Published private(set) var finishStartedAt: Date?
+    @Published private(set) var showsFinishButtons = false
 
     private let requiredBodyLockSeconds: TimeInterval = 3.0
     private let countdownDuration: TimeInterval = 4.0
     private let roundDuration: TimeInterval = 30.0
+    private let finishAnimationDuration: TimeInterval = 2.05
+    private let finishButtonRevealDelay: TimeInterval = 0.28
     private let lostTrackingPromptFrameThreshold = 12
     private let leftLineFraction: CGFloat = 0.14
     private let rightLineFraction: CGFloat = 0.86
@@ -158,7 +170,10 @@ private final class AgilityChallengeCoordinator: ObservableObject {
     private var armedSide: AgilitySide?
     private var lastZone: AgilityZone = .center
     private var displayedBody: AgilityDisplayedBody?
+    private var hitFlashSide: AgilitySide?
+    private var hitFlashStartedAt: Date?
     private weak var renderView: AgilityChallengeRenderView?
+    private var finishWorkItem: DispatchWorkItem?
 
     func attach(renderView: AgilityChallengeRenderView) {
         self.renderView = renderView
@@ -166,30 +181,41 @@ private final class AgilityChallengeCoordinator: ObservableObject {
             body: displayedBody,
             prompt: promptText,
             activeSide: activeSide,
+            hitFlashSide: hitFlashSide,
+            hitFlashStartedAt: hitFlashStartedAt,
             leftLineX: leftLineX,
             rightLineX: rightLineX
         )
     }
 
-    func tearDown() {}
+    func tearDown() {
+        cancelFinishWorkItem()
+    }
 
     func reset(in size: CGSize) {
+        cancelFinishWorkItem()
         self.size = size
         phase = .readiness
         bodyFoundStartedAt = nil
         countdownStartedAt = nil
         timerText = "30"
         score = 0
+        finishStartedAt = nil
+        showsFinishButtons = false
         liveElapsed = 0
         lastStepAt = nil
         lostTrackingFrameCount = 0
         armedSide = nil
         lastZone = .center
         displayedBody = nil
+        hitFlashSide = nil
+        hitFlashStartedAt = nil
         renderView?.update(
             body: displayedBody,
             prompt: promptText,
             activeSide: activeSide,
+            hitFlashSide: hitFlashSide,
+            hitFlashStartedAt: hitFlashStartedAt,
             leftLineX: leftLineX,
             rightLineX: rightLineX
         )
@@ -201,6 +227,8 @@ private final class AgilityChallengeCoordinator: ObservableObject {
             body: displayedBody,
             prompt: promptText,
             activeSide: activeSide,
+            hitFlashSide: hitFlashSide,
+            hitFlashStartedAt: hitFlashStartedAt,
             leftLineX: leftLineX,
             rightLineX: rightLineX
         )
@@ -230,6 +258,8 @@ private final class AgilityChallengeCoordinator: ObservableObject {
                 body: displayedBody,
                 prompt: promptText,
                 activeSide: activeSide,
+                hitFlashSide: hitFlashSide,
+                hitFlashStartedAt: hitFlashStartedAt,
                 leftLineX: leftLineX,
                 rightLineX: rightLineX
             )
@@ -252,8 +282,7 @@ private final class AgilityChallengeCoordinator: ObservableObject {
             }
 
             if liveElapsed >= roundDuration {
-                phase = .finished
-                BallrDrillSoundPlayer.playWinner()
+                finish(at: frame.timestamp)
             }
         }
 
@@ -261,9 +290,35 @@ private final class AgilityChallengeCoordinator: ObservableObject {
             body: displayedBody,
             prompt: promptText,
             activeSide: activeSide,
+            hitFlashSide: hitFlashSide,
+            hitFlashStartedAt: hitFlashStartedAt,
             leftLineX: leftLineX,
             rightLineX: rightLineX
         )
+    }
+
+    private func finish(at timestamp: Date) {
+        guard phase != .finished else {
+            return
+        }
+
+        phase = .finished
+        finishStartedAt = timestamp
+        BallrDrillSoundPlayer.playWinner()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.showsFinishButtons = true
+        }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + finishAnimationDuration + finishButtonRevealDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelFinishWorkItem() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
     }
 
     private func updateStartGate(isTracking: Bool, timestamp: Date) {
@@ -313,16 +368,23 @@ private final class AgilityChallengeCoordinator: ObservableObject {
         case .left:
             if armedSide == .left {
                 score += 1
+                registerHitFlash(side: .left)
             }
             armedSide = .right
         case .right:
             if armedSide == .right {
                 score += 1
+                registerHitFlash(side: .right)
             }
             armedSide = .left
         case .center:
             break
         }
+    }
+
+    private func registerHitFlash(side: AgilitySide) {
+        hitFlashSide = side
+        hitFlashStartedAt = Date()
     }
 
     private func zone(for x: CGFloat) -> AgilityZone {
@@ -400,6 +462,8 @@ private final class AgilityChallengeRenderView: UIView {
     private var body: AgilityDisplayedBody?
     private var prompt: String?
     private var activeSide: AgilitySide?
+    private var hitFlashSide: AgilitySide?
+    private var hitFlashStartedAt: Date?
     private var leftLineX: CGFloat = 0
     private var rightLineX: CGFloat = 0
 
@@ -428,12 +492,16 @@ private final class AgilityChallengeRenderView: UIView {
         body: AgilityDisplayedBody?,
         prompt: String?,
         activeSide: AgilitySide?,
+        hitFlashSide: AgilitySide?,
+        hitFlashStartedAt: Date?,
         leftLineX: CGFloat,
         rightLineX: CGFloat
     ) {
         self.body = body
         self.prompt = prompt
         self.activeSide = activeSide
+        self.hitFlashSide = hitFlashSide
+        self.hitFlashStartedAt = hitFlashStartedAt
         self.leftLineX = leftLineX
         self.rightLineX = rightLineX
         promptLabel.text = prompt
@@ -457,47 +525,211 @@ private final class AgilityChallengeRenderView: UIView {
             return
         }
 
-        drawLanes(in: context)
-        drawBodyMarker(in: context)
+        drawZones(in: context, date: Date())
     }
 
-    private func drawLanes(in context: CGContext) {
-        let topY = bounds.height * 0.16
-        let bottomY = bounds.height * 0.90
+    private func drawZones(in context: CGContext, date: Date) {
+        let leftZoneMaxX = min(bounds.width * 0.48, leftLineX + 18)
+        let rightZoneMinX = max(bounds.width * 0.52, rightLineX - 18)
 
-        drawLane(at: leftLineX, isActive: activeSide == .left, in: context, topY: topY, bottomY: bottomY)
-        drawLane(at: rightLineX, isActive: activeSide == .right, in: context, topY: topY, bottomY: bottomY)
+        drawEdgeZone(
+            rect: CGRect(x: 0, y: 0, width: max(leftZoneMaxX, 0), height: bounds.height),
+            side: .left,
+            isActive: activeSide == .left,
+            date: date,
+            in: context
+        )
+        drawEdgeZone(
+            rect: CGRect(x: rightZoneMinX, y: 0, width: max(bounds.width - rightZoneMinX, 0), height: bounds.height),
+            side: .right,
+            isActive: activeSide == .right,
+            date: date,
+            in: context
+        )
     }
 
-    private func drawLane(
-        at x: CGFloat,
+    private func drawEdgeZone(
+        rect: CGRect,
+        side: AgilitySide,
         isActive: Bool,
-        in context: CGContext,
-        topY: CGFloat,
-        bottomY: CGFloat
+        date: Date,
+        in context: CGContext
     ) {
-        guard x > 0 else {
+        guard rect.width > 1, rect.height > 1 else {
             return
         }
 
-        let glowColor = isActive ? UIColor.systemYellow.withAlphaComponent(0.42) : UIColor.white.withAlphaComponent(0.14)
-        context.saveGState()
-        context.setShadow(offset: .zero, blur: isActive ? 20 : 12, color: glowColor.cgColor)
-        context.setStrokeColor(glowColor.cgColor)
-        context.setLineWidth(isActive ? 10 : 8)
-        context.move(to: CGPoint(x: x, y: topY))
-        context.addLine(to: CGPoint(x: x, y: bottomY))
-        context.strokePath()
-        context.restoreGState()
+        let green = UIColor.systemGreen
+        let pulse = isActive ? CGFloat((sin(date.timeIntervalSinceReferenceDate * 8.0) + 1) * 0.5) : 0
+        let hitFlash = hitFlashProgress(for: side, at: date)
+        let intensity = max(isActive ? 0.48 + pulse * 0.34 : 0, hitFlash)
+        let baseAlpha: CGFloat = isActive ? 0.28 + pulse * 0.08 : 0.14
+        let edgeAlpha: CGFloat = min(0.86, (isActive ? 0.56 + pulse * 0.18 : 0.28) + hitFlash * 0.28)
+        let mistAlpha: CGFloat = min(0.62, (isActive ? 0.28 + pulse * 0.12 : 0.12) + hitFlash * 0.22)
 
         context.saveGState()
-        context.setStrokeColor((isActive ? UIColor.systemOrange : UIColor.white.withAlphaComponent(0.48)).cgColor)
-        context.setLineWidth(3)
-        context.setLineDash(phase: 0, lengths: [14, 10])
-        context.move(to: CGPoint(x: x, y: topY))
-        context.addLine(to: CGPoint(x: x, y: bottomY))
-        context.strokePath()
+
+        let colors: [CGColor]
+        let startPoint: CGPoint
+        let endPoint: CGPoint
+        switch side {
+        case .left:
+            colors = [
+                green.withAlphaComponent(edgeAlpha).cgColor,
+                green.withAlphaComponent(baseAlpha).cgColor,
+                green.withAlphaComponent(0.02).cgColor
+            ]
+            startPoint = CGPoint(x: rect.minX, y: rect.midY)
+            endPoint = CGPoint(x: rect.maxX, y: rect.midY)
+        case .right:
+            colors = [
+                green.withAlphaComponent(0.02).cgColor,
+                green.withAlphaComponent(baseAlpha).cgColor,
+                green.withAlphaComponent(edgeAlpha).cgColor
+            ]
+            startPoint = CGPoint(x: rect.minX, y: rect.midY)
+            endPoint = CGPoint(x: rect.maxX, y: rect.midY)
+        }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0.0, 0.52, 1.0]) {
+            context.clip(to: rect)
+            context.drawLinearGradient(gradient, start: startPoint, end: endPoint, options: [])
+        }
         context.restoreGState()
+
+        drawZoneMist(in: rect, side: side, isActive: isActive, alpha: mistAlpha, date: date, context: context)
+        drawRoughZoneEdge(in: rect, side: side, intensity: intensity, date: date, context: context)
+
+        context.saveGState()
+        context.setShadow(offset: .zero, blur: 24 + intensity * 34, color: green.withAlphaComponent(0.18 + intensity * 0.44).cgColor)
+        context.setFillColor(green.withAlphaComponent((isActive ? 0.12 : 0.06) + hitFlash * 0.16).cgColor)
+        context.fill(rect)
+        context.restoreGState()
+    }
+
+    private func drawZoneMist(
+        in rect: CGRect,
+        side: AgilitySide,
+        isActive: Bool,
+        alpha: CGFloat,
+        date: Date,
+        context: CGContext
+    ) {
+        let green = UIColor.systemGreen
+        let drift = CGFloat(sin(date.timeIntervalSinceReferenceDate * 1.7))
+        let mistCenters: [(CGFloat, CGFloat, CGFloat)] = [
+            (0.10, 0.18, 34),
+            (0.34, 0.30, 48),
+            (0.20, 0.48, 42),
+            (0.46, 0.63, 56),
+            (0.16, 0.78, 38),
+            (0.38, 0.88, 46)
+        ]
+
+        context.saveGState()
+        context.clip(to: rect.insetBy(dx: -18, dy: 0))
+        for (xFraction, yFraction, radius) in mistCenters {
+            let mirroredXFraction = side == .left ? xFraction : 1 - xFraction
+            let center = CGPoint(
+                x: rect.minX + rect.width * mirroredXFraction + drift * 5,
+                y: rect.minY + rect.height * yFraction
+            )
+            let adjustedRadius = radius * (isActive ? 1.18 : 1.0)
+            let circleRect = CGRect(
+                x: center.x - adjustedRadius,
+                y: center.y - adjustedRadius,
+                width: adjustedRadius * 2,
+                height: adjustedRadius * 2
+            )
+            context.setShadow(offset: .zero, blur: adjustedRadius * 0.45, color: green.withAlphaComponent(alpha).cgColor)
+            context.setFillColor(green.withAlphaComponent(alpha * 0.42).cgColor)
+            context.fillEllipse(in: circleRect)
+        }
+        context.restoreGState()
+    }
+
+    private func drawRoughZoneEdge(
+        in rect: CGRect,
+        side: AgilitySide,
+        intensity: CGFloat,
+        date: Date,
+        context: CGContext
+    ) {
+        let green = UIColor.systemGreen
+        let edgeX = side == .left ? rect.maxX : rect.minX
+        let direction: CGFloat = side == .left ? 1 : -1
+        let roughWidth = max(42, bounds.width * 0.055)
+        let rowHeight = max(42, bounds.height / 11)
+
+        context.saveGState()
+        context.clip(to: bounds.insetBy(dx: -roughWidth, dy: 0))
+
+        for index in 0..<13 {
+            let fraction = CGFloat(index) / 12
+            let wave = CGFloat(sin(date.timeIntervalSinceReferenceDate * 2.4 + Double(index) * 1.17))
+            let notch = CGFloat(sin(Double(index) * 2.31)) * roughWidth * 0.20
+            let center = CGPoint(
+                x: edgeX + direction * (roughWidth * (0.22 + 0.42 * abs(wave)) + notch),
+                y: rect.minY + rect.height * fraction
+            )
+            let radiusX = roughWidth * (0.72 + 0.26 * abs(wave))
+            let radiusY = rowHeight * (0.76 + 0.22 * CGFloat(cos(Double(index) * 1.9)))
+            let alpha = (0.10 + intensity * 0.22) * (0.82 + 0.18 * abs(wave))
+            let mistRect = CGRect(
+                x: center.x - radiusX,
+                y: center.y - radiusY,
+                width: radiusX * 2,
+                height: radiusY * 2
+            )
+            context.setShadow(offset: .zero, blur: 18 + intensity * 28, color: green.withAlphaComponent(alpha).cgColor)
+            context.setFillColor(green.withAlphaComponent(alpha * 0.34).cgColor)
+            context.fillEllipse(in: mistRect)
+        }
+
+        let edgeGlowRect = CGRect(
+            x: side == .left ? edgeX - roughWidth * 0.35 : edgeX - roughWidth * 0.65,
+            y: rect.minY,
+            width: roughWidth,
+            height: rect.height
+        )
+        let colors: [CGColor]
+        if side == .left {
+            colors = [
+                green.withAlphaComponent(0.00).cgColor,
+                green.withAlphaComponent(0.12 + intensity * 0.30).cgColor,
+                green.withAlphaComponent(0.00).cgColor
+            ]
+        } else {
+            colors = [
+                green.withAlphaComponent(0.00).cgColor,
+                green.withAlphaComponent(0.12 + intensity * 0.30).cgColor,
+                green.withAlphaComponent(0.00).cgColor
+            ]
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0.0, 0.45, 1.0]) {
+            context.clip(to: edgeGlowRect)
+            context.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: edgeGlowRect.minX, y: edgeGlowRect.midY),
+                end: CGPoint(x: edgeGlowRect.maxX, y: edgeGlowRect.midY),
+                options: []
+            )
+        }
+        context.restoreGState()
+    }
+
+    private func hitFlashProgress(for side: AgilitySide, at date: Date) -> CGFloat {
+        guard hitFlashSide == side, let hitFlashStartedAt else {
+            return 0
+        }
+        let elapsed = date.timeIntervalSince(hitFlashStartedAt)
+        guard elapsed >= 0, elapsed < 0.62 else {
+            return 0
+        }
+        let progress = CGFloat(elapsed / 0.62)
+        return pow(1 - progress, 0.45)
     }
 
     private func drawBodyMarker(in context: CGContext) {
@@ -611,22 +843,9 @@ private struct AgilityChallengeReadinessOverlay: View {
     let bodyFoundStartedAt: Date?
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Text("KEEP THE BALL IN THE\nFRAME")
-                    .font(.ballr(size: min(geometry.size.width * 0.058, 46), weight: .black))
-                    .tracking(1.4)
-                    .lineSpacing(13)
-                    .foregroundStyle(.black)
-                    .multilineTextAlignment(.center)
-                    .shadow(color: .white.opacity(0.18), radius: 1, x: 0, y: 1)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                BallrJeffCameraOverlay()
-            }
+        Color.clear
             .ignoresSafeArea()
             .allowsHitTesting(false)
-        }
     }
 }
 

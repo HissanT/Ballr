@@ -56,7 +56,7 @@ struct HandTargetConfiguration {
         scoreValue: 5,
         comboStreakStep: 8,
         spawnTopFraction: 0.20,
-        maxSpawnYFraction: nil,
+        maxSpawnYFraction: 0.58,
         previousTargetDistanceMultiplier: 4.6,
         alternatesHorizontalSides: true,
         topSafetyPadding: 20,
@@ -89,12 +89,15 @@ struct HandTargetCameraView: View {
     @State private var showsQuitConfirmation = false
     @State private var showsNextLevel = false
     private let nextDestination: HandTargetNextDestination
+    private let showsJeffCountdown: Bool
 
     init(
         nextDestination: HandTargetNextDestination = .footTargets,
-        configuration: HandTargetConfiguration = .levelTwo
+        configuration: HandTargetConfiguration = .levelTwo,
+        showsJeffCountdown: Bool = false
     ) {
         self.nextDestination = nextDestination
+        self.showsJeffCountdown = showsJeffCountdown
         _coordinator = StateObject(wrappedValue: HandTargetCoordinator(configuration: configuration))
     }
 
@@ -143,7 +146,11 @@ struct HandTargetCameraView: View {
                 }
 
                 if coordinator.startPhase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
-                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                    if showsJeffCountdown {
+                        BallrJeffCountdownLoadingScreen(startedAt: countdownStartedAt)
+                    } else {
+                        BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                    }
                 }
 
                 if coordinator.hasEnded {
@@ -169,7 +176,7 @@ struct HandTargetCameraView: View {
                     LevelEightCameraView()
                         .ballrCameraPresentationChrome()
                 case .levelTen:
-                    PianoTilesCameraView(difficulty: .hard)
+                    HunterCameraView(difficulty: .easy)
                         .ballrCameraPresentationChrome()
                 }
             }
@@ -257,7 +264,7 @@ private final class HandTargetCoordinator: ObservableObject {
     @Published private(set) var showsCompletionButtons = false
     @Published private(set) var finishState: FinishState = .none
 
-    private let completionAnimationDuration: TimeInterval = 1.2
+    private let completionAnimationDuration: TimeInterval = 2.05
     private let completionButtonRevealDelay: TimeInterval = 0.28
     private let countdownDuration: TimeInterval = 4.0
     private let configuration: HandTargetConfiguration
