@@ -1,0 +1,40 @@
+{
+  "format": "coreml",
+  "task": "object_detection",
+  "weights_path": "ballr_yolo26n_896_from_base_colab_e80_best.pt",
+  "package_path": "/mnt/c/Users/hissa/Desktop/Ballr/models/coreml/ballr_yolo26n_896_from_base_colab_e80.mlpackage",
+  "input": {
+    "type": "image",
+    "color_layout": "RGB",
+    "temporal_mode": "single_rgb",
+    "shape": [
+      1,
+      3,
+      896,
+      896
+    ],
+    "preprocess": "letterbox_preserve_aspect_ratio"
+  },
+  "output": {
+    "includes_nms": false,
+    "class_labels": {
+      "0": "ball"
+    },
+    "coordinate_space": "model_canvas"
+  },
+  "ballr_runtime_defaults": {
+    "confidence_threshold": 0.38,
+    "iou_threshold": 0.35,
+    "ball_class_id": 0
+  },
+  "frontend_notes": {
+    "vision_crop_and_scale": "scaleFit",
+    "pass_capture_orientation": true,
+    "mirror_preview_only": true,
+    "map_boxes_back_to_preview": true
+  },
+  "export": {
+    "imgsz": 896,
+    "int8": false
+  }
+}

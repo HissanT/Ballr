@@ -1,0 +1,11 @@
+training/dataset/
+training/dataset_cleaned/
+training/dataset_prepared*/
+training/runs/
+models/*.pt
+.claude/
+__pycache__/
+tests/__pycache__/
+.pytest_cache/
+pytest-cache-files-*
+*.pyc
