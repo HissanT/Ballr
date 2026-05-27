@@ -16,17 +16,15 @@ struct BallrDrillCountdownOverlay: View {
     var body: some View {
         TimelineView(.animation) { timeline in
             let elapsed = timeline.date.timeIntervalSince(startedAt)
-            let progress = min(max(elapsed / duration, 0), 1)
             let label = label(for: elapsed)
 
             ZStack {
-                Color.black
-                    .opacity(backgroundOpacity(progress: progress))
+                Color.black.opacity(0.94)
                     .ignoresSafeArea()
 
                 Text(label)
-                    .font(.ballr(size: labelSize(for: elapsed), weight: .black))
-                    .foregroundStyle(elapsed < 3 ? Color.yellow : .white)
+                    .font(.ballr(size: label == "START" ? 54 : 96, weight: .black))
+                    .foregroundStyle(Color.white)
                     .opacity(textOpacity(for: elapsed))
                     .scaleEffect(textScale(for: elapsed))
             }
@@ -34,9 +32,13 @@ struct BallrDrillCountdownOverlay: View {
             .allowsHitTesting(false)
             .onAppear {
                 currentLabel = label
+                BallrBackgroundAudioController.shared.startGameplayCountdownMusic()
                 if label == "START" {
                     BallrDrillSoundPlayer.playWhistle()
                 }
+            }
+            .onDisappear {
+                BallrBackgroundAudioController.shared.intensifyGameplayMusic()
             }
             .onChange(of: label) { _, newLabel in
                 guard newLabel != currentLabel else {
@@ -63,10 +65,6 @@ struct BallrDrillCountdownOverlay: View {
         default:
             return ""
         }
-    }
-
-    private func labelSize(for elapsed: TimeInterval) -> CGFloat {
-        elapsed < 3 ? 96 : 54
     }
 
     private func textOpacity(for elapsed: TimeInterval) -> Double {

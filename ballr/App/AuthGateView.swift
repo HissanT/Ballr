@@ -11,6 +11,12 @@ struct AuthGateView: View {
                 BallrProfileSetupView()
             } else if authSession.isSignedIn {
                 ContentView()
+                    .onAppear {
+                        BallrBackgroundAudioController.shared.activateMenuMusic(
+                            restartTrack: true,
+                            fadeInFromZero: true
+                        )
+                    }
             } else {
                 BallrAuthView()
             }

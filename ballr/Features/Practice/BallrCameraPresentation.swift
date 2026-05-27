@@ -19,6 +19,12 @@ struct BallrCameraPresentationModifier: ViewModifier {
             .navigationBarHidden(true)
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
+            .onAppear {
+                BallrBackgroundAudioController.shared.enterGameplayScene()
+            }
+            .onDisappear {
+                BallrBackgroundAudioController.shared.exitGameplayScene()
+            }
     }
 }
 

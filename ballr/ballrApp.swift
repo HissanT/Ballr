@@ -11,6 +11,7 @@ import SwiftUI
 struct ballrApp: App {
     @UIApplicationDelegateAdaptor(BallrAppDelegate.self) private var appDelegate
     @StateObject private var authSession = AuthSessionManager()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         BallrFont.registerFontsIfNeeded()
@@ -20,6 +21,9 @@ struct ballrApp: App {
         WindowGroup {
             AuthGateView()
                 .environmentObject(authSession)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            BallrBackgroundAudioController.shared.updateScenePhase(isActive: newPhase == .active)
         }
     }
 }
