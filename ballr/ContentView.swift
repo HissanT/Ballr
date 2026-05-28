@@ -14,6 +14,13 @@ struct ContentView: View {
             }
         }
         .font(.ballr(size: 16, weight: .regular))
+        .onChange(of: isShowingLaunchSplash) { _, isShowing in
+            guard !isShowing else { return }
+            BallrBackgroundAudioController.shared.activateMenuMusic(
+                restartTrack: true,
+                fadeInFromZero: true
+            )
+        }
     }
 }
 
