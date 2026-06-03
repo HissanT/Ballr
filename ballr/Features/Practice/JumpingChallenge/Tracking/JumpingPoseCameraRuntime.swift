@@ -930,10 +930,7 @@ final class JumpingPoseCameraController: NSObject, ObservableObject {
     }
 
     private func currentInterfaceOrientation() -> UIInterfaceOrientation {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive })?
-            .interfaceOrientation ?? .landscapeRight
+        BallrOrientationController.cameraInterfaceOrientation()
     }
 
     private func videoOrientation(for interfaceOrientation: UIInterfaceOrientation) -> AVCaptureVideoOrientation? {

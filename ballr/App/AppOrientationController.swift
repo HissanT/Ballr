@@ -12,12 +12,52 @@ final class BallrAppDelegate: NSObject, UIApplicationDelegate {
 }
 
 enum BallrOrientationController {
+    private static var activeCameraPresentations = 0
+    private static var restoreGeneration = 0
+
+    static func beginCameraPresentation() {
+        activeCameraPresentations += 1
+        lockDribblingLandscape()
+    }
+
+    static func endCameraPresentation() {
+        activeCameraPresentations = max(0, activeCameraPresentations - 1)
+        restoreDefaultOrientation()
+    }
+
     static func lockDribblingLandscape() {
+        restoreGeneration += 1
         update(mask: .landscape, preferredOrientation: .landscapeRight)
     }
 
     static func restoreDefaultOrientation() {
-        update(mask: .portrait, preferredOrientation: .portrait)
+        restoreGeneration += 1
+        let generation = restoreGeneration
+
+        guard activeCameraPresentations == 0 else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            guard activeCameraPresentations == 0, restoreGeneration == generation else {
+                return
+            }
+            update(mask: .portrait, preferredOrientation: .portrait)
+        }
+    }
+
+    static func cameraInterfaceOrientation() -> UIInterfaceOrientation {
+        let sceneOrientation = activeWindowScene()?.interfaceOrientation
+        guard activeCameraPresentations > 0 || BallrAppDelegate.orientationLock == .landscape else {
+            return sceneOrientation ?? .landscapeRight
+        }
+
+        switch sceneOrientation {
+        case .landscapeLeft, .landscapeRight:
+            return sceneOrientation ?? .landscapeRight
+        default:
+            return .landscapeRight
+        }
     }
 
     private static func update(

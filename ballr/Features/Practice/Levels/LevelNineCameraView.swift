@@ -607,10 +607,7 @@ private final class LevelNineCameraController: NSObject, ObservableObject {
     }
 
     private static func currentInterfaceOrientation() -> UIInterfaceOrientation {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive })?
-            .interfaceOrientation ?? .landscapeRight
+        BallrOrientationController.cameraInterfaceOrientation()
     }
 
     private func imageOrientation(for videoOrientation: AVCaptureVideoOrientation) -> CGImagePropertyOrientation {

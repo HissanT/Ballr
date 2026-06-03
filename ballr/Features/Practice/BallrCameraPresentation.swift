@@ -20,10 +20,12 @@ struct BallrCameraPresentationModifier: ViewModifier {
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
             .onAppear {
+                BallrOrientationController.beginCameraPresentation()
                 BallrBackgroundAudioController.shared.enterGameplayScene()
             }
             .onDisappear {
                 BallrBackgroundAudioController.shared.exitGameplayScene()
+                BallrOrientationController.endCameraPresentation()
             }
     }
 }

@@ -730,10 +730,7 @@ final class BallTrackerCameraController: NSObject, ObservableObject {
     }
 
     private static func currentInterfaceOrientation() -> UIInterfaceOrientation {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive })?
-            .interfaceOrientation ?? .landscapeRight
+        BallrOrientationController.cameraInterfaceOrientation()
     }
 }
 
