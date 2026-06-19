@@ -6,6 +6,7 @@ struct PracticeLevelCompletionOverlay: View {
     var title: String = "DONE"
     var primaryTitle: String = "TRY AGAIN"
     var nextLevelTitle: String = "NEXT LEVEL"
+    var backButtonTitle: String = "BACK TO LEVELS"
     var showsNextLevelButton: Bool = true
     let onNextLevel: () -> Void
     let onTryAgain: () -> Void
@@ -35,7 +36,7 @@ struct PracticeLevelCompletionOverlay: View {
                         if buttonsVisible {
                             HStack(spacing: 10) {
                                 Button(action: onBackToLevels) {
-                                    Text("BACK TO LEVELS")
+                                    Text(backButtonTitle)
                                         .font(.ballr(size: 14, weight: .black))
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 18)

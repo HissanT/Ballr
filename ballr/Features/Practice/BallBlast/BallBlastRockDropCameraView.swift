@@ -142,6 +142,7 @@ struct BallBlastRockDropCameraView: View {
                         buttonsVisible: coordinator.showsFinishButtons,
                         title: "TRY AGAIN",
                         primaryTitle: "TRY AGAIN",
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: false,
                         onNextLevel: {},
                         onTryAgain: { coordinator.reset(in: geometry.size) },
@@ -153,6 +154,7 @@ struct BallBlastRockDropCameraView: View {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.finishStartedAt,
                         buttonsVisible: coordinator.showsFinishButtons,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: false,
                         onNextLevel: {},
                         onTryAgain: { coordinator.reset(in: geometry.size) },

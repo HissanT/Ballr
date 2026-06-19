@@ -93,9 +93,11 @@ struct LevelFiveCameraView: View {
                 case .levelSix:
                     AgilityChallengeCameraView()
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.orange)
                 case .rockDropEasy:
                     BallBlastRockDropCameraView(difficulty: .easy)
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.orange)
                 }
             }
             .onAppear {

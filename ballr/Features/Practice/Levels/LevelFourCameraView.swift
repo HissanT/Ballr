@@ -81,9 +81,11 @@ struct LevelFourCameraView: View {
                 case .levelThreeBallTargets:
                     LevelFourCameraView(nextDestination: .rockDropEasy)
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.pink)
                 case .rockDropEasy:
                     BallBlastRockDropCameraView(difficulty: .easy)
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.orange)
                 }
             }
             .onAppear {

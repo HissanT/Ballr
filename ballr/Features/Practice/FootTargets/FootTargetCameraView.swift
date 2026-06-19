@@ -113,6 +113,7 @@ struct FootTargetCameraView: View {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.completionStartedAt,
                         buttonsVisible: coordinator.showsCompletionButtons,
+                        backButtonTitle: "BACK TO HOME",
                         onNextLevel: { showsNextLevel = true },
                         onTryAgain: { coordinator.reset(in: geometry.size) },
                         onBackToLevels: { dismiss() }
@@ -126,9 +127,11 @@ struct FootTargetCameraView: View {
                 case .levelFour:
                     LevelFourCameraView()
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.orange)
                 case .levelNine:
                     LevelNineCameraView()
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.purple)
                 }
             }
             .onAppear {

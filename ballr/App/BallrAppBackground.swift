@@ -1,18 +1,28 @@
 import SwiftUI
 
 struct BallrAppBackground: View {
-    @AppStorage("ballrDarkModeEnabled") private var isDarkModeEnabled = true
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                isDarkModeEnabled ? Color.black : Color.white
-
-                Image(isDarkModeEnabled ? "DarkMode" : "WhiteMode")
-                    .resizable()
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-            }
-        }
+        backgroundColor
         .ignoresSafeArea()
     }
+
+    private var backgroundColor: Color {
+        colorScheme == .dark ? .ballrDarkModeBackground : .ballrLightModeBackground
+    }
+}
+
+extension Color {
+    static let ballrDarkModeBackground = Color(
+        red: 18.0 / 255.0,
+        green: 20.0 / 255.0,
+        blue: 28.0 / 255.0
+    )
+
+    static let ballrLightModeBackground = Color(
+        red: 245.0 / 255.0,
+        green: 240.0 / 255.0,
+        blue: 232.0 / 255.0
+    )
 }

@@ -70,6 +70,7 @@ struct LevelNineCameraView: View {
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelTenCameraView()
                     .ballrCameraPresentationChrome()
+                    .environment(\.ballrCountdownMascot, BallrCountdownMascot.blue)
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()

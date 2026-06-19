@@ -228,7 +228,7 @@ private struct TicTacToeShootingVSLiveCameraView: View {
                 }
 
                 if let countdownStartedAt = coordinator.countdownStartedAt {
-                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt, showsYellowCharacterFlight: true)
                 }
 
                 if coordinator.requiresPassingSpotReturn, coordinator.result == nil {

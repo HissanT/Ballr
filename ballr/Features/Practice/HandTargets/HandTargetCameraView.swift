@@ -158,6 +158,7 @@ struct HandTargetCameraView: View {
                         startedAt: coordinator.completionStartedAt,
                         buttonsVisible: coordinator.showsCompletionButtons,
                         title: coordinator.finishTitle,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: coordinator.didComplete,
                         onNextLevel: { showsNextLevel = true },
                         onTryAgain: { coordinator.reset(in: geometry.size) },
@@ -172,12 +173,15 @@ struct HandTargetCameraView: View {
                 case .footTargets:
                     FootTargetCameraView()
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.pink)
                 case .levelEight:
                     LevelEightCameraView()
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.purple)
                 case .levelTen:
                     HunterCameraView(difficulty: .easy)
                         .ballrCameraPresentationChrome()
+                        .environment(\.ballrCountdownMascot, BallrCountdownMascot.blue)
                 }
             }
             .onAppear {

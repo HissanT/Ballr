@@ -58,7 +58,7 @@ struct CrossbarChallengeCameraView: View {
                 }
 
                 if let countdownStartedAt = coordinator.countdownStartedAt {
-                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
+                    BallrDrillCountdownOverlay(startedAt: countdownStartedAt, showsYellowCharacterFlight: true)
                 }
 
                 if coordinator.requiresPassingSpotReturn {

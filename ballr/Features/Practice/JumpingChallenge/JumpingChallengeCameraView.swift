@@ -74,6 +74,7 @@ struct JumpingChallengeCameraView: View {
                         buttonsVisible: coordinator.showsFinishButtons,
                         title: "GAME OVER",
                         primaryTitle: "TRY AGAIN",
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: false,
                         onNextLevel: {},
                         onTryAgain: { coordinator.reset(in: geometry.size) },
@@ -85,6 +86,7 @@ struct JumpingChallengeCameraView: View {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.finishStartedAt,
                         buttonsVisible: coordinator.showsFinishButtons,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: false,
                         onNextLevel: {},
                         onTryAgain: { coordinator.reset(in: geometry.size) },

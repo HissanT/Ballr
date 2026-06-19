@@ -59,6 +59,7 @@ struct AgilityChallengeCameraView: View {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.finishStartedAt,
                         buttonsVisible: coordinator.showsFinishButtons,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: true,
                         onNextLevel: { showsNextLevel = true },
                         onTryAgain: { coordinator.reset(in: geometry.size) },
@@ -71,6 +72,7 @@ struct AgilityChallengeCameraView: View {
             .navigationDestination(isPresented: $showsNextLevel) {
                 LevelSevenCameraView()
                     .ballrCameraPresentationChrome()
+                    .environment(\.ballrCountdownMascot, BallrCountdownMascot.purple)
             }
             .onAppear {
                 BallrOrientationController.lockDribblingLandscape()

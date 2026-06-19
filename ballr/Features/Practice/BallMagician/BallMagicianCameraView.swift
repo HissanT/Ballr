@@ -83,6 +83,7 @@ struct BallMagicianCameraView: View {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.completionStartedAt,
                         buttonsVisible: coordinator.showsCompletionButtons,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: configuration.showsNextLevelButton,
                         onNextLevel: { showsNextLevel = true },
                         onTryAgain: { coordinator.reset(in: geometry.size) },

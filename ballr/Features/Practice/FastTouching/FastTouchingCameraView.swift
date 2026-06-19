@@ -25,17 +25,6 @@ struct FastTouchingCameraView: View {
                 FastTouchingRenderSurface(coordinator: coordinator)
                     .ignoresSafeArea()
 
-                if coordinator.phase == .readiness {
-                    FastTouchingJeffStandingOverlay()
-                        .zIndex(90)
-                } else if coordinator.phase == .live {
-                    FastTouchingJeffPlantedOverlay(
-                        scoreText: "\(coordinator.touchCount)",
-                        timeText: coordinator.timerText
-                    )
-                    .zIndex(90)
-                }
-
                 if coordinator.phase == .readiness || coordinator.phase == .countdown || coordinator.phase == .live {
                     VStack(spacing: 0) {
                         topBar
@@ -63,19 +52,13 @@ struct FastTouchingCameraView: View {
 
                 if coordinator.phase == .countdown, let countdownStartedAt = coordinator.countdownStartedAt {
                     BallrDrillCountdownOverlay(startedAt: countdownStartedAt)
-
-                    FastTouchingJeffCountdownOverlay(
-                        startedAt: countdownStartedAt,
-                        scoreText: "\(coordinator.touchCount)",
-                        timeText: coordinator.timerText
-                    )
-                    .zIndex(90)
                 }
 
                 if coordinator.phase == .finished {
                     PracticeLevelCompletionOverlay(
                         startedAt: coordinator.finishStartedAt,
                         buttonsVisible: coordinator.showsFinishButtons,
+                        backButtonTitle: "BACK TO HOME",
                         showsNextLevelButton: false,
                         onNextLevel: {},
                         onTryAgain: { coordinator.reset(in: geometry.size) },
@@ -298,12 +281,12 @@ private final class FastTouchingCoordinator: ObservableObject {
             liveElapsed = min(liveElapsed + deltaTime, roundDuration)
             timerText = String(Int(ceil(max(roundDuration - liveElapsed, 0))))
 
-            if let touchSide = gameState.step(
+            if gameState.step(
                 ballDisplayRect: ballDisplayRect,
                 feet: detectedFeet,
                 timestamp: frame.timestamp,
                 isBallTracked: ballState.isTracked
-            ) {
+            ) != nil {
                 touchCount += 1
                 if touchCount.isMultiple(of: 10) {
                     BallrDrillSoundPlayer.playCombo()

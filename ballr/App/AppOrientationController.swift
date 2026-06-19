@@ -1,7 +1,7 @@
 import UIKit
 
 final class BallrAppDelegate: NSObject, UIApplicationDelegate {
-    static var orientationLock: UIInterfaceOrientationMask = .allButUpsideDown
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
 
     func application(
         _ application: UIApplication,
