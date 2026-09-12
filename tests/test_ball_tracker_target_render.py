@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 
 from common.ballr_utils import asset_path
-from ball_tracker import render_target_reference_rgb
+from ball_tracker.app import render_target_reference_rgb
 
 
 def load_reference_image(name: str) -> np.ndarray:

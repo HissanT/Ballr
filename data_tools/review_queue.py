@@ -9,10 +9,7 @@ import cv2
 import numpy as np
 
 from common.ballr_utils import build_gamma_lut, ensure_dir, preprocess_frame, training_path
-try:
-    from runtime.ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
-except ModuleNotFoundError:
-    from ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
+from ball_tracker.ball_tracker_tracking import MODEL_PATH as DEFAULT_MODEL_PATH
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 DEFAULT_ACCEPTED_DIR_NAMES = ("captures", "saved")

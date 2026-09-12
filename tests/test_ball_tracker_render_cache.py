@@ -1,7 +1,7 @@
 import numpy as np
 
-from ball_tracker_rendering import RenderCache
-from ball_tracker_targets import (
+from ball_tracker.ball_tracker_rendering import RenderCache
+from ball_tracker.ball_tracker_targets import (
     ScoredTargetEffect,
     TARGET_SCORE_POPUP_DELAY_SECONDS,
     TARGET_SCORE_VALUE,

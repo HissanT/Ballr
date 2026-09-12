@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from common.ballr_utils import model_path
-from ball_tracker_tracking import (
+from ball_tracker.ball_tracker_tracking import (
     CANDIDATE_CONF_THRESHOLD,
     IOU_THRESHOLD,
     MODEL_PATH,

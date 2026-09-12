@@ -1,9 +1,11 @@
 import numpy as np
+from pathlib import Path
 
-from ball_tracker_tracking import (
+from ball_tracker.ball_tracker_tracking import (
     CONTACT_HOLD_FRAMES,
     CONTACT_NIS_THRESHOLD,
     MAX_MISSES,
+    MODEL_PATH,
     REFERENCE_FPS,
     BallMotionState,
     DetectionCandidate,
@@ -11,6 +13,10 @@ from ball_tracker_tracking import (
     predict_track,
     update_track,
 )
+
+
+def test_tracker_uses_v5_detector_model():
+    assert Path(MODEL_PATH).name == "ballr_v5_cleaned_final.pt"
 
 
 def make_candidate(

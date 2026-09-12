@@ -1,5 +1,5 @@
-import ball_tracker
-import ball_tracker_audio
+from ball_tracker import app as ball_tracker
+from ball_tracker import ball_tracker_audio
 
 
 class FakeWinsound:

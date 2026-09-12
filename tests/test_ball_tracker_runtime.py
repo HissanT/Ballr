@@ -1,6 +1,6 @@
 import numpy as np
 
-from ball_tracker import (
+from ball_tracker.app import (
     BenchmarkAccumulator,
     GAME_MODE_PRECISION_TARGET,
     LatestValueStore,
@@ -9,7 +9,7 @@ from ball_tracker import (
     StageTimings,
     TargetState,
 )
-from ball_tracker_precision_target import PrecisionImpact, PrecisionTargetFrame, WallCalibration
+from ball_tracker.ball_tracker_precision_target import PrecisionImpact, PrecisionTargetFrame, WallCalibration
 
 
 def test_latest_value_store_returns_newest_item_and_counts_drop():
