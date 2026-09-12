@@ -1,8 +1,8 @@
 import numpy as np
 
-from ball_tracker_juggling import JuggleEventClass, update_juggle_state
-from ball_tracker_pose import PoseFrame
-from ball_tracker_tracking import BallTrack
+from ball_tracker.ball_tracker_juggling import JuggleEventClass, update_juggle_state
+from ball_tracker.ball_tracker_pose import PoseFrame
+from ball_tracker.ball_tracker_tracking import BallTrack
 
 FRAME_SIZE = (480, 640)
 

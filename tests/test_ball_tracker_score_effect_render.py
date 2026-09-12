@@ -1,11 +1,11 @@
 import numpy as np
 
-from ball_tracker_rendering import (
+from ball_tracker.ball_tracker_rendering import (
     draw_scored_target_effects,
     render_score_popup_sprite,
     render_scored_target_burst_sprite,
 )
-from ball_tracker_targets import (
+from ball_tracker.ball_tracker_targets import (
     ScoredTargetEffect,
     TARGET_SCORE_BURST_SECONDS,
     TARGET_SCORE_EFFECT_SECONDS,

@@ -16,7 +16,7 @@ from common.ballr_utils import (
     preprocess_frame,
     training_path,
 )
-from runtime.ball_tracker_tracking import MODEL_PATH
+from ball_tracker.ball_tracker_tracking import MODEL_PATH
 
 SPORTS_BALL_CLASS_ID = 0
 AUTO_LABEL_CLASS_ID = 0
@@ -66,6 +66,16 @@ def main() -> None:
     parser.add_argument("--output", default=str(training_path("dataset")), help="Root dataset directory")
     parser.add_argument("--session", help="Optional session name (defaults to a timestamp)")
     parser.add_argument(
+        "--accepted-dir-name",
+        default="captures",
+        help="Subdirectory under --output for accepted frames, for example 'captures' or 'saved'",
+    )
+    parser.add_argument(
+        "--review-dir-name",
+        default="review",
+        help="Subdirectory under --output for review frames",
+    )
+    parser.add_argument(
         "--conf",
         type=float,
         default=0.65,
@@ -90,6 +100,11 @@ def main() -> None:
         help="Save an empty-label background frame after this many frames without detections",
     )
     parser.add_argument(
+        "--no-save-empty",
+        action="store_true",
+        help="Disable saving empty-label background frames for this session",
+    )
+    parser.add_argument(
         "--allow-multiple",
         action="store_true",
         help="Allow multi-box detections into the capture set instead of review only",
@@ -97,13 +112,15 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     args = parser.parse_args()
+    if args.no_save_empty:
+        args.save_empty_interval = 0
 
     session_name = args.session or time.strftime("%Y%m%d_%H%M%S")
     dataset_root = Path(args.output)
-    capture_root = ensure_dir(dataset_root / "captures" / session_name)
-    review_root = ensure_dir(dataset_root / "review" / session_name)
-    capture_images = ensure_dir(capture_root / "images")
-    capture_labels = ensure_dir(capture_root / "labels")
+    accepted_root = ensure_dir(dataset_root / args.accepted_dir_name / session_name)
+    review_root = ensure_dir(dataset_root / args.review_dir_name / session_name)
+    accepted_images = ensure_dir(accepted_root / "images")
+    accepted_labels = ensure_dir(accepted_root / "labels")
     review_images = ensure_dir(review_root / "images")
     review_labels = ensure_dir(review_root / "labels")
 
@@ -124,6 +141,8 @@ def main() -> None:
         "session": session_name,
         "source": str(args.source),
         "model_path": MODEL_PATH,
+        "accepted_dir_name": args.accepted_dir_name,
+        "review_dir_name": args.review_dir_name,
         "save_confidence": args.conf,
         "review_confidence": args.review_conf,
         "interval": args.interval,
@@ -133,7 +152,8 @@ def main() -> None:
         "preprocessed_frames": True,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    write_session_metadata(capture_root / "session.json", metadata)
+    write_session_metadata(accepted_root / "session.json", metadata)
+    write_session_metadata(review_root / "session.json", metadata)
 
     frame_count = 0
     accepted_saved = 0
@@ -171,7 +191,7 @@ def main() -> None:
 
             if len(boxes) and accepted and all(float(box.conf[0]) >= args.conf for box in boxes):
                 stem = make_stem(frame_count)
-                if save_sample(enhanced, boxes, capture_images, capture_labels, stem):
+                if save_sample(enhanced, boxes, accepted_images, accepted_labels, stem):
                     accepted_saved += 1
             elif len(boxes):
                 stem = make_stem(frame_count)
@@ -183,7 +203,7 @@ def main() -> None:
                 frame_count - last_empty_save_frame >= args.save_empty_interval
             ):
                 stem = make_stem(frame_count)
-                if save_sample(enhanced, [], capture_images, capture_labels, stem):
+                if save_sample(enhanced, [], accepted_images, accepted_labels, stem):
                     empty_saved += 1
                     last_empty_save_frame = frame_count
 
@@ -250,7 +270,7 @@ def main() -> None:
         f"\nDone. Accepted: {accepted_saved}, review: {review_saved}, empty: {empty_saved}, "
         f"skipped multi: {skipped_multi}."
     )
-    print(f"Capture session saved to '{capture_root}'.")
+    print(f"Accepted session saved to '{accepted_root}'.")
     print(f"Review queue saved to '{review_root}'.")
 
 

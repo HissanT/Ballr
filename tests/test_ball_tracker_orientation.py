@@ -1,6 +1,6 @@
 import numpy as np
 
-from ball_tracker import mirror_frame
+from ball_tracker.app import mirror_frame
 
 
 def test_mirror_frame_flips_columns_left_to_right():

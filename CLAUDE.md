@@ -28,12 +28,12 @@ Goal: Live real-time soccer ball detection and tracking using a webcam (includin
 pip install ultralytics opencv-python
 
 # Run tracker (once implemented)
-python -m runtime.ball_tracker
+python -m ball_tracker
 ```
 
 ## Architecture
 
-Tracker implementation lives in `runtime/ball_tracker.py`:
+Tracker implementation lives in `ball_tracker/`:
 1. Open video stream (webcam index or DroidCam IP URL)
 2. Run YOLO inference per frame, filtering for `sports ball` class
 3. Draw bounding box / outline overlay on detected ball

@@ -1,15 +1,14 @@
 # Ballr
 
-Ballr is a real-time soccer-ball tracking and juggling workflow repo. The Python files are grouped into plain folders by purpose and are run directly as modules.
+Ballr combines a real-time soccer-ball tracking and juggling workflow with its Swift iOS app. Python files are grouped by purpose and run as modules.
 
 ## Layout
 
 - `common/`: shared path helpers and utility functions.
-- `runtime/`: live tracking, pose, rendering, target mode, and audio/runtime support.
-- `juggling/`: juggling runtime logic plus the juggle dataset, review, export, and classifier training files.
+- `ball_tracker/`: live tracking, pose, rendering, target modes, audio, and juggling workflow code.
 - `data_tools/`: dataset capture, preparation, and review tooling.
 - `model_tools/`: detector training and CoreML export code.
-- `frontend_ballr/`: iOS frontend code.
+- `Swift-App/`: the canonical iOS app and Xcode project.
 - `assets/`: runtime images, score audio, and combo soundtrack clips.
 - `models/`: detector and pose weights used by the app and training scripts.
 - `training/`: datasets, prepared dataset variants, imported external datasets, and future training runs.
@@ -17,7 +16,7 @@ Ballr is a real-time soccer-ball tracking and juggling workflow repo. The Python
 
 ## Common Commands
 
-- `python -m runtime.ball_tracker`: run the live tracker with the canonical detector in `models/`.
+- `python -m ball_tracker`: run the live tracker with the canonical detector in `models/`.
 - `python -m data_tools.collect_data`: collect new labeled samples into `training/dataset`.
 - `python -m data_tools.review_queue dataset --root training/dataset --output-root training/dataset_cleaned`: review a dataset copy.
 - `python -m data_tools.dataset_tools prepare-v4`: rebuild the prepared v4 datasets under `training/`.

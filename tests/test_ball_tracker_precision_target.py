@@ -1,6 +1,6 @@
 import numpy as np
 
-from ball_tracker_precision_target import (
+from ball_tracker.ball_tracker_precision_target import (
     DEFAULT_FOCAL_LENGTH_PX,
     FOCAL_LENGTH_REFERENCE_WIDTH_PX,
     PRECISION_TARGET_PHASE_REFERENCE,
@@ -15,7 +15,7 @@ from ball_tracker_precision_target import (
     score_from_radial_distance,
     step_precision_target_mode,
 )
-from ball_tracker_tracking import BallTrack
+from ball_tracker.ball_tracker_tracking import BallTrack
 
 
 def make_track(

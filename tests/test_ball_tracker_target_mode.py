@@ -1,15 +1,15 @@
 import numpy as np
 
-import ball_tracker_target_mode
-from ball_tracker_rendering import RenderCache
-from ball_tracker_target_mode import (
+from ball_tracker import ball_tracker_target_mode
+from ball_tracker.ball_tracker_rendering import RenderCache
+from ball_tracker.ball_tracker_target_mode import (
     TargetModeFrame,
     TargetModeState,
     draw_target_mode,
     step_target_mode,
 )
-from ball_tracker_targets import TargetState
-from ball_tracker_tracking import BallTrack
+from ball_tracker.ball_tracker_targets import TargetState
+from ball_tracker.ball_tracker_tracking import BallTrack
 
 
 def make_track(

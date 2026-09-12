@@ -1,6 +1,6 @@
 import numpy as np
 
-from ball_tracker_targets import (
+from ball_tracker.ball_tracker_targets import (
     TARGET_BALL_CLEARANCE,
     TARGET_COMBO_STREAK_STEP,
     TARGET_LIFETIME_SECONDS,
@@ -27,7 +27,7 @@ from ball_tracker_targets import (
     target_hit,
     target_spawn_bounds,
 )
-from ball_tracker_tracking import BallTrack
+from ball_tracker.ball_tracker_tracking import BallTrack
 
 
 def make_track(

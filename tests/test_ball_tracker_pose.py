@@ -1,6 +1,6 @@
 import numpy as np
 
-from ball_tracker_pose import (
+from ball_tracker.ball_tracker_pose import (
     PoseBackendResults,
     PoseObservation,
     _hip_line_y,
@@ -8,7 +8,7 @@ from ball_tracker_pose import (
     _point_to_segment_distance,
     update_pose_state_from_backends,
 )
-from ball_tracker_tracking import BallTrack
+from ball_tracker.ball_tracker_tracking import BallTrack
 
 
 def test_knee_line_uses_average_when_knees_are_close():
